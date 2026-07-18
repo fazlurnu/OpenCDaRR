@@ -77,12 +77,30 @@ def test_turn_takes_the_shortest_way() -> None:
 # --- Check 3: speed cap ------------------------------------------------------
 
 
-def test_speed_command_clamps_to_envelope() -> None:
-    """Commanding 30 m/s clamps to v_max = 18; commanding -30 clamps to v_min = -18."""
-    up = step_dynamics(_start(), Command(hdg=90.0, spd=30.0), M600, dt=1.0)
-    assert up.gs == M600.v_max == 18.0
-    down = step_dynamics(_start(), Command(hdg=90.0, spd=-30.0), M600, dt=1.0)
-    assert down.gs == M600.v_min == -18.0
+def test_speed_ramps_to_envelope_within_accel_limit() -> None:
+    """Commanding 30 m/s ramps up to v_max=18 (never past), bounded by ax*dt each step."""
+    dt = 0.1
+    s = _start(trk=90.0, gs=0.0)  # start from rest
+    cmd = Command(hdg=90.0, spd=30.0)  # above the envelope
+    prev = s.gs
+    reached = False
+    for _ in range(400):
+        s = step_dynamics(s, cmd, M600, dt)
+        assert abs(s.gs - prev) <= M600.ax * dt + 1e-9  # bounded acceleration
+        assert s.gs <= M600.v_max + 1e-9  # never exceeds the envelope
+        prev = s.gs
+        if abs(s.gs - M600.v_max) < 1e-9:
+            reached = True
+            break
+    assert reached, "speed did not converge to v_max"
+
+
+def test_speed_ramps_down_to_v_min() -> None:
+    """Commanding -30 m/s clamps the target to v_min=-18 and ramps down to it."""
+    s = _start(trk=90.0, gs=0.0)
+    for _ in range(400):
+        s = step_dynamics(s, Command(hdg=90.0, spd=-30.0), M600, dt=0.1)
+    assert abs(s.gs - M600.v_min) < 1e-9
 
 
 # --- Purity ------------------------------------------------------------------

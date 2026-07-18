@@ -4,10 +4,9 @@ This is NOT part of the core gate: BlueSky is a heavy, boot-fragile fork. The te
 unless BlueSky both imports and initialises, so `pytest` stays green everywhere while this
 still runs as the periodic equivalence check where BlueSky is available (e.g. the `cdarr`
 conda env). It validates the *geometry* our integrator owns — the turn-rate law and the
-geodesy. Speed-acceleration limiting is a deferred simplification
-(``vault/phase-1-plan.md``), so to compare geometry rather than that known speed difference,
-we feed BlueSky's own ground speed into our step each tick; any residual is then real
-turn-law/geodesy disagreement, not the ramp.
+geodesy. We do model a speed ramp now, but its `ax` is assumed rather than BlueSky-sourced,
+so to isolate geometry from that speed-value mismatch we feed BlueSky's own ground speed into
+our step each tick; any residual is then real turn-law/geodesy disagreement.
 """
 
 from __future__ import annotations
@@ -44,7 +43,7 @@ def _max_errors(bs, cmd_hdg: float, spd_ms: float, n_steps: int) -> tuple[float,
         acid="D0", actype="M600", aclat=52.0, aclon=4.0, achdg=0.0, acalt=100.0, acspd=spd_kts
     )
 
-    ours = AircraftState(id="D0", lat=52.0, lon=4.0, trk=0.0, gs=spd_ms)
+    ours = AircraftState(id="D0", lat=52.0, lon=4.0, trk=0.0, gs=float(bs.traf.gs[0]))
 
     max_pos = 0.0
     max_trk = 0.0

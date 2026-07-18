@@ -55,11 +55,11 @@ validation checks. Nothing above it.
 
 **Is NOT** (deferred, with reasons):
 
-- [ ] **Speed-acceleration limiting** — BlueSky's perf ramps speed toward a target via an
-  acceleration limit; Phase 1 clamps commanded speed to the envelope and applies it directly
-  (no `ax` ramp). None of the three checks exercise a speed ramp, and modelling it now is
-  fidelity we haven't shown we need (`design-philosophy.md` #12). Flagged here so it is a
-  *known* simplification, not a hidden one (#13). Add it when an experiment needs it.
+- [x] **Speed-acceleration limiting** — NOW MODELLED (added on request). `step_dynamics` ramps
+  ground speed toward the clamped target at no more than `ax*dt`, mirroring the turn-rate
+  limiter. `ax = 5 m/s²` is **assumed**, not sourced from BlueSky (unlike `max_tr`/`v_max`) —
+  a value to revisit when speed-change fidelity matters (Step 3, CR). Tested in
+  `test_dynamics.py`.
 - [ ] **Vertical motion** — 2D horizontal only (decided; see `state.py`). `vs_max = 5` m/s
   from the envelope is recorded but unused.
 - [ ] **Wind** — none, so track over ground equals heading; the state carries one `trk`.

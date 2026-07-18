@@ -28,13 +28,17 @@ imported (`lesson-learnt.md`: don't port).
 Primes denote the next step. **No wind**, so track equals heading and a heading command
 drives $\psi$ directly.
 
-## 1. Speed — clamp to the envelope
+## 1. Speed — clamp to the envelope, then ramp
 
-$$ v' = \mathrm{clip}(v_c,\; v_{\min},\; v_{\max}) $$
+The command is first clamped to the envelope, then the ground speed is moved toward that
+target by at most $a_x\Delta t$ — the acceleration analogue of the turn-rate limiter:
 
-Applied directly, with no acceleration ramp (a deliberate Phase-1 simplification, logged in
-`vault/phase-1-plan.md` — add `ax` only when an experiment needs it). This is Check 3:
-$v_c = 30 \Rightarrow v' = 18$.
+$$ v_t = \mathrm{clip}(v_c,\; v_{\min},\; v_{\max}), \qquad v' = v + \mathrm{clip}(v_t - v,\; -a_x\Delta t,\; a_x\Delta t) $$
+
+with $a_x = 5$ m/s² (`perf.ax`, **assumed** — not sourced from BlueSky; revisit for
+speed-change fidelity at Step 3). So $v_c = 30$ clamps the target to $v_{\max}=18$ and the
+speed ramps up to it, never exceeding it (Check 3). When $v_c = v$ (e.g. straight cruise),
+$v' = v$ — no ramp — so Checks 1 and 2 are unaffected.
 
 ## 2. Heading error — signed, shortest way round
 

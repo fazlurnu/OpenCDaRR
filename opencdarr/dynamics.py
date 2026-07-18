@@ -50,15 +50,18 @@ def step_dynamics(
     Pure: the returned :class:`AircraftState` is a function of the arguments alone; no global
     or module state is read or written. Steps (see the derivation for the full math):
 
-    1. speed clamp     ``gs' = clip(spd, v_min, v_max)``
+    1. speed           ``target = clip(spd, v_min, v_max)``;
+                       ``gs' = gs + clip(target - gs, ±ax*dt)``  (clamp, then ramp)
     2. heading error   ``e = ((hdg - trk + 180) mod 360) - 180``  (signed, shortest way)
     3. turn limiter    ``w_des = clip(e, ±max_tr)``;
                        ``w' = clip(w + clip(w_des - w, ±max_dtr2*dt), ±max_tr)``
     4. heading         integrate ``trk + dt*w'``, or snap to ``hdg`` if reachable this step
     5. position        move ``gs'*dt`` metres along ``trk'`` via ``geo.forward``
     """
-    # 1. speed: clamp the command into the flight envelope
-    gs = _clip(command.spd, perf.v_min, perf.v_max)
+    # 1. speed: clamp the command into the envelope, then ramp toward it at no more than
+    #    ax*dt (the acceleration analogue of the max_dtr2 turn-rate limit)
+    target_gs = _clip(command.spd, perf.v_min, perf.v_max)
+    gs = state.gs + _clip(target_gs - state.gs, -perf.ax * dt, perf.ax * dt)
 
     # 2. heading error, signed and taken the short way round
     hdg_err = ((command.hdg - state.trk + 180.0) % 360.0) - 180.0
