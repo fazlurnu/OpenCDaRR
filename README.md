@@ -1,12 +1,14 @@
 # OpenCDaRR
 
 A conflict-detection, -resolution & -recovery (CDR) research platform for airborne traffic.
-You own the state and the simulation loop; BlueSky is used as a **library of stateless
-math**, not as the runtime. The design is built for three things: **reproducibility,
-readability, and maintainability** — research code that must be defensible to reviewers,
-extended to multi-aircraft conflict, and used for rare-event collision-risk estimation.
+The aircraft state and the simulation loop live in this codebase as plain, explicit data;
+BlueSky is used only as a **library of stateless math**, not as the runtime. The design is
+built for three things: **reproducibility, readability, and maintainability** — research code
+that must be defensible to reviewers, extended to multi-aircraft conflict, and used for
+rare-event collision-risk estimation.
 
-> Status: **Phase 0 (scaffolding)** — see [`vault/phase-0-plan.md`](vault/phase-0-plan.md).
+> Status: **v0.1 in progress** — scaffolding and the `step_dynamics` model are complete;
+> the pairwise encounter is next. See [`vault/`](vault/) for plans and decisions.
 
 ## Install
 
@@ -45,7 +47,7 @@ The **why / what / how** live in [`docs/`](docs/); the linked knowledge vault li
 - [`docs/how-to-step-by-step.md`](docs/how-to-step-by-step.md) — the **build order** and the
   process for each step.
 - [`docs/roadmap.md`](docs/roadmap.md) — the milestone trajectory (v0.1 → v1.0).
-- [`docs/lesson-learnt.md`](docs/lesson-learnt.md) — **why** we work this way.
+- [`docs/lesson-learnt.md`](docs/lesson-learnt.md) — **why** the project is built this way.
 
 `vault/` is the contributor-facing knowledge base — decisions (ADRs), derivations,
 observations, algorithms, papers, and one provenance card per experiment.
