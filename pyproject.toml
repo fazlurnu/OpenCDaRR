@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "opencdarr"
+version = "0.0.0"
+description = "Conflict detection, resolution & recovery research platform (BlueSky as a library)."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "TBD" }
+# Runtime deps are kept minimal on purpose (design-philosophy #10, #12): add a
+# dependency only when a file that ships needs it. numpy is here because rng.py
+# (SeedSequence.spawn) and state.py need it from Phase 0. pyyaml arrives in Step 2
+# with the config loader, not before.
+dependencies = [
+    "numpy>=1.26,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "mypy>=1.10",
+    "ruff>=0.5",
+]
+
+[tool.setuptools.packages.find]
+include = ["opencdarr*"]
+
+# --- Type hints, enforced by the machine, not by willpower -------------------
+# "type hints everywhere" is a standing project rule; strict mode makes an
+# un-annotated function an error, so the rule cannot quietly erode.
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+warn_redundant_casts = true
+files = ["opencdarr", "tests"]
+
+# numpy ships types, but pin the plugin behaviour explicitly for reproducibility.
+[[tool.mypy.overrides]]
+module = ["numpy.*"]
+follow_imports = "normal"
+
+# --- Lint / format -----------------------------------------------------------
+[tool.ruff]
+line-length = 99
+target-version = "py311"
+
+[tool.ruff.lint]
+# E/F pyflakes+pycodestyle, I import-sort, UP pyupgrade, B bugbear, N naming.
+# N is deliberate: "name it like the paper" (design-philosophy #6) still wants
+# consistent Python naming for the plumbing around the domain terms.
+select = ["E", "F", "I", "UP", "B", "N"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

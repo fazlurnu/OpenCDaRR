@@ -1,0 +1,25 @@
+# macOS
+.DS_Store
+
+# Python bytecode / caches
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Tooling caches
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Experiment outputs — regenerated from config + seed + code-hash (design-philosophy #4),
+# so they are products, not source. Provenance lives in the vault, not in git blobs.
+results/
+outputs/
