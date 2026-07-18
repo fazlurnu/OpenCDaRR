@@ -33,6 +33,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from opencdarr.performance import Performance
+
 
 @dataclass(frozen=True)
 class AircraftState:
@@ -74,3 +76,36 @@ class AircraftState:
     trk: float
     gs: float
     turn_rate: float = 0.0
+
+
+def create_aircraft(
+    perf: Performance,
+    *,
+    id: str,
+    lat: float,
+    lon: float,
+    trk: float,
+    gs: float,
+    turn_rate: float = 0.0,
+) -> AircraftState:
+    """Create an :class:`AircraftState`, validating it against the flight envelope.
+
+    The pure-value counterpart of BlueSky's ``cre`` (which mutates a global ``bs.traf``):
+    it returns a new state and touches nothing else. Unlike a speed *command* — which
+    ``step_dynamics`` clamps into the envelope at runtime — an out-of-envelope *initial*
+    condition is a scenario specification error, so this **fails fast** with ``ValueError``
+    rather than silently clamping. Direct ``AircraftState(...)`` construction remains for
+    internal state evolution (e.g. ``step_dynamics``, whose outputs are in-envelope by
+    construction); ``create_aircraft`` is the validated entry point at the scenario boundary.
+    """
+    if not perf.v_min <= gs <= perf.v_max:
+        raise ValueError(
+            f"initial ground speed {gs} m/s for {id!r} is outside the envelope "
+            f"[{perf.v_min}, {perf.v_max}] m/s"
+        )
+    if abs(turn_rate) > perf.max_tr:
+        raise ValueError(
+            f"initial turn rate {turn_rate} deg/s for {id!r} exceeds the max turn rate "
+            f"{perf.max_tr} deg/s"
+        )
+    return AircraftState(id=id, lat=lat, lon=lon, trk=trk, gs=gs, turn_rate=turn_rate)
