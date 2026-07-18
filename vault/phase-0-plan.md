@@ -1,14 +1,8 @@
 # Phase 0 plan — scaffolding
 
-The scaffolding milestone (`how-to-step-by-step.md` Step 0). This is a **living
-checklist**, not a blueprint — kept deliberately thin per `lesson-learnt.md` (the 36 KB
-trap). We build the files **one at a time**; you review each diff, then we tick its box
-here. A box is checked only when the file exists, is understood, and its check passes.
+The scaffolding milestone (`how-to-step-by-step.md` Step 0). This is a **living checklist**, not a blueprint — kept deliberately thin per `lesson-learnt.md` (the 36 KB trap). We build the files **one at a time**; you review each diff, then we tick its box here. A box is checked only when the file exists, is understood, and its check passes.
 
-**Exit gate for the whole phase** (from how-to Step 0): imports work · a trivial test runs
-green · vault folders exist · one RNG/seed convention is chosen and reproducible · one
-config format is chosen. Nothing more. Then we go to Step 1 (`step_dynamics`), the
-make-or-break.
+**Exit gate for the whole phase** (from how-to Step 0): imports work · a trivial test runs green · vault folders exist · one RNG/seed convention is chosen and reproducible · one config format is chosen. Nothing more. Then we go to Step 1 (`step_dynamics`), the make-or-break.
 
 ---
 

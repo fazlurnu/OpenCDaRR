@@ -46,3 +46,28 @@ def forward(
         np.cos(ang) - np.sin(lat1) * np.sin(lat2),
     )
     return float(np.degrees(lat2)), float(np.degrees(lon2))
+
+
+def qdrdist(
+    lat1_deg: float, lon1_deg: float, lat2_deg: float, lon2_deg: float
+) -> tuple[float, float]:
+    """Initial bearing [deg] and great-circle distance [m] from point 1 to point 2.
+
+    The inverse of :func:`forward` on a sphere of the local WGS84 radius at point 1, so
+    ``qdrdist(p1, *forward(p1, brg, d))`` returns ``(brg, d)`` to floating-point precision.
+    Bearing follows the aviation convention (0 = North, clockwise). Mirrors BlueSky's
+    ``qdrdist`` (own geodesy, ADR 0003).
+    """
+    radius = earth_radius(lat1_deg)
+    lat1 = np.radians(lat1_deg)
+    lat2 = np.radians(lat2_deg)
+    dlat = lat2 - lat1
+    dlon = np.radians(lon2_deg - lon1_deg)
+
+    a = np.sin(dlat / 2) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2) ** 2
+    dist = 2.0 * radius * np.arcsin(np.sqrt(a))
+
+    y = np.sin(dlon) * np.cos(lat2)
+    x = np.cos(lat1) * np.sin(lat2) - np.sin(lat1) * np.cos(lat2) * np.cos(dlon)
+    qdr = np.degrees(np.arctan2(y, x)) % 360.0
+    return float(qdr), float(dist)
