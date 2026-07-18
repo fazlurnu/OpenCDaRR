@@ -74,7 +74,7 @@ Each item: **path · purpose · design justification · what goes in · check ·
 
 ### Core
 
-- [ ] **`opencdarr/state.py`** (edit — grow the state)
+- [x] **`opencdarr/state.py`** (edit — grow the state)
   - *Purpose:* add `turn_rate: float = 0.0` [deg/s] to `AircraftState`.
   - *Design:* the `max_dtr2` limit makes the instantaneous turn rate *future-affecting* state
     — the next step's turn rate is bounded relative to this one. By our invariant it must live
@@ -85,7 +85,7 @@ Each item: **path · purpose · design justification · what goes in · check ·
   - *Relations:* first growth of the particle (`design_brief.md` state); consumed by
     `step_dynamics`; embodies the no-hidden-state invariant the file already documents.
 
-- [ ] **`opencdarr/performance.py`** (new)
+- [x] **`opencdarr/performance.py`** (new)
   - *Purpose:* the aircraft-type flight-envelope limits as plain data.
   - *Design:* a frozen `Performance` dataclass (`max_tr`, `max_dtr2`, `v_max`, `v_min`) and an
     `M600 = Performance(...)` instance with the pinned constants above. Separated from
@@ -96,30 +96,41 @@ Each item: **path · purpose · design justification · what goes in · check ·
   - *Relations:* the numbers trace to `vault/derivations/step-dynamics-m600.md`; future
     aircraft types slot in here.
 
-- [ ] **`opencdarr/dynamics.py`** (new — the make-or-break)
+- [x] **`opencdarr/dynamics.py`** (new — the make-or-break)
   - *Purpose:* the pure integrator. A `Command` (`hdg` [deg], `spd` [m/s]) type and
     `step_dynamics(state, command, perf, dt) -> AircraftState`.
   - *Design:* one step, in order, all pure — (1) clamp commanded speed to the envelope → new
     `gs`; (2) signed `hdg_err`; (3) the turn-rate limiter re-derived from `traffic.py:518-542`
     using `state.turn_rate` as the previous rate, bounded by `max_tr` and `max_dtr2*dt` → new
-    `turn_rate`, new `trk`; (4) propagate position with `bluesky.tools.geo` (bearings/
-    distances — the *only* BlueSky call, and it lives behind this boundary so the engine stays
-    swappable, `design-philosophy.md` #5). Returns a new state via `dataclasses.replace`.
-    Governing equations in the docstring (#7). No globals, no `bs.traf` (#1, #2).
+    `turn_rate`, new `trk`; (4) propagate position with **our own** `opencdarr.geo.forward`
+    (ADR 0003 — no BlueSky at runtime), behind this boundary so the engine stays swappable
+    (`design-philosophy.md` #5). Returns a new state via `dataclasses.replace`. Governing
+    equations in the docstring (#7). No globals, no `bs.traf` (#1, #2).
   - *Check:* the three tests below.
   - *Relations:* implements `vault/derivations/step-dynamics-m600.md`; the first of the three
     pure functions the whole interface is built on (`advance`, `design_brief.md`); the layer
-    the brief flags as the one real engineering risk (Decision #4). Adds `bluesky` as a
-    dependency **only** here, behind the boundary (update `pyproject.toml`).
+    the brief flags as the one real engineering risk (Decision #4).
+
+- [x] **`opencdarr/geo.py`** (new — added mid-phase, ADR 0003)
+  - *Purpose:* the stateless geodesy OpenCDaRR owns (`forward`, `earth_radius`), replacing the
+    `bluesky.tools.geo` call so **shipping code depends only on numpy**.
+  - *Design:* mirrors BlueSky's `qdrpos` (same WGS84 latitude-dependent radius), so the two
+    agree to floating-point precision — verified at 1.9e-13 m.
+  - *Check:* geo-vs-BlueSky equivalence; the straight-line check; mypy/ruff clean.
+  - *Relations:* implements ADR 0003; consumed by `dynamics.py`; realises the swappable-engine
+    spine for a drone-only platform.
 
 ### Vault
 
-- [ ] **`vault/decisions/0002-analytical-validation-of-dynamics.md`** (ADR)
+- [x] **`vault/decisions/0002-analytical-validation-of-dynamics.md`** (ADR)
   - *Purpose:* record *why* we validate analytically with BlueSky-sourced constants rather
     than bit-matching a trajectory, and name the three checks as the acceptance criteria.
   - *Relations:* the Step 1 "what is close enough" decision; cites the non-goal in
     `design_brief.md`; governs `test_dynamics.py`.
-- [ ] **`vault/derivations/step-dynamics-m600.md`** (derivation)
+- [x] **`vault/decisions/0003-own-the-geodesy-bluesky-free-runtime.md`** (ADR — added mid-phase)
+  - *Purpose:* record cutting BlueSky from runtime; own the geodesy; keep BlueSky as an
+    offline anchor only. Supersedes the earlier "use `bluesky.tools.geo`" note.
+- [x] **`vault/derivations/step-dynamics-m600.md`** (derivation)
   - *Purpose:* the turn-rate-limited kinematics written out — `hdg_err`, the `max_tr` /
     `max_dtr2` limiter, the speed clamp, the geo propagation — linked to the BlueSky source
     lines, to `dynamics.py`, and to `test_dynamics.py`.
@@ -127,20 +138,16 @@ Each item: **path · purpose · design justification · what goes in · check ·
     here so a reviewer can check it is exactly the DRY-vs-legibility call in
     `design-philosophy.md` #11.
 
-### Test — the three checks (`tests/test_dynamics.py`)
+### Test — the three checks (`tests/test_dynamics.py`) + BlueSky anchor
 
-- [ ] **Check 1 — straight-line distance.** Command heading = current track, `spd = 10` m/s;
-  advance 10 s. *Gate:* displacement ≈ 100 m (tight tolerance), `trk` unchanged,
-  `turn_rate` stays 0. *Guards:* the geo propagation and the "no spurious turning" path.
-- [ ] **Check 2 — turn respects the limits, speed held.** At 10 m/s, command a 90° heading
-  change. *Gate:* at every step `|turn_rate| ≤ max_tr` (15) and the per-step change
-  `|Δturn_rate| ≤ max_dtr2·dt` (10·dt); the heading reaches 90° and holds; `gs` stays 10 m/s
-  throughout (turning does not bleed speed, per the command). *Guards:* the `max_tr` cap, the
-  `max_dtr2` ramp, and speed/heading independence.
-- [ ] **Check 3 — speed cap.** Command `spd = 30` m/s. *Gate:* `gs` clamps to `v_max` = 18
-  m/s, not 30. *Guards:* the envelope clamp.
-- [ ] **Bite check.** For each, confirm what would make it pass while wrong (e.g. a missing
-  `max_dtr2` step would let `turn_rate` jump — Check 2 must catch it).
+- [x] **Check 1 — straight-line distance.** ≈ 100 m, `trk` unchanged, `turn_rate` 0.
+- [x] **Check 2 — turn respects the limits, speed held.** `|turn_rate| ≤ max_tr`,
+  `|Δturn_rate| ≤ max_dtr2·dt`, converges to 90°, `gs` held. (+ shortest-way bite test.)
+- [x] **Check 3 — speed cap.** `spd = 30 → 18`; `spd = -30 → -18`.
+- [x] **Bite checks.** shortest-way turn (signed `hdg_err`), purity (input unmutated).
+- [x] **BlueSky anchor** (`tests/test_dynamics_vs_bluesky.py`, `importorskip`-guarded).
+  Geometry vs BlueSky's own integrator: **track error 0.0** (bit-for-bit), position < 1 m
+  (sub-metre, integration-order only). Skips where BlueSky is absent; passes in `cdarr`.
 
 ---
 

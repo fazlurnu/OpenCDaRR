@@ -13,6 +13,12 @@ license = { text = "MIT" }
 # dependency only when a file that ships needs it. numpy is here because rng.py
 # (SeedSequence.spawn) and state.py need it from Phase 0. pyyaml arrives in Step 2
 # with the config loader, not before.
+#
+# Shipping code depends only on numpy (ADR 0003): the geodesy is ours (opencdarr/geo.py),
+# so there is no BlueSky runtime dependency. BlueSky is used only as an OFFLINE validation
+# anchor by tests/test_dynamics_vs_bluesky.py, which skips unless BlueSky is importable
+# (it is a custom fork, not the unrelated PyPI "bluesky"; install separately where needed,
+# e.g. the `cdarr` conda env or `pip install -e ~/Projects/bluesky`).
 dependencies = [
     "numpy>=1.26,<3",
 ]
@@ -41,6 +47,12 @@ files = ["opencdarr", "tests"]
 [[tool.mypy.overrides]]
 module = ["numpy.*"]
 follow_imports = "normal"
+
+# BlueSky ships no type stubs / py.typed marker; treat it as untyped at its boundary
+# (dynamics.py) rather than weakening strict mode everywhere.
+[[tool.mypy.overrides]]
+module = ["bluesky.*"]
+ignore_missing_imports = true
 
 # --- Lint / format -----------------------------------------------------------
 [tool.ruff]

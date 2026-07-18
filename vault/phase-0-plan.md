@@ -67,7 +67,7 @@ Each item: **path · purpose · design justification · what goes in · check ·
 
 ### A. Repo & tooling
 
-- [ ] **`pyproject.toml`**
+- [x] **`pyproject.toml`**
   - *Purpose:* package metadata + dependencies + the tooling that enforces our standards.
   - *Design:* pin `numpy` (RNG + arrays) and dev tools `pytest`, `ruff`, `mypy`. Configure
     `mypy` in **strict** mode so *type hints everywhere* is enforced by the machine, not by
@@ -77,7 +77,7 @@ Each item: **path · purpose · design justification · what goes in · check ·
   - *Relations:* enforces the type-hint rule that governs every later file; supports
     philosophy #4 (reproducibility — pinned deps).
 
-- [ ] **`.gitignore`**
+- [x] **`.gitignore`**
   - *Purpose:* keep junk and generated artifacts out of history.
   - *Design:* ignore `__pycache__/`, `.DS_Store` (already present in the repo), `*.egg-info`,
     `.venv/`, `.mypy_cache/`, `.ruff_cache/`, and a `results/`-style output dir. Results are
@@ -85,7 +85,7 @@ Each item: **path · purpose · design justification · what goes in · check ·
   - *Check:* `git status` (you run it) shows no junk staged.
   - *Relations:* you own all git (see memory `user-handles-git`) — I only maintain this file.
 
-- [ ] **`README.md`**
+- [x] **`README.md`**
   - *Purpose:* one-screen orientation for a newcomer / future contributor.
   - *Design:* what OpenCDaRR is (one paragraph from `design_brief.md` Goal), how to install
     and run the test, and pointers to `docs/` (the four companion docs) and `vault/`. Keep it
@@ -96,13 +96,13 @@ Each item: **path · purpose · design justification · what goes in · check ·
 ### B. Vault
 
 - [x] **`vault/phase-0-plan.md`** — this file. *Check:* it exists and we agree on it.
-- [ ] **vault skeleton** — `decisions/ derivations/ observations/ algorithms/ papers/
+- [x] **vault skeleton** — `decisions/ derivations/ observations/ algorithms/ papers/
   experiments/`, each with a `.gitkeep`.
   - *Design:* the exact structure from `design_brief.md` #4. Folders links *to the code*, so
     they exist from the start even while empty. Gate item: "vault folders exist."
   - *Check:* the six directories exist and are tracked.
   - *Relations:* every later ADR / derivation / provenance card lands here.
-- [ ] **`vault/decisions/0001-rng-per-particle-spawn.md`** (ADR)
+- [x] **`vault/decisions/0001-rng-per-particle-spawn.md`** (ADR)
   - *Purpose:* record *why* the RNG scheme is `numpy.random.SeedSequence.spawn()`,
     per-particle, no shared/global RNG.
   - *Design:* the one Phase 0 decision that is load-bearing and referenced everywhere. States
@@ -114,14 +114,14 @@ Each item: **path · purpose · design justification · what goes in · check ·
 
 ### C. Core seams
 
-- [ ] **`opencdarr/__init__.py`**
+- [x] **`opencdarr/__init__.py`**
   - *Purpose:* make `opencdarr` an importable package (the gate's "imports work").
   - *Design:* minimal — package docstring + `__version__`. No re-exports yet (nothing to
     export). Naming: `opencdarr`, close to the domain (philosophy #6).
   - *Check:* `python -c "import opencdarr"` succeeds.
   - *Relations:* root for every module in the target layout.
 
-- [ ] **`opencdarr/rng.py`**
+- [x] **`opencdarr/rng.py`**
   - *Purpose:* the single, documented place that turns a seed into reproducible,
     independent substreams.
   - *Design:* thin wrapper over `numpy.random.SeedSequence` / `default_rng`, exposing
@@ -134,7 +134,7 @@ Each item: **path · purpose · design justification · what goes in · check ·
   - *Relations:* implements ADR 0001; the backbone of IPS particle cloning (v0.4,
     `design_brief.md` #2); every stochastic module later takes an rng from here.
 
-- [ ] **`opencdarr/state.py`**
+- [x] **`opencdarr/state.py`**
   - *Purpose:* the one owner of state — plain, clonable data (the spine of the whole design).
   - *Design:* a frozen `@dataclass` (or NumPy-backed) holding **only the fields we are certain
     of**: horizontal point-mass kinematics — `lat`, `lon`, `trk` (track/heading), `gs`
@@ -151,7 +151,7 @@ Each item: **path · purpose · design justification · what goes in · check ·
 
 ### D. Test
 
-- [ ] **`tests/test_smoke.py`**
+- [x] **`tests/test_smoke.py`**
   - *Purpose:* the trivial-but-real gate test — proves the seams work and the two
     load-bearing properties hold.
   - *Design:* three tiny tests — (1) `import opencdarr` works; (2) RNG reproducibility +

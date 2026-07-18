@@ -60,6 +60,12 @@ class AircraftState:
     gs:
         Ground speed in metres per second (SI internally; unit conversions live at the
         BlueSky boundary, not here).
+    turn_rate:
+        Current turn rate in degrees per second, signed (positive = clockwise). This is
+        *state*, not a derived quantity: the M600 caps how fast the turn rate itself can
+        change (``max_dtr2``), so the next step's turn rate is bounded relative to this
+        one. It must therefore travel inside the state — an IPS clone that lost it would
+        turn differently from its parent. Zero for an aircraft flying straight.
     """
 
     id: str
@@ -67,3 +73,4 @@ class AircraftState:
     lon: float
     trk: float
     gs: float
+    turn_rate: float = 0.0

@@ -68,6 +68,13 @@ against Past-CPA / FTR / Probabilistic-FTR.
   file, validate against the anchors, open a PR.
 - **Formal verification / trust-vs-guarantees** thread (reviewer items #3–4, carried
   forward).
+- **Pluggable dynamics / OpenAP aircraft** — separate the *dynamics interface* from its
+  implementation: `DronePointMass` (the v0.1 M600 model) and an `OpenAPDynamics` behind the
+  same `step(state, command, perf, dt) -> state` seam, selectable by config. OpenAP is a
+  standalone library (the M600 envelope already comes from its rotor database), so richer
+  aircraft need no BlueSky. Richer models grow the state (alt, vertical rate, mass) — a
+  deliberate, re-validated change. Build the abstraction only when the *second* model
+  (OpenAP) actually arrives, not before (don't frame for an audience of one).
 - **Engine replacement** — only if a *measured* reason appears (speed, licensing, missing
   physics). The `step_dynamics` boundary makes it cheap; do it on evidence, not on spec.
 
