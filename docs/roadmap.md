@@ -75,6 +75,21 @@ against Past-CPA / FTR / Probabilistic-FTR.
   aircraft need no BlueSky. Richer models grow the state (alt, vertical rate, mass) — a
   deliberate, re-validated change. Build the abstraction only when the *second* model
   (OpenAP) actually arrives, not before (don't frame for an audience of one).
+- **Performance: vectorized SoA step** — reach BlueSky-class speed by advancing a
+  Structure-of-Arrays world/particle batch in one vectorized numpy step, instead of a Python
+  loop over per-aircraft `AircraftState`. The pure, plain-data design already allows this; the
+  math already vectorizes (`geo.forward` uses numpy ufuncs; the turn-rate limiter was
+  vectorized in the BlueSky source we extracted from). For rare-event work the highest-value
+  axis is batching across **particles** (each a small clonable world), then joblib across
+  CPUs. Do it on a *measured* profile, not on spec (`design-philosophy.md`: purity wins until
+  a measured bottleneck), in three steps:
+  1. **Keep the scalar model now** — the legible `step_dynamics` is the tracer bullet and the
+     reference; do not vectorize prematurely.
+  2. **When a profile shows the loop dominates, add `step_batch`** — a SoA step over
+     particles/aircraft, behind the same `Dynamics` seam, validated to match the scalar
+     reference (the analytical ⊂ … validation ladder).
+  3. **If numpy still isn't enough, escalate** — `numba`-JIT the pure functions, and only as a
+     last resort the Rust engine (`engine_rewrite_spec`), each on measured evidence.
 - **Engine replacement** — only if a *measured* reason appears (speed, licensing, missing
   physics). The `step_dynamics` boundary makes it cheap; do it on evidence, not on spec.
 
