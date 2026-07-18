@@ -10,6 +10,16 @@ extended to multi-aircraft conflict, and used for rare-event collision-risk esti
 
 ## Install
 
+Using conda (recommended):
+
+```bash
+conda create -n opencdarr python=3.11
+conda activate opencdarr
+pip install -e ".[dev]"
+```
+
+Or using venv:
+
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
@@ -42,4 +52,4 @@ observations, algorithms, papers, and one provenance card per experiment.
 
 ## License
 
-TBD.
+[MIT](LICENSE).

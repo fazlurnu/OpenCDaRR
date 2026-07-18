@@ -8,7 +8,7 @@ version = "0.0.0"
 description = "Conflict detection, resolution & recovery research platform (BlueSky as a library)."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "TBD" }
+license = { text = "MIT" }
 # Runtime deps are kept minimal on purpose (design-philosophy #10, #12): add a
 # dependency only when a file that ships needs it. numpy is here because rng.py
 # (SeedSequence.spawn) and state.py need it from Phase 0. pyyaml arrives in Step 2
