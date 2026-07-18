@@ -23,3 +23,8 @@ env/
 # so they are products, not source. Provenance lives in the vault, not in git blobs.
 results/
 outputs/
+
+# Obsidian — share config, ignore per-user workspace/cache state
+vault/.obsidian/workspace.json
+vault/.obsidian/workspace-mobile.json
+vault/.obsidian/cache
