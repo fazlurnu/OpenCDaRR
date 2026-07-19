@@ -117,7 +117,7 @@ Each item: **path · purpose · design justification · check · relations.**
     `vault/derivations/mvp-resolution.md`; ADR 0004 (pairwise cooperative-symmetric, directed);
     consumed by the loop → `step_dynamics`.
 
-- [ ] **`opencdarr/loop.py`** (new — the encounter runner)
+- [x] **`opencdarr/loop.py`** (new — the encounter runner)
   - *Purpose:* advance one pairwise encounter to termination. Each step, for **both directed
     pairs** (A→B, B→A): `detect` (predict) → if conflict, `resolve` to a `Command`, else the
     nominal command → `step_dynamics` each aircraft. Separately measure `is_los` each step.
@@ -162,9 +162,8 @@ Each item: **path · purpose · design justification · check · relations.**
     (within 0.5 m) across crossing angles; `margin` opens to ~`margin·rpz`.
   - [x] `test_scenario.py` — a generated encounter reproduces the requested `dcpa`/`tlos` to
     1e-6 and is detected as a conflict.
-  - [ ] `test_loop.py` — a resolvable encounter runs to termination with **no LoS**; an
-    encounter with resolution disabled **does** lose separation (the contrast proves the loop
-    and CR are doing real work).
+  - [x] `test_loop.py` — resolvable encounter clears with **no LoS** (`min_sep ≥ rpz`);
+    resolution disabled **does** lose separation; outcome is deterministic.
   - [ ] `test_experiment.py` — end-to-end from `config + seed`: the IPR is reproducible given
     the seed and independent of run order. (No numeric anchor value yet.)
   - [ ] *Deferred:* `test_ipr_anchor.py` — match the frozen old-code IPR — and any guarded
