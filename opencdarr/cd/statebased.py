@@ -8,25 +8,11 @@ from __future__ import annotations
 
 import math
 
-from opencdarr import geo
 from opencdarr.cd.base import ConflictDetector
+from opencdarr.kinematics import relative_enu
 from opencdarr.state import AircraftState
 
 _PARALLEL_EPS = 1e-9  # |v_rel|^2 below this = no approach (parallel, equal speed)
-
-
-def _relative_enu(
-    own: AircraftState, intr: AircraftState
-) -> tuple[float, float, float, float]:
-    """Relative position and velocity (intr − own) in East–North: (rx, ry, vx, vy)."""
-    qdr, dist = geo.qdrdist(own.lat, own.lon, intr.lat, intr.lon)
-    q = math.radians(qdr)
-    rx, ry = dist * math.sin(q), dist * math.cos(q)
-    vox = own.gs * math.sin(math.radians(own.trk))
-    voy = own.gs * math.cos(math.radians(own.trk))
-    vix = intr.gs * math.sin(math.radians(intr.trk))
-    viy = intr.gs * math.cos(math.radians(intr.trk))
-    return rx, ry, vix - vox, viy - voy
 
 
 class StateBased(ConflictDetector):
@@ -35,13 +21,13 @@ class StateBased(ConflictDetector):
     def detect(
         self, own: AircraftState, intr: AircraftState, rpz: float, t_lookahead: float
     ) -> bool:
-        rx, ry, vx, vy = _relative_enu(own, intr)
-        v2 = vx * vx + vy * vy
+        rel = relative_enu(own, intr)
+        v2 = rel.vx * rel.vx + rel.vy * rel.vy
         if v2 < _PARALLEL_EPS:
             return False  # no relative motion
 
-        t_cpa = -(rx * vx + ry * vy) / v2
-        dcpa = math.hypot(rx + vx * t_cpa, ry + vy * t_cpa)
+        t_cpa = -(rel.rx * rel.vx + rel.ry * rel.vy) / v2
+        dcpa = math.hypot(rel.rx + rel.vx * t_cpa, rel.ry + rel.vy * t_cpa)
         if dcpa >= rpz:
             return False
 

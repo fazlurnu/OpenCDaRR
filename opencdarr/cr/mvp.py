@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import math
 
-from opencdarr import geo
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.dynamics import Command
+from opencdarr.kinematics import relative_enu, velocity_enu
 from opencdarr.state import AircraftState
 
 _HEADON_EPS = 1e-3  # m: miss below this -> CPA direction set perpendicular (pick a side)
@@ -32,15 +32,8 @@ class MVP(ConflictResolver):
     def resolve(self, own: AircraftState, intr: AircraftState, rpz: float) -> Command:
         rpz_eff = rpz * self.margin
 
-        qdr, dist = geo.qdrdist(own.lat, own.lon, intr.lat, intr.lon)
-        q = math.radians(qdr)
-        rx, ry = dist * math.sin(q), dist * math.cos(q)
-
-        vox = own.gs * math.sin(math.radians(own.trk))
-        voy = own.gs * math.cos(math.radians(own.trk))
-        vix = intr.gs * math.sin(math.radians(intr.trk))
-        viy = intr.gs * math.cos(math.radians(intr.trk))
-        vx, vy = vix - vox, viy - voy  # relative velocity, intr - own
+        rel = relative_enu(own, intr)
+        rx, ry, vx, vy, dist = rel.rx, rel.ry, rel.vx, rel.vy, rel.dist
         v2 = vx * vx + vy * vy
         if v2 < _PARALLEL_EPS:
             return Command(hdg=own.trk, spd=own.gs)  # no relative motion: nothing to resolve
@@ -61,6 +54,7 @@ class MVP(ConflictResolver):
 
         scale = gain / (max(abs(t_cpa), _TCPA_EPS) * d_miss)
         # steer away: own's new velocity = v_own - dv, with dv = scale * c (points own -> intr)
+        vox, voy = velocity_enu(own)
         new_vx = vox - scale * cx
         new_vy = voy - scale * cy
         return Command(
