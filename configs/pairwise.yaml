@@ -1,0 +1,25 @@
+# Pairwise IPR run — the canonical Phase 2 example.
+seed: 42
+n_encounters: 2000
+
+scenario:
+  aircraft_type: M600
+  speed: 10.2889       # m/s (~20 kts)
+  dcpa_max: 50.0       # m — miss distance sampled in [0, dcpa_max]
+  tlos: 60.0           # s
+
+conflict:
+  rpz: 50.0            # m
+  t_lookahead: 120.0   # s
+
+methods:
+  detection: statebased
+  resolution: mvp      # null for the no-resolution baseline
+  recovery: pastcpa    # null to keep resolving (no recovery)
+  margin: 1.05         # MVP resolution-zone buffer
+  bouncing_guard: false
+
+simulation:
+  dt: 1.0              # s
+  t_max: 600.0         # s
+  done_timeout: 10.0   # s

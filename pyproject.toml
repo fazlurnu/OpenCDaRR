@@ -21,6 +21,7 @@ license = { text = "MIT" }
 # e.g. the `cdarr` conda env or `pip install -e ~/Projects/bluesky`).
 dependencies = [
     "numpy>=1.26,<3",
+    "pyyaml>=6",
 ]
 
 [project.optional-dependencies]
@@ -52,6 +53,11 @@ follow_imports = "normal"
 # (dynamics.py) rather than weakening strict mode everywhere.
 [[tool.mypy.overrides]]
 module = ["bluesky.*"]
+ignore_missing_imports = true
+
+# yaml stubs (types-PyYAML) aren't a runtime dep; treat the import as untyped at config.py.
+[[tool.mypy.overrides]]
+module = ["yaml"]
 ignore_missing_imports = true
 
 # --- Lint / format -----------------------------------------------------------

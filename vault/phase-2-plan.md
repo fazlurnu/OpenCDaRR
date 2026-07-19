@@ -37,8 +37,9 @@ estimator, and the experiment/provenance entry point.
 
 **Is NOT** (deferred, with reasons):
 
-- [ ] **Recovery (CRR)** — Step 3. IPR only asks whether resolution prevented LoS; resuming
-  nav afterwards is not needed to measure it.
+- [x] **Recovery (CRR)** — *pulled forward this pass.* Past-CPA (`crr/pastcpa.py`) is
+  implemented and wired into the loop; the FTR-family and the `nominal`-in-state work remain
+  for later.
 - [ ] **CNS noise / comms** — Step 3. Step 2's Monte Carlo samples *geometry*, not sensor
   noise (`design_brief.md`); the model stays deterministic given an encounter.
 - [ ] **VO resolution, vertical resolution** — MVP + horizontal only (2D, per `state.py`).
@@ -54,7 +55,7 @@ Each item: **path · purpose · design justification · check · relations.**
 
 ### 2a — one deterministic encounter
 
-- [ ] **`opencdarr/config.py`** (new — deferred from Phase 0, now has a caller)
+- [x] **`opencdarr/config.py`** (new — deferred from Phase 0, now has a caller)
   - *Purpose:* load a run spec from YAML into a typed, frozen `Config` dataclass (scenario +
     aircraft + conflict params + seed).
   - *Design:* YAML → dataclass with full type hints; validated on load (fail fast). One place
@@ -133,7 +134,7 @@ Each item: **path · purpose · design justification · check · relations.**
 
 ### 2b — plain-MC IPR + provenance
 
-- [ ] **`opencdarr/estimator.py`** (new — plain Monte Carlo)
+- [x] **`opencdarr/estimator.py`** (new — plain Monte Carlo)
   - *Purpose:* run N sampled encounters and aggregate `IPR = 1 − n_los/n_conflict`.
   - *Design:* pure MC over the scenario distribution; per-encounter RNG spawned from the root
     (ADR 0001) so it is reproducible and parallel-ready (joblib later). Reports IPR with a
@@ -141,7 +142,7 @@ Each item: **path · purpose · design justification · check · relations.**
   - *Check:* IPR is deterministic given the seed; independent of run order / worker count.
   - *Relations:* the `estimator` layer (MC now, IPS at Step 6); ADR 0001.
 
-- [ ] **`opencdarr/experiment.py`** (new — the entry point)
+- [x] **`opencdarr/experiment.py`** (new — the entry point)
   - *Purpose:* `run_one_experiment(config, seed) -> Result` — the single, readable top-level a
     newcomer can read straight through; writes a provenance card.
   - *Design:* wires config → scenario → loop → estimator; records `config + seed + code-hash →
@@ -164,7 +165,7 @@ Each item: **path · purpose · design justification · check · relations.**
     1e-6 and is detected as a conflict.
   - [x] `test_loop.py` — resolvable encounter clears with **no LoS** (`min_sep ≥ rpz`);
     resolution disabled **does** lose separation; outcome is deterministic.
-  - [ ] `test_experiment.py` — end-to-end from `config + seed`: the IPR is reproducible given
+  - [x] `test_experiment.py` — end-to-end from `config + seed`: the IPR is reproducible given
     the seed and independent of run order. (No numeric anchor value yet.)
   - [ ] *Deferred:* `test_ipr_anchor.py` — match the frozen old-code IPR — and any guarded
     BlueSky cross-check — belong to the later anchoring pass.

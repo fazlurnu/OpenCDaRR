@@ -11,10 +11,13 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
+
 from opencdarr import geo
 from opencdarr.state import AircraftState
 
 _PARALLEL_EPS = 1e-9  # |v_rel| below this = no closing geometry
+_DPSI_MIN = 5.0  # deg: exclude a band around 0/360 (near-parallel, near-degenerate closing)
 
 
 def create_conflict(
@@ -67,3 +70,30 @@ def create_conflict(
 
     lat, lon = geo.forward(own.lat, own.lon, bearing, dist)
     return AircraftState(id=intr_id, lat=lat, lon=lon, trk=psi_i, gs=gs_i)
+
+
+def sample_pairwise(
+    rng: np.random.Generator,
+    *,
+    speed: float,
+    dcpa_max: float,
+    tlos: float,
+    rpz: float,
+    own_id: str = "OWN",
+    intr_id: str = "INT",
+) -> tuple[AircraftState, AircraftState]:
+    """Draw one random pairwise encounter from the seeded generator.
+
+    Ownship flies north from a fixed origin at ``speed``; the intruder crosses at a random
+    angle ``dpsi`` (uniform over the full range, excluding a near-0/360 band), miss distance
+    ``dcpa`` ~ U(0, dcpa_max), and random side. This is the encounter distribution the plain-MC
+    estimator samples.
+    """
+    dpsi = float(rng.uniform(_DPSI_MIN, 360.0 - _DPSI_MIN))
+    dcpa = float(rng.uniform(0.0, dcpa_max))
+    side = 1 if rng.random() < 0.5 else -1
+    own = AircraftState(id=own_id, lat=52.0, lon=4.0, trk=0.0, gs=speed)
+    intr = create_conflict(
+        own, intr_id=intr_id, dpsi=dpsi, dcpa=dcpa, tlos=tlos, rpz=rpz, side=side
+    )
+    return own, intr
