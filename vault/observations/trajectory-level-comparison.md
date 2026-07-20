@@ -1,9 +1,8 @@
 # Trajectory-level comparison — OpenCDaRR vs BlueSky (CDaRR_git)
 
-**Status: reference cross-check. OpenCDaRR reproduces the reference's deterministic maneuver; the
-only divergence is in the ground-speed channel (a BlueSky ground-speed drift), flagged for later
-inspection.** Written 2026-07-20, closing the near-parallel-IPR investigation
-([[near-parallel-ipr-inversion]]).
+**Status: reference cross-check. OpenCDaRR reproduces the reference's deterministic maneuver; the only divergence is in the ground-speed channel (a BlueSky ground-speed drift), flagged for later inspection.** Written 2026-07-20, closing the near-parallel-IPR investigation ([[near-parallel-ipr-inversion]]).
+
+My honest saying, maybe the previous version of CDaRR was wrong. I don't see why the ground speed has to drift that much in a deterministic setup.
 
 ## What this is
 
