@@ -49,6 +49,8 @@ def estimate_ipr(
             dcpa_max=config.scenario.dcpa_max,
             tlos=config.scenario.tlos,
             rpz=config.conflict.rpz,
+            pos_ci95=config.scenario.pos_ci95,
+            vel_ci95=config.scenario.vel_ci95,
         )
         outcome = run_encounter(
             own,

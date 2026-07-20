@@ -88,6 +88,15 @@ class AircraftState:
         declared none. Held in the state (not a global) so it clones with the particle;
         :class:`DesiredVelocity` documents its privacy. Intent-based recovery reads it; the
         certain-kinematics algorithms (detection, resolution, past-CPA) ignore it.
+    pos_ci95, vel_ci95:
+        The aircraft's own **declared measurement accuracy** (95% radial position [m] / velocity
+        [m/s]) — a property of *this* aircraft's sensor, not a fixed simulation-wide constant.
+        It lives here, not on the navigation model, for the same reason ``turn_rate`` does: it can
+        differ per aircraft and evolve over a run (e.g. degrading GPS coverage), so it must travel
+        with the state to clone correctly. :class:`~opencdarr.cns.GpsNavigation` reads these off
+        the aircraft being measured and copies them onto the broadcast — accuracy is declared
+        metadata a receiver gets *with* the message, not something it has to be told separately.
+        Zero (default) means a perfect, noiseless sensor.
     """
 
     id: str
@@ -97,6 +106,8 @@ class AircraftState:
     gs: float
     turn_rate: float = 0.0
     desired: DesiredVelocity | None = None
+    pos_ci95: float = 0.0
+    vel_ci95: float = 0.0
 
 
 def create_aircraft(
@@ -108,6 +119,8 @@ def create_aircraft(
     trk: float,
     gs: float,
     turn_rate: float = 0.0,
+    pos_ci95: float = 0.0,
+    vel_ci95: float = 0.0,
 ) -> AircraftState:
     """Create an :class:`AircraftState`, validating it against the flight envelope.
 
@@ -129,4 +142,9 @@ def create_aircraft(
             f"initial turn rate {turn_rate} deg/s for {id!r} exceeds the max turn rate "
             f"{perf.max_tr} deg/s"
         )
-    return AircraftState(id=id, lat=lat, lon=lon, trk=trk, gs=gs, turn_rate=turn_rate)
+    if pos_ci95 < 0.0 or vel_ci95 < 0.0:
+        raise ValueError(f"pos_ci95/vel_ci95 must be >= 0; got {pos_ci95=}, {vel_ci95=}")
+    return AircraftState(
+        id=id, lat=lat, lon=lon, trk=trk, gs=gs, turn_rate=turn_rate,
+        pos_ci95=pos_ci95, vel_ci95=vel_ci95,
+    )

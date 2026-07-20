@@ -21,6 +21,8 @@ class ScenarioConfig:
     speed: float  # ground speed [m/s]
     dcpa_max: float  # miss distance sampled in [0, dcpa_max] [m]
     tlos: float  # time to loss of separation [s]
+    pos_ci95: float = 0.0  # declared position measurement accuracy, 95% radial [m] (0 = perfect)
+    vel_ci95: float = 0.0  # declared velocity measurement accuracy, 95% radial [m/s] (0 = perfect)
 
 
 @dataclass(frozen=True)
@@ -81,6 +83,8 @@ def _validate(cfg: Config) -> None:
         "scenario.speed > 0": cfg.scenario.speed > 0,
         "scenario.dcpa_max >= 0": cfg.scenario.dcpa_max >= 0,
         "scenario.tlos > 0": cfg.scenario.tlos > 0,
+        "scenario.pos_ci95 >= 0": cfg.scenario.pos_ci95 >= 0,
+        "scenario.vel_ci95 >= 0": cfg.scenario.vel_ci95 >= 0,
         "conflict.rpz > 0": cfg.conflict.rpz > 0,
         "conflict.t_lookahead > 0": cfg.conflict.t_lookahead > 0,
         "methods.margin >= 1": cfg.methods.margin >= 1.0,

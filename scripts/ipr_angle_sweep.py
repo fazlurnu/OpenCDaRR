@@ -46,10 +46,13 @@ def _recovery(name: str, bouncing_guard: bool) -> RecoveryCriterion:
 
 
 def _one(dpsi: float, resolver_name: str, seq, cfg: argparse.Namespace) -> int:
-    own = AircraftState(id="OWN", lat=52.0, lon=4.0, trk=0.0, gs=cfg.speed)
+    own = AircraftState(
+        id="OWN", lat=52.0, lon=4.0, trk=0.0, gs=cfg.speed,
+        pos_ci95=cfg.pos_ci95, vel_ci95=cfg.vel_ci95,
+    )
     intr = create_conflict(
         own, intr_id="INT", dpsi=dpsi, dcpa=0.0, tlos=cfg.tlos, rpz=cfg.rpz, side=1)
-    nav = GpsNavigation(cfg.pos_ci95, cfg.vel_ci95)
+    nav = GpsNavigation()
     out = run_encounter(
         own, intr, perf=M600, rpz=cfg.rpz, t_lookahead=cfg.lookahead, dt=cfg.dt,
         detector=StateBased(), resolver=_resolver(resolver_name, cfg.margin),

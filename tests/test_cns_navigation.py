@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import math
 
 import numpy as np
@@ -23,7 +24,8 @@ def _pos_offset_enu(true: AircraftState, meas: AircraftState) -> tuple[float, fl
 
 
 def test_zero_noise_measures_true_state() -> None:
-    nav = GpsNavigation(pos_ci95=0.0, vel_ci95=0.0)
+    """Default AircraftState declares perfect accuracy (pos_ci95 = vel_ci95 = 0)."""
+    nav = GpsNavigation()
     msg = nav.measure(_TRUE, t=5.0, rng=np.random.default_rng(0))
     assert msg.source == "A"
     assert msg.t_meas == 5.0
@@ -33,12 +35,21 @@ def test_zero_noise_measures_true_state() -> None:
     assert msg.state.gs == pytest.approx(_TRUE.gs)
 
 
+def test_broadcast_declares_the_source_accuracy() -> None:
+    """The measured (broadcast) state carries the source's own declared ci95."""
+    true = dataclasses.replace(_TRUE, pos_ci95=20.0, vel_ci95=2.0)
+    msg = GpsNavigation().measure(true, t=0.0, rng=np.random.default_rng(0))
+    assert msg.state.pos_ci95 == 20.0
+    assert msg.state.vel_ci95 == 2.0
+
+
 def test_position_noise_is_zero_mean_and_ci95_calibrated() -> None:
     ci95 = 20.0
-    nav = GpsNavigation(pos_ci95=ci95, vel_ci95=0.0)
+    true = dataclasses.replace(_TRUE, pos_ci95=ci95, vel_ci95=0.0)
+    nav = GpsNavigation()
     rng = np.random.default_rng(1)
     offsets = np.array(
-        [_pos_offset_enu(_TRUE, nav.measure(_TRUE, 0.0, rng).state) for _ in range(8000)]
+        [_pos_offset_enu(true, nav.measure(true, 0.0, rng).state) for _ in range(8000)]
     )
     assert abs(offsets[:, 0].mean()) < 1.0  # zero-mean per axis
     assert abs(offsets[:, 1].mean()) < 1.0
@@ -49,10 +60,11 @@ def test_position_noise_is_zero_mean_and_ci95_calibrated() -> None:
 
 def test_velocity_noise_is_zero_mean_and_ci95_calibrated() -> None:
     vel_ci95 = 2.0
-    nav = GpsNavigation(pos_ci95=0.0, vel_ci95=vel_ci95)
+    true = dataclasses.replace(_TRUE, pos_ci95=0.0, vel_ci95=vel_ci95)
+    nav = GpsNavigation()
     rng = np.random.default_rng(2)
-    ve = np.array([velocity_enu(nav.measure(_TRUE, 0.0, rng).state) for _ in range(8000)])
-    true_e, true_n = velocity_enu(_TRUE)
+    ve = np.array([velocity_enu(nav.measure(true, 0.0, rng).state) for _ in range(8000)])
+    true_e, true_n = velocity_enu(true)
     assert abs(ve[:, 0].std() - vel_ci95 * _SIGMA_PER_CI95) < 0.2  # per-axis sigma
     assert abs(ve[:, 0].mean() - true_e) < 0.2
     assert abs(ve[:, 1].mean() - true_n) < 0.2
@@ -62,7 +74,8 @@ def test_velocity_noise_is_zero_mean_and_ci95_calibrated() -> None:
 
 
 def test_reproducible_per_seed() -> None:
-    nav = GpsNavigation(pos_ci95=20.0, vel_ci95=1.0)
-    a = nav.measure(_TRUE, 0.0, np.random.default_rng(42)).state
-    b = nav.measure(_TRUE, 0.0, np.random.default_rng(42)).state
+    true = dataclasses.replace(_TRUE, pos_ci95=20.0, vel_ci95=1.0)
+    nav = GpsNavigation()
+    a = nav.measure(true, 0.0, np.random.default_rng(42)).state
+    b = nav.measure(true, 0.0, np.random.default_rng(42)).state
     assert a == b

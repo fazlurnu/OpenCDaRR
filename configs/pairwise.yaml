@@ -7,6 +7,8 @@ scenario:
   speed: 10.2889       # m/s (~20 kts)
   dcpa_max: 50.0       # m — miss distance sampled in [0, dcpa_max]
   tlos: 60.0           # s
+  pos_ci95: 0.0        # m — declared position accuracy, 95% radial (0 = perfect sensor)
+  vel_ci95: 0.0        # m/s — declared velocity accuracy, 95% radial (0 = perfect sensor)
 
 conflict:
   rpz: 50.0            # m

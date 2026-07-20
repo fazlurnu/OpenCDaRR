@@ -30,12 +30,16 @@ def create_conflict(
     rpz: float,
     gs_intr: float | None = None,
     side: int = 1,
+    pos_ci95: float | None = None,
+    vel_ci95: float | None = None,
 ) -> AircraftState:
     """Return an intruder in conflict with ``own``.
 
     The intruder crosses at ``dpsi`` degrees, with closest approach ``dcpa`` metres reached
     such that separation is first lost (enters ``rpz``) ``tlos`` seconds from now. Speed
-    defaults to the ownship's; ``side`` (+1/−1) selects which side it passes.
+    defaults to the ownship's; ``side`` (+1/−1) selects which side it passes. ``pos_ci95``/
+    ``vel_ci95`` (the intruder's own declared measurement accuracy) default to matching
+    ``own``'s, the same way ``gs_intr`` defaults to ``own.gs``.
     """
     if tlos < 0 or dcpa < 0 or rpz <= 0:
         raise ValueError(f"require tlos>=0, dcpa>=0, rpz>0; got {tlos=}, {dcpa=}, {rpz=}")
@@ -69,7 +73,11 @@ def create_conflict(
     bearing = math.degrees(math.atan2(r0e, r0n)) % 360.0
 
     lat, lon = geo.forward(own.lat, own.lon, bearing, dist)
-    return AircraftState(id=intr_id, lat=lat, lon=lon, trk=psi_i, gs=gs_i)
+    ci95_p = own.pos_ci95 if pos_ci95 is None else pos_ci95
+    ci95_v = own.vel_ci95 if vel_ci95 is None else vel_ci95
+    return AircraftState(
+        id=intr_id, lat=lat, lon=lon, trk=psi_i, gs=gs_i, pos_ci95=ci95_p, vel_ci95=ci95_v
+    )
 
 
 def sample_pairwise(
@@ -81,18 +89,23 @@ def sample_pairwise(
     rpz: float,
     own_id: str = "OWN",
     intr_id: str = "INT",
+    pos_ci95: float = 0.0,
+    vel_ci95: float = 0.0,
 ) -> tuple[AircraftState, AircraftState]:
     """Draw one random pairwise encounter from the seeded generator.
 
     Ownship flies north from a fixed origin at ``speed``; the intruder crosses at a random
     angle ``dpsi`` (uniform over the full range, excluding a near-0/360 band), miss distance
     ``dcpa`` ~ U(0, dcpa_max), and random side. This is the encounter distribution the plain-MC
-    estimator samples.
+    estimator samples. ``pos_ci95``/``vel_ci95`` set both aircraft's declared measurement
+    accuracy (default 0 = perfect); the intruder inherits the ownship's via ``create_conflict``.
     """
     dpsi = float(rng.uniform(_DPSI_MIN, 360.0 - _DPSI_MIN))
     dcpa = float(rng.uniform(0.0, dcpa_max))
     side = 1 if rng.random() < 0.5 else -1
-    own = AircraftState(id=own_id, lat=52.0, lon=4.0, trk=0.0, gs=speed)
+    own = AircraftState(
+        id=own_id, lat=52.0, lon=4.0, trk=0.0, gs=speed, pos_ci95=pos_ci95, vel_ci95=vel_ci95
+    )
     intr = create_conflict(
         own, intr_id=intr_id, dpsi=dpsi, dcpa=dcpa, tlos=tlos, rpz=rpz, side=side
     )

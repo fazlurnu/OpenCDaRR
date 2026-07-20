@@ -9,6 +9,18 @@ broadcast (Phase 3a). Re-derived from `sim_models/noise_model.py` /
 - Distributions: [`opencdarr/cns/noise_distributions.py`](../../opencdarr/cns/noise_distributions.py)
 - Validated by: [`tests/test_cns_navigation.py`](../../tests/test_cns_navigation.py)
 
+## Where CI95 lives
+
+`pos_ci95` / `vel_ci95` are **fields on `AircraftState`** (its own declared measurement
+accuracy), not constructor parameters of `GpsNavigation` — the same reasoning as `turn_rate`:
+accuracy is a property of *that aircraft's* sensor, can differ between aircraft, and may evolve
+over a run (e.g. degrading GPS coverage), so it must travel with the clonable state, not sit on a
+shared, fixed navigation object. `GpsNavigation.measure(true, t, rng)` reads `true.pos_ci95` /
+`true.vel_ci95` to size the noise, and **copies the same values onto the broadcast state** — a
+receiver gets the sender's declared accuracy *with* the message, as ordinary state, with no
+separate channel. Default `0.0` on both fields means a perfect sensor (no noise), the same
+"neutral default" convention as `turn_rate = 0.0`.
+
 ## Position error — CI95 to σ
 
 Position error is a zero-mean 2D isotropic Gaussian, each axis $N(0, \sigma^2)$. GPS/ADS-B
