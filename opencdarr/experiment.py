@@ -17,7 +17,7 @@ import yaml
 from opencdarr.cd import StateBased
 from opencdarr.cd.base import ConflictDetector
 from opencdarr.config import Config
-from opencdarr.cr import MVP
+from opencdarr.cr import MVP, VO
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr import PastCPA
 from opencdarr.crr.base import RecoveryCriterion
@@ -47,6 +47,8 @@ def _make_resolver(name: str | None, margin: float) -> ConflictResolver | None:
         return None
     if name == "mvp":
         return MVP(margin=margin)
+    if name == "vo":
+        return VO(margin=margin)
     raise ValueError(f"unknown resolver {name!r}")
 
 
