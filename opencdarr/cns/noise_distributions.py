@@ -12,10 +12,12 @@ import math
 import numpy as np
 
 # 95% radial CI -> per-axis 1-sigma for a 2D isotropic Gaussian: sigma = CI95 / sqrt(chi2_2,0.95).
-_CI95_TO_SIGMA = 1.0 / math.sqrt(5.991464547)  # ~= 0.4085
+# Shared by position and velocity error: both are per-axis-Gaussian, isotropic 2D quantities
+# (vault/derivations/gps-noise.md).
+CI95_TO_SIGMA = 1.0 / math.sqrt(5.991464547)  # ~= 0.4085
 
 
 def gaussian(rng: np.random.Generator, ci95: float, trk_deg: float) -> tuple[float, float]:
     """Zero-mean isotropic 2D Gaussian position error [m] as (East, North). ``trk_deg`` unused."""
-    sigma = ci95 * _CI95_TO_SIGMA
+    sigma = ci95 * CI95_TO_SIGMA
     return float(rng.normal(0.0, sigma)), float(rng.normal(0.0, sigma))

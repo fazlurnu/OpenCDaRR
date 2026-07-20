@@ -6,9 +6,9 @@ A criterion subclasses :class:`RecoveryCriterion` and implements ``should_resume
 Implementations live beside this file:
 
 - ``pastcpa.py`` → :class:`PastCPA` (resume once diverging and separated) — implemented.
-- e.g. ``ftr.py`` → a Free-Track-Recovery criterion that re-checks whether resuming to
-  ``own``'s nominal navigation would re-trigger a conflict (holds a detector + lookahead on
-  the instance) — *example, not implemented*.
+- ``ftr.py`` → :class:`FTR` (Free-To-Revert): resume once reverting to ``own``'s desired
+  (nominal) velocity would keep the pair clear — reads ``own.desired`` from the state —
+  implemented.
 """
 
 from __future__ import annotations

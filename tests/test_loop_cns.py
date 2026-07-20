@@ -16,6 +16,10 @@ from opencdarr.crr import PastCPA
 from opencdarr.estimator import estimate_ipr
 from opencdarr.performance import M600
 
+# GpsNavigation's 2nd arg is now vel_ci95 (95% radial), not a per-axis sigma: 2.4477x a sigma
+# value, so these keep the same effective noise level as before the pos-ci95/vel-ci95 rename.
+_VEL_CI95_2SIGMA = 2.0 * 2.4477
+
 
 def _config(seed: int = 1, n: int = 200) -> Config:
     return Config(
@@ -42,8 +46,8 @@ def test_zero_noise_navigation_matches_no_navigation() -> None:
 
 def test_ipr_degrades_monotonically_with_gps_noise() -> None:
     clean = _ipr(GpsNavigation(0.0, 0.0))
-    mild = _ipr(GpsNavigation(50.0, 2.0))
-    severe = _ipr(GpsNavigation(200.0, 2.0))
+    mild = _ipr(GpsNavigation(50.0, _VEL_CI95_2SIGMA))
+    severe = _ipr(GpsNavigation(200.0, _VEL_CI95_2SIGMA))
     assert clean > mild > severe
     assert clean == 1.0
     assert severe < 0.8  # heavy CNS uncertainty -> a clear drop (the over-clear buffer + the
@@ -51,7 +55,7 @@ def test_ipr_degrades_monotonically_with_gps_noise() -> None:
 
 
 def test_reproducible_with_navigation() -> None:
-    nav = GpsNavigation(50.0, 2.0)
+    nav = GpsNavigation(50.0, _VEL_CI95_2SIGMA)
     r1 = estimate_ipr(_config(), M600, StateBased(), MVP(1.05), PastCPA(), navigation=nav)
     r2 = estimate_ipr(_config(), M600, StateBased(), MVP(1.05), PastCPA(), navigation=nav)
     assert r1 == r2

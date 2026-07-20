@@ -37,6 +37,21 @@ from opencdarr.performance import Performance
 
 
 @dataclass(frozen=True)
+class DesiredVelocity:
+    """An aircraft's intended (desired/nominal) velocity: track [deg] + ground speed [m/s].
+
+    This is *intent*, not observed kinematics — where the aircraft wants to go, which it knows
+    about itself exactly (it is the autopilot target). It is **private by default**: another
+    aircraft perceives it only when intent-sharing is explicitly enabled (``run_encounter``'s
+    ``share_intent``). Intent-based recovery (:class:`~opencdarr.crr.FTR`) reads the ownship's own
+    ``desired`` to decide whether reverting to it would re-trigger a conflict.
+    """
+
+    trk: float
+    gs: float
+
+
+@dataclass(frozen=True)
 class AircraftState:
     """One aircraft's 2D horizontal point-mass kinematics.
 
@@ -68,6 +83,11 @@ class AircraftState:
         change (``max_dtr2``), so the next step's turn rate is bounded relative to this
         one. It must therefore travel inside the state — an IPS clone that lost it would
         turn differently from its parent. Zero for an aircraft flying straight.
+    desired:
+        The aircraft's intended (desired/nominal) velocity — its *intent* — or ``None`` when it has
+        declared none. Held in the state (not a global) so it clones with the particle;
+        :class:`DesiredVelocity` documents its privacy. Intent-based recovery reads it; the
+        certain-kinematics algorithms (detection, resolution, past-CPA) ignore it.
     """
 
     id: str
@@ -76,6 +96,7 @@ class AircraftState:
     trk: float
     gs: float
     turn_rate: float = 0.0
+    desired: DesiredVelocity | None = None
 
 
 def create_aircraft(

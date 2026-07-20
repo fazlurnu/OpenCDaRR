@@ -23,7 +23,7 @@ def _pos_offset_enu(true: AircraftState, meas: AircraftState) -> tuple[float, fl
 
 
 def test_zero_noise_measures_true_state() -> None:
-    nav = GpsNavigation(pos_ci95=0.0, vel_std=0.0)
+    nav = GpsNavigation(pos_ci95=0.0, vel_ci95=0.0)
     msg = nav.measure(_TRUE, t=5.0, rng=np.random.default_rng(0))
     assert msg.source == "A"
     assert msg.t_meas == 5.0
@@ -35,7 +35,7 @@ def test_zero_noise_measures_true_state() -> None:
 
 def test_position_noise_is_zero_mean_and_ci95_calibrated() -> None:
     ci95 = 20.0
-    nav = GpsNavigation(pos_ci95=ci95, vel_std=0.0)
+    nav = GpsNavigation(pos_ci95=ci95, vel_ci95=0.0)
     rng = np.random.default_rng(1)
     offsets = np.array(
         [_pos_offset_enu(_TRUE, nav.measure(_TRUE, 0.0, rng).state) for _ in range(8000)]
@@ -47,18 +47,22 @@ def test_position_noise_is_zero_mean_and_ci95_calibrated() -> None:
     assert abs(float(np.quantile(radial, 0.95)) - ci95) < 1.5  # 95% radial CI
 
 
-def test_velocity_noise_perturbs_speed_and_track() -> None:
-    nav = GpsNavigation(pos_ci95=0.0, vel_std=2.0)
+def test_velocity_noise_is_zero_mean_and_ci95_calibrated() -> None:
+    vel_ci95 = 2.0
+    nav = GpsNavigation(pos_ci95=0.0, vel_ci95=vel_ci95)
     rng = np.random.default_rng(2)
-    ve = np.array([velocity_enu(nav.measure(_TRUE, 0.0, rng).state) for _ in range(4000)])
+    ve = np.array([velocity_enu(nav.measure(_TRUE, 0.0, rng).state) for _ in range(8000)])
     true_e, true_n = velocity_enu(_TRUE)
-    assert abs(ve[:, 0].std() - 2.0) < 0.2
+    assert abs(ve[:, 0].std() - vel_ci95 * _SIGMA_PER_CI95) < 0.2  # per-axis sigma
     assert abs(ve[:, 0].mean() - true_e) < 0.2
     assert abs(ve[:, 1].mean() - true_n) < 0.2
+    err_e, err_n = ve[:, 0] - true_e, ve[:, 1] - true_n
+    radial = np.hypot(err_e, err_n)
+    assert abs(float(np.quantile(radial, 0.95)) - vel_ci95) < 0.3  # 95% radial CI
 
 
 def test_reproducible_per_seed() -> None:
-    nav = GpsNavigation(pos_ci95=20.0, vel_std=1.0)
+    nav = GpsNavigation(pos_ci95=20.0, vel_ci95=1.0)
     a = nav.measure(_TRUE, 0.0, np.random.default_rng(42)).state
     b = nav.measure(_TRUE, 0.0, np.random.default_rng(42)).state
     assert a == b

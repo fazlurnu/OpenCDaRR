@@ -19,7 +19,7 @@ from opencdarr.cd.base import ConflictDetector
 from opencdarr.config import Config
 from opencdarr.cr import MVP, VO
 from opencdarr.cr.base import ConflictResolver
-from opencdarr.crr import PastCPA
+from opencdarr.crr import FTR, PastCPA
 from opencdarr.crr.base import RecoveryCriterion
 from opencdarr.estimator import IPRResult, estimate_ipr
 from opencdarr.performance import M600, Performance
@@ -57,6 +57,8 @@ def _make_recovery(name: str | None, bouncing_guard: bool) -> RecoveryCriterion 
         return None
     if name == "pastcpa":
         return PastCPA(bouncing_guard=bouncing_guard)
+    if name == "ftr":
+        return FTR()
     raise ValueError(f"unknown recovery {name!r}")
 
 

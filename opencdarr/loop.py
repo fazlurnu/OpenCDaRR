@@ -17,7 +17,7 @@ This is the pairwise precursor to the `advance` / `is_terminal` interface.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
@@ -29,7 +29,7 @@ from opencdarr.crr.base import RecoveryCriterion
 from opencdarr.dynamics import Command, step_dynamics
 from opencdarr.kinematics import relative_enu
 from opencdarr.performance import Performance
-from opencdarr.state import AircraftState
+from opencdarr.state import AircraftState, DesiredVelocity
 
 
 @dataclass(frozen=True)
@@ -98,6 +98,7 @@ def run_encounter(
     t_max: float = 600.0,
     done_timeout: float = 10.0,
     broadcast_interval: float = 1.0,
+    share_intent: bool = False,
 ) -> EncounterOutcome:
     """Run one pairwise encounter to termination and report its outcome.
 
@@ -111,7 +112,13 @@ def run_encounter(
     view is the true state (Phase 2 behaviour). The outcome (conflict, LoS, separation) is always
     measured on the **true** states, every step. Terminates once the pair has been diverging and
     separated for ``done_timeout`` seconds, or at ``t_max``.
+
+    Each aircraft's **intent** (its ``desired`` nominal velocity) is its initial state, held on the
+    true state. It is private: another aircraft perceives it only when ``share_intent`` is True
+    (intent-based CDR). Intent-based recovery (:class:`~opencdarr.crr.FTR`) reads the ownship's own.
     """
+    own = replace(own, desired=DesiredVelocity(own.trk, own.gs))
+    intr = replace(intr, desired=DesiredVelocity(intr.trk, intr.gs))
     nom_own = Command(hdg=own.trk, spd=own.gs)
     nom_intr = Command(hdg=intr.trk, spd=intr.gs)
     resolving_own = resolving_intr = False
@@ -136,19 +143,25 @@ def run_encounter(
 
         # CDR decisions on the broadcast cadence; the command is held between ticks
         if t + eps >= next_broadcast:
-            # each aircraft's fresh (noisy) self-broadcast; both endpoints carry noise
+            # each aircraft's fresh (noisy) self-fix; both endpoints carry noise
             if navigation is not None and rng is not None:
-                bcast_own = navigation.measure(own, t, rng).state
-                bcast_intr = navigation.measure(intr, t, rng).state
+                fix_own = navigation.measure(own, t, rng).state
+                fix_intr = navigation.measure(intr, t, rng).state
             else:
-                bcast_own, bcast_intr = own, intr
+                fix_own, fix_intr = own, intr
+
+            # an aircraft knows its own intent exactly; another sees it only when sharing is on
+            self_own = replace(fix_own, desired=own.desired)
+            self_intr = replace(fix_intr, desired=intr.desired)
+            tx_own = replace(fix_own, desired=own.desired if share_intent else None)
+            tx_intr = replace(fix_intr, desired=intr.desired if share_intent else None)
 
             cmd_own, resolving_own = _decide(
-                bcast_own, bcast_intr, nom_own, resolving_own,
+                self_own, tx_intr, nom_own, resolving_own,
                 rpz, t_lookahead, detector, resolver, recovery,
             )
             cmd_intr, resolving_intr = _decide(
-                bcast_intr, bcast_own, nom_intr, resolving_intr,
+                self_intr, tx_own, nom_intr, resolving_intr,
                 rpz, t_lookahead, detector, resolver, recovery,
             )
             next_broadcast += broadcast_interval
