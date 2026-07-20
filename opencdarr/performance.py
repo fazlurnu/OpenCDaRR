@@ -49,12 +49,16 @@ class Performance:
 # DJI Matrice 600. Sources in the BlueSky fork:
 #   max_tr, max_dtr2 -> bluesky/traffic/traffic.py:288-289 (the M600 turn-rate limiter)
 #   v_max, v_min     -> bluesky/resources/performance/OpenAP/rotor/aircraft.json (M600 envelop)
-#   ax               -> ASSUMED 5.0 m/s^2, not sourced from BlueSky. Revisit against the perf
-#                       model (or a datasheet) when speed-change fidelity matters (Step 3, CR).
+#   ax               -> 3.5 m/s^2. MEASURED from BlueSky's running perf model, not the static
+#                       attribute: traf.perf.axmax reads 2.0 right after cre() (a placeholder),
+#                       but the OpenAP rotor model resets it to a constant 3.5 once the aircraft
+#                       is moving — verified with an accel probe (10.3->18 and 18->6 both ramp at
+#                       exactly 3.5 m/s^2). This is the value update_airspeed (traffic.py:510-511)
+#                       actually uses. (Was ASSUMED 5.0, then briefly mis-set to the 2.0 placeholder.)
 M600 = Performance(
     max_tr=15.0,
     max_dtr2=10.0,
     v_max=18.0,
     v_min=-18.0,
-    ax=5.0,
+    ax=3.5,
 )

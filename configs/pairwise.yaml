@@ -20,6 +20,7 @@ methods:
   bouncing_guard: false
 
 simulation:
-  dt: 1.0              # s
-  t_max: 600.0         # s
-  done_timeout: 10.0   # s
+  dt: 1.0                  # s — integration step
+  t_max: 600.0             # s
+  done_timeout: 10.0       # s
+  broadcast_interval: 1.0  # s — CDR/measurement cadence (ADS-L rate); command held between ticks

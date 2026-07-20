@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from opencdarr.cd.base import ConflictDetector
+from opencdarr.cns.base import NavigationModel
 from opencdarr.config import Config
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr.base import RecoveryCriterion
@@ -35,14 +36,15 @@ def estimate_ipr(
     detector: ConflictDetector,
     resolver: ConflictResolver | None,
     recovery: RecoveryCriterion | None,
+    navigation: NavigationModel | None = None,
 ) -> IPRResult:
     """Run the plain-MC estimate over ``config.n_encounters`` sampled encounters."""
     n_conflict = 0
     n_los = 0
     for seq in spawn(root_seed_sequence(config.seed), config.n_encounters):
-        rng = generator(seq)
+        geom_seq, sim_seq = spawn(seq, 2)  # split geometry from the (CNS) simulation stream
         own, intr = sample_pairwise(
-            rng,
+            generator(geom_seq),
             speed=config.scenario.speed,
             dcpa_max=config.scenario.dcpa_max,
             tlos=config.scenario.tlos,
@@ -58,8 +60,11 @@ def estimate_ipr(
             detector=detector,
             resolver=resolver,
             recovery=recovery,
+            navigation=navigation,
+            rng=generator(sim_seq),
             t_max=config.simulation.t_max,
             done_timeout=config.simulation.done_timeout,
+            broadcast_interval=config.simulation.broadcast_interval,
         )
         if outcome.conflict:
             n_conflict += 1
