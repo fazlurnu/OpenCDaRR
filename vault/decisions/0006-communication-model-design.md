@@ -46,6 +46,12 @@ Bernoulli reception; if received, draw latency and enqueue an `InFlight` with
 `deliver_t = t_meas + latency`; then move any `in_flight` entries with `deliver_t <= t` into
 `held`.
 
+`latency` is a **pluggable `LatencyDistribution`** (`(rng) -> delay`, mirroring `NoiseDistribution`
+for position error) — a constant, `uniform_latency`, `lognormal_latency`, or a custom callable, not
+a fixed shape. `reception_prob` is *not* similarly pluggable over time (fixed per link for the
+whole run, `Comm._reception_for` has no `t`) — a real gap, tracked as
+[[time-varying-reception-probability]] rather than designed here.
+
 ### 2. Hold-as-is, not dead-reckoning
 
 A receiver holding a stale message uses it **unchanged** — it does not extrapolate the sender's

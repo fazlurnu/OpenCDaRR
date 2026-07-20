@@ -9,8 +9,7 @@ Implements [[0006-communication-model-design]] §2. Reproduce with
 ## Setup
 
 One directed link, `INT → OWN`, `reception_prob = 0.6` (deliberately lossy — frequent, visible
-drops) and **zero latency**, so the only effect on screen is reception, not delay. `INT`'s true
-ground speed follows a hand-shaped profile (ramp up 10→16 m/s, hold, ramp down to 4 m/s, ramp back
+drops) and **zero latency**, so the only effect on screen is reception, not delay. `INT`'s true ground speed follows a hand-shaped profile (ramp up 10→16 m/s, hold, ramp down to 4 m/s, ramp back
 up) sampled every 0.05 s — continuous and always moving, so a drop is unmistakable: perceived
 simply fails to follow it.
 

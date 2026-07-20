@@ -45,7 +45,7 @@ class SimulationConfig:
     dt: float  # integration step [s]
     t_max: float  # max encounter time [s]
     done_timeout: float  # sustained-divergence time to terminate [s]
-    broadcast_interval: float = 1.0  # CDR/measurement cadence [s] (ADS-L rate); command held between
+    broadcast_interval: float = 1.0  # CDR/measurement cadence [s] (ADS-L rate); held between ticks
 
 
 @dataclass(frozen=True)
@@ -91,7 +91,9 @@ def _validate(cfg: Config) -> None:
         "simulation.dt > 0": cfg.simulation.dt > 0,
         "simulation.t_max > 0": cfg.simulation.t_max > 0,
         "simulation.done_timeout >= 0": cfg.simulation.done_timeout >= 0,
-        "simulation.broadcast_interval >= dt": cfg.simulation.broadcast_interval >= cfg.simulation.dt,
+        "simulation.broadcast_interval >= dt": (
+            cfg.simulation.broadcast_interval >= cfg.simulation.dt
+        ),
     }
     failed = [name for name, ok in checks.items() if not ok]
     if failed:

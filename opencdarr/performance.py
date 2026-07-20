@@ -54,7 +54,8 @@ class Performance:
 #                       but the OpenAP rotor model resets it to a constant 3.5 once the aircraft
 #                       is moving — verified with an accel probe (10.3->18 and 18->6 both ramp at
 #                       exactly 3.5 m/s^2). This is the value update_airspeed (traffic.py:510-511)
-#                       actually uses. (Was ASSUMED 5.0, then briefly mis-set to the 2.0 placeholder.)
+#                       actually uses. (Was ASSUMED 5.0, then briefly mis-set to the 2.0
+#                       placeholder.)
 M600 = Performance(
     max_tr=15.0,
     max_dtr2=10.0,

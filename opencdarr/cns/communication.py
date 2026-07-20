@@ -18,7 +18,13 @@ from collections.abc import Mapping, Sequence
 
 import numpy as np
 
-from opencdarr.cns.base import CommState, CommunicationModel, InFlight, LatencyDistribution, Message
+from opencdarr.cns.base import (
+    CommState,
+    CommunicationModel,
+    InFlight,
+    LatencyDistribution,
+    Message,
+)
 
 
 def constant_latency(seconds: float) -> LatencyDistribution:

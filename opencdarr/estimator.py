@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from opencdarr.cd.base import ConflictDetector
-from opencdarr.cns.base import NavigationModel
+from opencdarr.cns.base import CommunicationModel, NavigationModel, SurveillanceModel
 from opencdarr.config import Config
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr.base import RecoveryCriterion
@@ -37,12 +37,16 @@ def estimate_ipr(
     resolver: ConflictResolver | None,
     recovery: RecoveryCriterion | None,
     navigation: NavigationModel | None = None,
+    communication: CommunicationModel | None = None,
+    surveillance: SurveillanceModel | None = None,
 ) -> IPRResult:
     """Run the plain-MC estimate over ``config.n_encounters`` sampled encounters."""
     n_conflict = 0
     n_los = 0
     for seq in spawn(root_seed_sequence(config.seed), config.n_encounters):
-        geom_seq, sim_seq = spawn(seq, 2)  # split geometry from the (CNS) simulation stream
+        # always 3 substreams (geometry, navigation, communication), regardless of which CNS
+        # layers are enabled for this run — the stream tree stays config-invariant (ADR 0006 §6)
+        geom_seq, nav_seq, comm_seq = spawn(seq, 3)
         own, intr = sample_pairwise(
             generator(geom_seq),
             speed=config.scenario.speed,
@@ -63,7 +67,10 @@ def estimate_ipr(
             resolver=resolver,
             recovery=recovery,
             navigation=navigation,
-            rng=generator(sim_seq),
+            rng=generator(nav_seq),
+            communication=communication,
+            surveillance=surveillance,
+            comm_rng=generator(comm_seq),
             t_max=config.simulation.t_max,
             done_timeout=config.simulation.done_timeout,
             broadcast_interval=config.simulation.broadcast_interval,

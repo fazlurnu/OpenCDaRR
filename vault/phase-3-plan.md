@@ -40,6 +40,9 @@ plain-MC now samples geometry × CNS.
 **Exit gate:** functional tests pass; IPR is a monotone-ish decreasing function of GPS CI95 /
 reception loss; reproducible from `config + seed`; no shared RNG across components.
 
+**✅ Met (2026-07-20), end to end.** All four conditions verified through the loop, not just in
+isolated layer tests — see the Checklist below.
+
 ## Scope — what Phase 3 is NOT
 
 - [x] ~~**Own-state used in an aircraft's *own* detection** — an aircraft uses its **true** own
@@ -98,7 +101,7 @@ Each item: **path · purpose · design justification · check · relations.**
   - *Check:* with zero noise the Phase-2 result is reproduced exactly (a free regression) ✅;
     IPR falls as CI95 rises ✅. `tests/test_loop_cns.py`.
 
-### 3b — communication (reception + latency) — layers done, loop integration NOT started
+### 3b — communication (reception + latency) ✅ done
 
 - [x] **`opencdarr/cns/communication.py`** — `CommState` (frozen): `held[(receiver, source)] ->
   Message`, `in_flight: tuple[InFlight, …]`. `Comm(reception_prob, latency)`: pure
@@ -120,23 +123,34 @@ Each item: **path · purpose · design justification · check · relations.**
     regardless of `t_now` (no drift); `age` resets to exactly 0 at delivery and grows linearly
     between. ✅ `tests/test_cns_surveillance.py`. Visually validated: [[surveillance-hold-as-is]]
     — a continuously-changing truth vs. a perceived value that only ever steps at deliveries.
-- [ ] **Loop integration (3b) — NOT DONE.** `loop.py` does not import `Comm`/`CommState`/
-  `LastKnown` at all yet; every broadcast is still delivered instantly and perfectly to
-  `_decide`, exactly the 3a assumption. So `detect(A, B_as_A_holds) ≠ detect(B, A_as_B_holds)`
-  (this doc's opening line) is only true today because of independent GPS noise — the
-  asymmetric-reception/latency story validated in isolation above has **zero effect on any
-  encounter outcome** until this is wired in. This is the next task.
-  - *Check (not yet run):* reception loss / latency degrade IPR; reproducible.
+- [x] **Loop integration (3b).** `run_encounter` gains `communication`/`surveillance`/`comm_rng`
+  params (all optional — `communication=None` preserves 3a behaviour exactly, byte-for-byte,
+  verified by every pre-existing test still passing unmodified). When set: each broadcast is
+  offered to `communication.step(...)` (its own `comm_rng`, never `rng`) before a decision's
+  *other* is read via `surveillance.perceived(...)` (defaults to `LastKnown()` when
+  `communication` is set but `surveillance` isn't); `_decide` now accepts `other: AircraftState |
+  None` and flies nominal on `None` (ADR 0006 §5). Intent-sharing is stripped **before**
+  broadcast, not at perceive time, so a held/stale message never carries intent it wasn't sent
+  with. So `detect(A, B_as_A_holds) ≠ detect(B, A_as_B_holds)` (this doc's opening line) is now
+  actually driven by reception/latency, not just independent GPS noise. Visually validated end
+  to end: [[loop-communication-integration]].
+  - *Check:* reception loss degrades IPR (needs to drop quite low — p ≈ 0.03/0.005 — before it
+    bites, since the ~60s encounter window is long relative to the 1 Hz broadcast interval;
+    calibrated empirically) ✅; latency alone (perfect reception) also degrades IPR ✅; `p=1,
+    latency=0` is bit-identical to no communication ✅; reproducible from seed ✅; adding
+    communication does not perturb navigation's draws (independent substreams, ADR 0006 §6) ✅.
+    `tests/test_loop_cns.py` (7 new tests).
 
 ### Vault
 
-- [x] **RNG substream layout — documented, not yet wired into code.** The plan's `0005-cns-rng-
+- [x] **RNG substream layout — documented and wired into code.** The plan's `0005-cns-rng-
   substream-layout.md` never got its own file; the tree (`encounter → spawn(3) → geom_seq,
   nav_seq, comm_seq`) is recorded instead in **ADR 0006 §6**
   ([[0006-communication-model-design]]) — `0005` was already taken by
-  [[0005-trajectory-validated-against-bluesky]] by the time 3b started. **Not yet implemented:**
-  `estimator.py` still does `spawn(seq, 2)` (`geom_seq, sim_seq`); the `comm_seq` branch lands
-  with loop integration.
+  [[0005-trajectory-validated-against-bluesky]] by the time 3b started. `estimator.py` now does
+  `spawn(seq, 3)` unconditionally (config-invariant tree, ADR 0006 §6) and passes `nav_seq` as
+  `rng`, `comm_seq` as `comm_rng`; verified independent (`test_communication_and_navigation_are_
+  independent_substreams`).
 - [ ] **`vault/decisions/0006-latency-in-communication-not-noise.md`** — not split out as its
   own ADR; the reasoning ("why latency is first-class") is currently inline in this doc's intro
   and in ADR 0006's Context section. ADR 0006's Relations section flags this as still
@@ -161,10 +175,10 @@ Each item: **path · purpose · design justification · check · relations.**
 - [x] `test_cns_surveillance.py` — perceived is unchanged regardless of `t_now` (hold-as-is, the
   opposite of the plan's original dead-reckon assumption — see 3b above); `age` resets at
   delivery.
-- [~] `test_loop_cns.py` — zero-noise reproduces Phase 2 (regression) ✅; IPR falls monotone-ish
-  with CI95 ✅; **with reception loss — not possible yet**, loop integration (3b) isn't done;
-  reproducible from seed ✅ (navigation-level; comm-level reproducibility untested until wired
-  in).
+- [x] `test_loop_cns.py` — zero-noise reproduces Phase 2 (regression) ✅; IPR falls monotone-ish
+  with CI95 ✅ **and with reception loss / latency** ✅; `p=1,latency=0` bit-identical to no
+  communication ✅; reproducible from seed (navigation-level and comm-level) ✅; navigation and
+  communication substreams verified independent ✅.
 
 ---
 
