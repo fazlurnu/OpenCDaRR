@@ -30,8 +30,8 @@ def run(dpsi: float) -> dict[str, np.ndarray]:
     det, res, rec = StateBased(), MVP(MARGIN), PastCPA(bouncing_guard=True)
     own = AircraftState(id="OWN", lat=52.0, lon=4.0, trk=0.0, gs=SPEED)
     intr = create_conflict(own, intr_id="INT", dpsi=dpsi, dcpa=0.0, tlos=TLOS, rpz=RPZ, side=1)
-    nom_own = Command(hdg=own.trk, spd=own.gs)
-    nom_intr = Command(hdg=intr.trk, spd=intr.gs)
+    nom_own = Command.from_track_speed(own.trk, own.gs)
+    nom_intr = Command.from_track_speed(intr.trk, intr.gs)
     cmd_own, cmd_intr = nom_own, nom_intr
     ro = ri = False
     t, nb = 0.0, 0.0
@@ -41,7 +41,7 @@ def run(dpsi: float) -> dict[str, np.ndarray]:
             cmd_own, ro = _decide(own, intr, nom_own, ro, RPZ, LOOKAHEAD, det, res, rec)
             cmd_intr, ri = _decide(intr, own, nom_intr, ri, RPZ, LOOKAHEAD, det, res, rec)
             nb += BCAST
-        rows.append((t, own.gs, own.trk, own.lat, own.lon, float(ro), cmd_own.spd))
+        rows.append((t, own.gs, own.trk, own.lat, own.lon, float(ro), cmd_own.gs))
         own = step_dynamics(own, cmd_own, M600, DT)
         intr = step_dynamics(intr, cmd_intr, M600, DT)
         t += DT

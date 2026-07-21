@@ -36,7 +36,7 @@ class MVP(ConflictResolver):
         rx, ry, vx, vy, dist = rel.rx, rel.ry, rel.vx, rel.vy, rel.dist
         v2 = vx * vx + vy * vy
         if v2 < _PARALLEL_EPS:
-            return Command(hdg=own.trk, spd=own.gs)  # no relative motion: nothing to resolve
+            return Command(*velocity_enu(own))  # no relative motion: hold current velocity
 
         t_cpa = -(rx * vx + ry * vy) / v2
         cx, cy = rx + vx * t_cpa, ry + vy * t_cpa  # relative position at CPA (own -> intr)
@@ -57,7 +57,4 @@ class MVP(ConflictResolver):
         vox, voy = velocity_enu(own)
         new_vx = vox - scale * cx
         new_vy = voy - scale * cy
-        return Command(
-            hdg=math.degrees(math.atan2(new_vx, new_vy)) % 360.0,
-            spd=math.hypot(new_vx, new_vy),
-        )
+        return Command(v_east=new_vx, v_north=new_vy)  # the resolved velocity vector, directly

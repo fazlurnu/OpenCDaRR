@@ -12,7 +12,7 @@ import dataclasses
 import math
 
 from opencdarr import geo
-from opencdarr.dynamics import Command, step_dynamics
+from opencdarr.dynamics import Command, Dynamics, PointMassDynamics, step_dynamics
 from opencdarr.performance import M600
 from opencdarr.state import AircraftState
 
@@ -37,7 +37,7 @@ def _start(trk: float = 90.0, gs: float = 10.0) -> AircraftState:
 def test_straight_line_travels_expected_distance() -> None:
     """10 m/s held straight for 10 s covers ~100 m; heading and turn rate unchanged."""
     s = _start(trk=90.0, gs=10.0)
-    cmd = Command(hdg=90.0, spd=10.0)
+    cmd = Command.from_track_speed(90.0, 10.0)
     for _ in range(10):
         s = step_dynamics(s, cmd, M600, dt=1.0)
     assert abs(_distance_m(52.0, 4.0, s.lat, s.lon) - 100.0) < 0.01
@@ -52,7 +52,7 @@ def test_turn_respects_limits_and_holds_speed() -> None:
     """A 90 deg command turns within max_tr / max_dtr2, holds speed, and converges."""
     dt = 0.1
     s = _start(trk=0.0, gs=10.0)
-    cmd = Command(hdg=90.0, spd=10.0)
+    cmd = Command.from_track_speed(90.0, 10.0)
     prev_tr = s.turn_rate
     reached = False
     for _ in range(400):
@@ -70,7 +70,7 @@ def test_turn_respects_limits_and_holds_speed() -> None:
 def test_turn_takes_the_shortest_way() -> None:
     """Commanding 350 deg from 0 turns the short way (negative), not +350."""
     s = _start(trk=0.0, gs=10.0)
-    s = step_dynamics(s, Command(hdg=350.0, spd=10.0), M600, dt=0.1)
+    s = step_dynamics(s, Command.from_track_speed(350.0, 10.0), M600, dt=0.1)
     assert s.turn_rate < 0.0
 
 
@@ -81,7 +81,7 @@ def test_speed_ramps_to_envelope_within_accel_limit() -> None:
     """Commanding 30 m/s ramps up to v_max=18 (never past), bounded by ax*dt each step."""
     dt = 0.1
     s = _start(trk=90.0, gs=0.0)  # start from rest
-    cmd = Command(hdg=90.0, spd=30.0)  # above the envelope
+    cmd = Command.from_track_speed(90.0, 30.0)  # above the envelope
     prev = s.gs
     reached = False
     for _ in range(400):
@@ -95,12 +95,22 @@ def test_speed_ramps_to_envelope_within_accel_limit() -> None:
     assert reached, "speed did not converge to v_max"
 
 
-def test_speed_ramps_down_to_v_min() -> None:
-    """Commanding -30 m/s clamps the target to v_min=-18 and ramps down to it."""
-    s = _start(trk=90.0, gs=0.0)
+def test_reversed_command_turns_around_not_backward() -> None:
+    """A velocity command opposite the current facing turns the aircraft around (track -> the
+    command direction) at forward speed. Backward flight — facing decoupled from travel, which the
+    old signed-speed command expressed via v_min — is no longer commandable (ADR 0008)."""
+    dt = 0.1
+    s = _start(trk=0.0, gs=10.0)  # flying north
+    cmd = Command.from_track_speed(180.0, 10.0)  # want to head south
+    reached = False
     for _ in range(400):
-        s = step_dynamics(s, Command(hdg=90.0, spd=-30.0), M600, dt=0.1)
-    assert abs(s.gs - M600.v_min) < 1e-9
+        s = step_dynamics(s, cmd, M600, dt)
+        assert s.gs >= 0.0  # it turns, it never reverses to a negative ground speed
+        if abs(((180.0 - s.trk + 180.0) % 360.0) - 180.0) < 0.5:
+            reached = True
+            break
+    assert reached, "did not turn to the commanded (reversed) direction"
+    assert abs(s.gs - 10.0) < 1e-9  # forward speed held through the turn
 
 
 # --- Purity ------------------------------------------------------------------
@@ -110,6 +120,26 @@ def test_step_does_not_mutate_input() -> None:
     """The input state is untouched; a new object is returned (safe to clone/parallelise)."""
     s = _start(trk=0.0, gs=10.0)
     snapshot = dataclasses.replace(s)
-    out = step_dynamics(s, Command(hdg=90.0, spd=15.0), M600, dt=0.1)
+    out = step_dynamics(s, Command.from_track_speed(90.0, 15.0), M600, dt=0.1)
     assert s == snapshot
     assert out is not s
+
+
+# --- Dynamics interface (ADR 0007) --------------------------------------------
+
+
+def test_point_mass_dynamics_matches_step_dynamics() -> None:
+    """PointMassDynamics is a pure pass-through to step_dynamics, not a second implementation."""
+    s = _start(trk=10.0, gs=8.0)
+    cmd = Command.from_track_speed(90.0, 15.0)
+    assert PointMassDynamics().step(s, cmd, M600, dt=0.5) == step_dynamics(s, cmd, M600, dt=0.5)
+
+
+def test_dynamics_is_not_directly_instantiable() -> None:
+    """Dynamics is an ABC: it names the contribution surface, it isn't itself a model."""
+    try:
+        Dynamics()  # type: ignore[abstract]
+    except TypeError:
+        pass
+    else:
+        raise AssertionError("Dynamics() should not be instantiable")

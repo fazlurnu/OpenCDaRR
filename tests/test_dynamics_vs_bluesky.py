@@ -55,7 +55,7 @@ def _max_errors(bs, cmd_hdg: float, spd_ms: float, n_steps: int) -> tuple[float,
         # and the comparison isolates the turn-rate law + geodesy (the deferred speed-accel
         # ramp is thereby excluded from the residual)
         bgs = float(bs.traf.gs[0])
-        ours = step_dynamics(ours, Command(hdg=cmd_hdg, spd=bgs), M600, dt)
+        ours = step_dynamics(ours, Command.from_track_speed(cmd_hdg, bgs), M600, dt)
 
         blat, blon, btrk = float(bs.traf.lat[0]), float(bs.traf.lon[0]), float(bs.traf.trk[0])
         mlat = (ours.lat - blat) * 111320.0

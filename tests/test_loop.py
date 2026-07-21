@@ -10,8 +10,9 @@ from __future__ import annotations
 from opencdarr.cd import StateBased
 from opencdarr.cr import MVP
 from opencdarr.crr import PastCPA
+from opencdarr.dynamics import Command, Dynamics
 from opencdarr.loop import run_encounter
-from opencdarr.performance import M600
+from opencdarr.performance import M600, Performance
 from opencdarr.scenario import create_conflict
 from opencdarr.state import AircraftState
 
@@ -74,3 +75,32 @@ def test_encounter_is_deterministic() -> None:
     """No RNG in Step 2: identical inputs -> identical outcome."""
     own, intr = _encounter()
     assert _run(own, intr) == _run(own, intr)
+
+
+class _FrozenDynamics(Dynamics):
+    """Test double: aircraft never move, whatever the command. Proves `dynamics=` is what
+    actually drives the encounter, not a hardcoded call inside `run_encounter` (ADR 0007)."""
+
+    def step(
+        self, state: AircraftState, command: Command, perf: Performance, dt: float
+    ) -> AircraftState:
+        return state
+
+
+def test_dynamics_is_pluggable() -> None:
+    """A custom Dynamics passed as `dynamics=` replaces the default, not just decorates it."""
+    own, intr = _encounter()
+    outcome = run_encounter(
+        own,
+        intr,
+        perf=M600,
+        dynamics=_FrozenDynamics(),
+        rpz=_RPZ,
+        t_lookahead=_LOOKAHEAD,
+        dt=_DT,
+        detector=StateBased(),
+    )
+    # frozen: the pair never converges, so no loss of separation despite no resolver -
+    # with the default PointMassDynamics this same setup loses separation (see the
+    # unresolved-encounter test above), so this result is only possible if our Dynamics ran.
+    assert outcome.los is False

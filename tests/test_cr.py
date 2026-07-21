@@ -38,7 +38,7 @@ def _miss_distance(own: AircraftState, intr: AircraftState) -> float:
 
 def _apply(own: AircraftState, cmd: Command) -> AircraftState:
     """Adopt the commanded velocity instantly (unclamped) to test the raw MVP geometry."""
-    return dataclasses.replace(own, trk=cmd.hdg, gs=cmd.spd)
+    return dataclasses.replace(own, trk=cmd.trk, gs=cmd.gs)
 
 
 @pytest.mark.parametrize("dpsi", [30.0, 90.0, 135.0, 180.0, 250.0])
@@ -67,7 +67,7 @@ def test_resolve_returns_a_command() -> None:
     intr = create_conflict(own, intr_id="INT", dpsi=90.0, dcpa=20.0, tlos=60.0, rpz=_RPZ)
     cmd = MVP().resolve(own, intr, _RPZ)
     assert isinstance(cmd, Command)
-    assert 0.0 <= cmd.hdg < 360.0
+    assert 0.0 <= cmd.trk < 360.0
 
 
 def test_no_relative_motion_returns_nominal() -> None:
@@ -75,5 +75,5 @@ def test_no_relative_motion_returns_nominal() -> None:
     own = _own()
     intr = AircraftState(id="INT", lat=52.0, lon=4.009, trk=0.0, gs=10.0)
     cmd = MVP().resolve(own, intr, _RPZ)
-    assert cmd.hdg == pytest.approx(own.trk)
-    assert cmd.spd == pytest.approx(own.gs)
+    assert cmd.trk == pytest.approx(own.trk)
+    assert cmd.gs == pytest.approx(own.gs)

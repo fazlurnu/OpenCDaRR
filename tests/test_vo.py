@@ -36,7 +36,7 @@ def _miss_distance(own: AircraftState, intr: AircraftState) -> float:
 
 
 def _apply(own: AircraftState, cmd: Command) -> AircraftState:
-    return dataclasses.replace(own, trk=cmd.hdg, gs=cmd.spd)
+    return dataclasses.replace(own, trk=cmd.trk, gs=cmd.gs)
 
 
 @pytest.mark.parametrize("dpsi", [30.0, 90.0, 135.0, 250.0])
@@ -63,7 +63,7 @@ def test_vo_is_the_minimal_change_to_the_edge() -> None:
     own = _own()
     intr = create_conflict(own, intr_id="INT", dpsi=90.0, dcpa=20.0, tlos=60.0, rpz=_RPZ)
     cmd = VO().resolve(own, intr, _RPZ)
-    assert abs(cmd.spd - own.gs) < own.gs  # a fraction of the speed, not a reversal
+    assert abs(cmd.gs - own.gs) < own.gs  # a fraction of the speed, not a reversal
 
 
 def test_vo_returns_a_command() -> None:
@@ -71,4 +71,4 @@ def test_vo_returns_a_command() -> None:
     intr = create_conflict(own, intr_id="INT", dpsi=90.0, dcpa=20.0, tlos=60.0, rpz=_RPZ)
     cmd = VO().resolve(own, intr, _RPZ)
     assert isinstance(cmd, Command)
-    assert 0.0 <= cmd.hdg < 360.0
+    assert 0.0 <= cmd.trk < 360.0

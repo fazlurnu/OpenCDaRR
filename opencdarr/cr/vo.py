@@ -52,7 +52,7 @@ class VO(ConflictResolver):
         vox, voy = velocity_enu(own)
         vix, viy = velocity_enu(intr)
         if dist <= rpz_eff:
-            return Command(hdg=own.trk, spd=own.gs)  # already inside: no cone, hold velocity
+            return Command(*velocity_enu(own))  # already inside: no cone, hold current velocity
 
         # tangent geometry of the rpz_eff circle around the intruder, seen from the ownship
         bearing = math.atan2(rel.rx, rel.ry)  # qdr to intruder (atan2 of East, North)
@@ -73,7 +73,4 @@ class VO(ConflictResolver):
                 best_d2, best = d2, (qe, qn)
 
         new_e, new_n = best
-        return Command(
-            hdg=math.degrees(math.atan2(new_e, new_n)) % 360.0,
-            spd=math.hypot(new_e, new_n),
-        )
+        return Command(v_east=new_e, v_north=new_n)  # the shortest-way-out velocity, directly

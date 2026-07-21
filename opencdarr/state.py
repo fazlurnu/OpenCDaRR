@@ -31,6 +31,7 @@ a deliberate, re-validated change recorded as its own ADR, not a set of dead fie
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from opencdarr.performance import Performance
@@ -38,17 +39,47 @@ from opencdarr.performance import Performance
 
 @dataclass(frozen=True)
 class DesiredVelocity:
-    """An aircraft's intended (desired/nominal) velocity: track [deg] + ground speed [m/s].
+    """An aircraft's intended (desired/nominal) velocity, as East–North components [m/s].
 
-    This is *intent*, not observed kinematics — where the aircraft wants to go, which it knows
-    about itself exactly (it is the autopilot target). It is **private by default**: another
+    Stored as a velocity **vector** (``v_east``, ``v_north``), not polar ``(trk, gs)`` (ADR 0008):
+    it is the same representation :class:`~opencdarr.dynamics.Command` uses, so intent and control
+    target speak one language, and the intent-based recovery criteria read the components directly
+    with no trig at their edge. Build one from a track and speed with
+    :meth:`from_track_speed`; read ``trk`` / ``gs`` back as derived properties.
+
+    This is *intent* — where the aircraft wants to go — and it is **private by default**: another
     aircraft perceives it only when intent-sharing is explicitly enabled (``run_encounter``'s
     ``share_intent``). Intent-based recovery (:class:`~opencdarr.crr.FTR`) reads the ownship's own
     ``desired`` to decide whether reverting to it would re-trigger a conflict.
+
+    What the value *means* depends on whose state carries it:
+
+    - On an aircraft's **own** state it is always declared intent, known exactly (it is the
+      autopilot target), never observed kinematics.
+    - On a **perceived** state it is the best available estimate of that aircraft's intent:
+      declared when shared, otherwise *inferred* from its velocity when the conflict pair became
+      active (``loop.PairMemory.onset_velocity``). The value does not distinguish the two — a
+      consumer cannot tell declared from inferred.
     """
 
-    trk: float
-    gs: float
+    v_east: float
+    v_north: float
+
+    @classmethod
+    def from_track_speed(cls, trk: float, gs: float) -> DesiredVelocity:
+        """Build from a track [deg, aviation convention] and ground speed [m/s]."""
+        r = math.radians(trk)
+        return cls(v_east=gs * math.sin(r), v_north=gs * math.cos(r))
+
+    @property
+    def gs(self) -> float:
+        """Ground speed [m/s] — the vector's magnitude."""
+        return math.hypot(self.v_east, self.v_north)
+
+    @property
+    def trk(self) -> float:
+        """Track [deg, aviation convention 0=N, CW] — direction of the vector (0 if zero)."""
+        return math.degrees(math.atan2(self.v_east, self.v_north)) % 360.0
 
 
 @dataclass(frozen=True)

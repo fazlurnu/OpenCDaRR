@@ -14,8 +14,6 @@ otherwise FTR uses the single criterion (intruder holds its current velocity).
 
 from __future__ import annotations
 
-import math
-
 from opencdarr.crr.base import RecoveryCriterion
 from opencdarr.kinematics import relative_enu, velocity_enu
 from opencdarr.state import AircraftState
@@ -57,8 +55,7 @@ class FTR(RecoveryCriterion):
             )
         rel = relative_enu(own, intr)  # rx,ry = intr − own position
 
-        r = math.radians(own.desired.trk)
-        vo_e, vo_n = own.desired.gs * math.sin(r), own.desired.gs * math.cos(r)
+        vo_e, vo_n = own.desired.v_east, own.desired.v_north  # desired velocity, read directly
 
         # criterion 1: the intruder holds its current (observed) velocity
         vi_e, vi_n = velocity_enu(intr)
@@ -68,8 +65,7 @@ class FTR(RecoveryCriterion):
         # criterion 2 (intent-based): the intruder reverts to its own desired velocity too —
         # only if it shared it
         if intr.desired is not None:
-            ri = math.radians(intr.desired.trk)
-            vir_e, vir_n = intr.desired.gs * math.sin(ri), intr.desired.gs * math.cos(ri)
+            vir_e, vir_n = intr.desired.v_east, intr.desired.v_north
             if not _clears(rel.rx, rel.ry, vir_e - vo_e, vir_n - vo_n, rpz):
                 return False
 
