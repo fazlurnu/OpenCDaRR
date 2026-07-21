@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import time
+
 import numpy as np
 from joblib import Parallel, delayed
 
@@ -24,7 +25,7 @@ from opencdarr.cd import StateBased
 from opencdarr.cns import GpsNavigation
 from opencdarr.cr import MVP, VO
 from opencdarr.cr.base import ConflictResolver
-from opencdarr.crr import FTR, PastCPA
+from opencdarr.crr import FTR, PastCPA, ProbabilisticFTR
 from opencdarr.crr.base import RecoveryCriterion
 from opencdarr.loop import run_encounter
 from opencdarr.performance import M600
@@ -37,15 +38,19 @@ def _resolver(name: str, margin: float) -> ConflictResolver:
     return {"mvp": MVP, "vo": VO}[name](margin=margin)
 
 
-def _recovery(name: str, bouncing_guard: bool) -> RecoveryCriterion:
+def _recovery(
+    name: str, bouncing_guard: bool, prob_threshold: float, ktheta: int
+) -> RecoveryCriterion:
     if name == "pastcpa":
         return PastCPA(bouncing_guard=bouncing_guard)
     if name == "ftr":
         return FTR()
+    if name == "probabilistic_ftr":
+        return ProbabilisticFTR(prob_threshold=prob_threshold, ktheta=ktheta)
     raise ValueError(f"unknown recovery {name!r}")
 
 
-def _one(dpsi: float, resolver_name: str, seq, cfg: argparse.Namespace) -> int:
+def _one(dpsi: float, resolver_name: str, recovery_name: str, seq, cfg: argparse.Namespace):
     own = AircraftState(
         id="OWN", lat=52.0, lon=4.0, trk=0.0, gs=cfg.speed,
         pos_ci95=cfg.pos_ci95, vel_ci95=cfg.vel_ci95,
@@ -56,7 +61,8 @@ def _one(dpsi: float, resolver_name: str, seq, cfg: argparse.Namespace) -> int:
     out = run_encounter(
         own, intr, perf=M600, rpz=cfg.rpz, t_lookahead=cfg.lookahead, dt=cfg.dt,
         detector=StateBased(), resolver=_resolver(resolver_name, cfg.margin),
-        recovery=_recovery(cfg.recovery, cfg.bouncing_guard), navigation=nav, rng=generator(seq),
+        recovery=_recovery(recovery_name, cfg.bouncing_guard, cfg.prob_threshold, cfg.ktheta),
+        navigation=nav, rng=generator(seq),
         t_max=cfg.t_max, done_timeout=cfg.done_timeout, broadcast_interval=cfg.broadcast_interval,
         share_intent=cfg.share_intent)
     return out
@@ -67,11 +73,22 @@ def main() -> None:
     p.add_argument("--resolvers", nargs="+", choices=("mvp", "vo"), default=None,
                    help="compare several resolvers side by side (overrides --resolver)")
     p.add_argument("--resolver", choices=("mvp", "vo"), default="mvp")
-    p.add_argument("--recovery", choices=("pastcpa", "ftr"), default="pastcpa")
+    p.add_argument(
+        "--recovery", choices=("pastcpa", "ftr", "probabilistic_ftr"), default="pastcpa"
+    )
+    p.add_argument(
+        "--recoveries", nargs="+", choices=("pastcpa", "ftr", "probabilistic_ftr"), default=None,
+        help="compare several recovery criteria side by side (overrides --recovery)",
+    )
+    p.add_argument("--prob-threshold", dest="prob_threshold", type=float, default=0.999,
+                   help="probabilistic_ftr: P(offset>rpz) threshold to resume")
+    p.add_argument("--ktheta", type=int, default=256,
+                   help="probabilistic_ftr: angular integration resolution")
     p.add_argument("--bouncing-guard", dest="bouncing_guard", action="store_true", default=True)
     p.add_argument("--share-intent", dest="share_intent", action="store_true", default=False,
-                   help="let the intruder's desired (nominal) velocity be perceived — FTR's "
-                        "second, intent-based criterion (else FTR falls back to its first)")
+                   help="let the intruder's desired (nominal) velocity be perceived — FTR's / "
+                        "probabilistic_ftr's second, intent-based criterion (else it falls back "
+                        "to the first)")
     p.add_argument("--angles", type=float, nargs="+", default=[2.0, 10.0, 45.0, 90.0])
     p.add_argument("--pos-ci95", dest="pos_ci95", type=float, default=10.0, help="position CI95 [m]")
     p.add_argument("--vel-ci95", dest="vel_ci95", type=float, default=1.0, help="velocity CI95 [m/s]")
@@ -90,28 +107,33 @@ def main() -> None:
     cfg = p.parse_args()
 
     resolvers = cfg.resolvers if cfg.resolvers else [cfg.resolver]
-    seqs = list(spawn(root_seed_sequence(cfg.seed), cfg.n))  # same substreams per angle/resolver
-    print(f"IPR sweep — resolvers={[r.upper() for r in resolvers]}, recovery={cfg.recovery.upper()}"
+    recoveries = cfg.recoveries if cfg.recoveries else [cfg.recovery]
+    # same substreams per angle, reused across resolvers/recoveries -> a direct comparison
+    seqs = list(spawn(root_seed_sequence(cfg.seed), cfg.n))
+    print(f"IPR sweep — resolvers={[r.upper() for r in resolvers]}, "
+          f"recoveries={[r.upper() for r in recoveries]}"
           f"{' (+intent)' if cfg.share_intent else ''}, pos_ci95={cfg.pos_ci95} m, "
           f"vel_ci95={cfg.vel_ci95} m/s, rpz={cfg.rpz}, lookahead={cfg.lookahead}, tlos={cfg.tlos}, dcpa=0, "
           f"margin={cfg.margin}, {cfg.n} pairs, joblib {cfg.jobs} cores")
-    print(f"{'resolver':>9} {'dpsi':>6} {'IPR':>8} {'LoS':>11} {'Median CPA':>14}")
+    print(f"{'resolver':>9} {'recovery':>17} {'dpsi':>6} {'IPR':>8} {'LoS':>11} {'Median CPA':>14}")
     t0 = time.time()
     for resolver_name in resolvers:
-        for dpsi in cfg.angles:
-            outcomes = Parallel(n_jobs=cfg.jobs)(
-                delayed(_one)(dpsi, resolver_name, s, cfg) for s in seqs)
+        for recovery_name in recoveries:
+            for dpsi in cfg.angles:
+                outcomes = Parallel(n_jobs=cfg.jobs)(
+                    delayed(_one)(dpsi, resolver_name, recovery_name, s, cfg) for s in seqs)
 
-            n_los = sum(o.los for o in outcomes)
-            median_min_sep = np.median([o.min_sep for o in outcomes])
+                n_los = sum(o.los for o in outcomes)
+                median_min_sep = np.median([o.min_sep for o in outcomes])
 
-            print(
-                f"{resolver_name.upper():>9} "
-                f"{dpsi:6.1f} "
-                f"{1 - n_los / cfg.n:8.4f} "
-                f"{f'{n_los}/{cfg.n}':>11} "
-                f"{median_min_sep:>14.2f} m"
-            )
+                print(
+                    f"{resolver_name.upper():>9} "
+                    f"{recovery_name.upper():>17} "
+                    f"{dpsi:6.1f} "
+                    f"{1 - n_los / cfg.n:8.4f} "
+                    f"{f'{n_los}/{cfg.n}':>11} "
+                    f"{median_min_sep:>14.2f} m"
+                )
     print(f"(elapsed {time.time() - t0:.1f} s)")
 
 
