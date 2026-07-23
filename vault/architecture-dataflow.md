@@ -147,8 +147,8 @@ Key points the diagram encodes:
   reads only what the link actually delivered — or `None` before first contact, which flies that
   pair nominal (ADR 0006 §5).
 - **Directed everywhere.** Each arrow runs twice per tick — A→B and B→A are independent draws.
-- **`dynamics.step` is the one swap point** for physics (ADR 0007): Dubins-car point mass today,
-  a wind-aware or holonomic model later, without editing the loop.
+- **`dynamics.step` is the one swap point** for physics (ADR 0007): Dubins-car point mass or
+  holonomic today (ADR 0009), a wind-aware model later, without editing the loop.
 
 ---
 
@@ -177,10 +177,11 @@ flowchart LR
         CRRABC --> FTRn["FTR"]
         CRRABC --> PFTR["ProbabilisticFTR(...)"]
     end
-    subgraph DYNf["dynamics.py — physics (ADR 0007)"]
+    subgraph DYNf["dynamics/ — physics (ADR 0007/0009/0010)"]
         DABC["Dynamics (ABC)<br/>step(state, command, perf, dt) -> AircraftState"]
-        DABC --> PMD["PointMassDynamics<br/>wraps step_dynamics()"]
-        DABC -. future .-> WIND["wind / holonomic /<br/>other airframe"]
+        DABC --> PMD["DubinsDynamics<br/>wraps step_dynamics()"]
+        DABC --> HOLO["HolonomicDynamics<br/>isotropic accel, no heading"]
+        DABC -. future .-> WIND["wind / other airframe"]
     end
     subgraph CNSf["cns/ — communication-navigation-surveillance"]
         NAVABC["NavigationModel (ABC)<br/>measure(true, t, rng) -> Message"]
@@ -276,7 +277,8 @@ Every `.py` in `opencdarr/`, its public surface, and what flows in/out.
 |---|---|---|---|
 | `dynamics.py` | `Command` | — | control target: velocity vector `(v_east, v_north)`, ADR 0008 |
 | `dynamics.py` | `Dynamics` (ABC) `.step(state, command, perf, dt)` | one aircraft + command | next `AircraftState` |
-| `dynamics.py` | `PointMassDynamics` | — | default impl (wraps `step_dynamics`) |
+| `dynamics/` | `DubinsDynamics` | — | default impl (wraps `step_dynamics`), ADR 0010 |
+| `dynamics.py` | `HolonomicDynamics` | — | no coupled heading, isotropic accel (ADR 0009) |
 | `dynamics.py` | `step_dynamics(state, command, perf, dt)` | one aircraft + command | next `AircraftState` |
 
 ### CD / CR / CRR
@@ -327,4 +329,6 @@ Every `.py` in `opencdarr/`, its public surface, and what flows in/out.
 - [[decisions/0007-dynamics-as-pluggable-interface]] — the one swap point for physics in §2/§3.
 - [[decisions/0008-velocity-vector-command]] — why `Command`/`DesiredVelocity` in §4 are velocity
   vectors, not polar.
+- [[decisions/0009-holonomic-dynamics]] — the second `Dynamics` implementation; see also
+  `vault/observations/controlling-dubins-vs-holonomic.md` for a trajectory comparison.
 - Governing equations per algorithm live under `vault/derivations/`.

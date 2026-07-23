@@ -40,7 +40,7 @@ estimator, and the experiment/provenance entry point.
 - [x] **Recovery (CRR)** — *pulled forward this pass.* Past-CPA (`crr/pastcpa.py`) is
   implemented and wired into the loop; the FTR-family and the `nominal`-in-state work remain
   for later.
-- [ ] **CNS noise / comms** — Step 3. Step 2's Monte Carlo samples *geometry*, not sensor
+- [x] **CNS noise / comms** — Step 3. Step 2's Monte Carlo samples *geometry*, not sensor
   noise (`design_brief.md`); the model stays deterministic given an encounter.
 - [ ] **VO resolution, vertical resolution** — MVP + horizontal only (2D, per `state.py`).
 - [ ] **Multi-aircraft + the coordination-model ADR** — v0.3. Pairwise uses the natural

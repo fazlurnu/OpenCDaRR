@@ -26,12 +26,7 @@ loop conflates three responsibilities that real flight systems keep apart —
 ```
 
 Right now `run_encounter` fuses all of it: "nominal" is a *static velocity vector* frozen from the
-initial state (`nom_own = Command.from_track_speed(own.trk, own.gs)`), `_decide` is the separation
-manager, and the airframe is a single `dynamics=` shared by both aircraft. Phase 4 splits these
-into named layers so that (a) an autopilot can actually *navigate* (goto, waypoints, loiter) rather
-than hold a frozen heading, (b) the separation logic is a clean overlay on that navigation, and
-(c) each aircraft can be a different **vehicle class** — multirotor, fixed-wing, VTOL — through the
-same interfaces.
+initial state (`nom_own = Command.from_track_speed(own.trk, own.gs)`), `_decide` is the separation manager, and the airframe is a single `dynamics=` shared by both aircraft. Phase 4 splits these into named layers so that (a) an autopilot can actually *navigate* (goto, waypoints, loiter) rather than hold a frozen heading, (b) the separation logic is a clean overlay on that navigation, and (c) each aircraft can be a different **vehicle class** — multirotor, fixed-wing, VTOL — through the same interfaces.
 
 Same working style as Phases 2–3: one file at a time, read each diff, tick the box here. Build the
 autopilot capability ladder **one rung at a time**, each rung green before the next.
@@ -49,8 +44,7 @@ autopilot capability ladder **one rung at a time**, each rung green before the n
 `DubinsDynamics` stays as the turn-rate-limited multirotor variant already validated against
 BlueSky ([[0005-trajectory-validated-against-bluesky]]) — it is *a* multirotor model, not fixed-wing
 (a coupled heading and a turn-*rate* limit are not the same as a non-holonomic minimum-radius
-airframe with a stall speed). The genuinely new dynamics is fixed-wing; VTOL is composition, not new
-physics.
+airframe with a stall speed). The genuinely new dynamics is fixed-wing; VTOL is composition, not new physics.
 
 ---
 
@@ -61,14 +55,10 @@ physics of the *existing* multirotor path; it re-homes responsibilities and then
 vehicle classes on top of the untouched CD/CR/CRR core.
 
 **Exit gate:**
-1. The layer split (4a) reproduces today's IPR **bit-for-bit** — CruiseAutopilot + SeparationManager
-   through the new `run_encounter` gives byte-identical outcomes to the current loop (a free
-   regression, same discipline as Phase 3's zero-noise reproduction).
+1. The layer split (4a) reproduces today's IPR **bit-for-bit** — CruiseAutopilot + SeparationManager through the new `run_encounter` gives byte-identical outcomes to the current loop (a free regression, same discipline as Phase 3's zero-noise reproduction).
 2. Each new autopilot rung (goto → waypoint → loiter) has a functional test that *bites*, and runs
    for the multirotor **and** through the fixed-wing autopilot once that lands.
-3. The no-hidden-state invariant is preserved: all CDR/recovery memory and all autopilot progress
-   (e.g. active-waypoint index) live in **clonable value state**, nothing on a manager object
-   (verified the same way Phase 3 verified comm state is clonable).
+3. The no-hidden-state invariant is preserved: all CDR/recovery memory and all autopilot progress (e.g. active-waypoint index) live in **clonable value state**, nothing on a manager object (verified the same way Phase 3 verified comm state is clonable).
 
 ---
 
@@ -80,13 +70,10 @@ These are firm; they shape every checklist item below.
    interface is complete) but **ignored** by every 2D dynamics model this pass. `AircraftState`
    stays horizontal. Altitude, vertical rate, and vertical detection/level math land **with the
    fixed-wing paper**, under their own ADR — exactly the deferral `state.py` and
-   [[0010-dynamics-subpackage-and-odometry-state]] §4 already commit to. No dead 3D fields on the
-   state now.
+   [[0010-dynamics-subpackage-and-odometry-state]] §4 already commit to. No dead 3D fields on the state now.
 
 2. **`MotionCommand` supersedes the velocity-vector `Command`** (new ADR, extends
-   [[0008-velocity-vector-command]]). The old pure-velocity command becomes **one populated field**
-   (`target_velocity`); `MVP`/`VO` keep emitting a velocity vector and are **unchanged** — they now
-   return a `MotionCommand` with only `target_velocity` set. A dynamics model reads whichever fields
+   [[0008-velocity-vector-command]]). The old pure-velocity command becomes **one populated field** (`target_velocity`); `MVP`/`VO` keep emitting a velocity vector and are **unchanged** — they now return a `MotionCommand` with only `target_velocity` set. A dynamics model reads whichever fields
    its vehicle understands and ignores the rest. This is why ADR 0008's pure-velocity command was
    *right for resolvers but insufficient for a fixed-wing autopilot* — a fixed-wing naturally
    commands `(heading, speed)`, not a ground-velocity vector.
@@ -253,6 +240,25 @@ rung is purely "add one `Dynamics` + one `Autopilot` file," not a refactor.
     [[0002-analytical-validation-of-dynamics]] discipline); a fixed-wing cannot stop, cannot move
     sideways, follows a curved feasible path to a target — contrast documented like
     [[controlling-dubins-vs-holonomic]].
+  - **Wind-ready by construction (obligation for [[phase-5-plan|Phase 5]]).** Build the integrator in
+    the **air-relative coordinated-turn form** the same paper states — heading `ψ` integrated from
+    bank, `ψ̇ = g·tan(ϕ)/V_TAS`, and the position update written as the vector sum
+    `ẋ = V_TAS·sin ψ + w_x`, `ẏ = V_TAS·cos ψ + w_y` — **with the wind term present but fixed at
+    `(w_x, w_y) = 0` this pass.** The no-wind fixed-wing is then the `w=0` special case of the wind
+    model, and Phase 5 turns wind on by feeding a non-zero wind vector and adding the `heading` field,
+    **not** by re-deriving the step. Concretely, this pass already commits to:
+    - integrating **heading `ψ`** (not ground track `χ`) as the primary angular state — the
+      `heading ≠ track` field [[0010-dynamics-subpackage-and-odometry-state]] §4 deferred "with the
+      wind / independent-yaw model"; at `w=0` it equals `trk`, so it stays behaviour-neutral now but
+      is the field wind gives meaning to (crab angle `θ_w = ψ − χ`);
+    - treating `perf.v_max`/stall as an **airspeed** envelope (`V_TAS`), and deriving ground speed
+      `V_GS = |airspeed vector + wind|` as an **output** each step — so that when wind is non-zero the
+      "speed I fly" and the "speed I make good over the ground" are already distinct quantities, not a
+      single stored `gs` that would have to be split later.
+    - *Check (wind-readiness, `w=0`):* with the wind vector zero, the air-relative integrator
+      reproduces the coupled-heading Dubins path **bit-for-bit** — i.e. `ψ == trk` and
+      `V_GS == V_TAS` every step. This is the regression that proves the wind hook is inert until
+      Phase 5 lights it up.
 
 - [ ] **Command feasibility — the three infeasibility categories** (how `FixedWingDynamics`, and
   every airframe, reconciles a `MotionCommand` it cannot obey literally). A command is a *setpoint*,
@@ -389,7 +395,12 @@ needed by a scenario, e.g. camera-pointing missions.
 ## References (read, not ported)
 
 - The TODO this implements: [[TODO-autopilot-separator-dynamic-integration]].
-- Fixed-wing dynamics: **the paper you'll provide** (4d) — re-derived, analytically validated
-  ([[0002-analytical-validation-of-dynamics]]), never ported.
+- Fixed-wing dynamics: Reyner & Liem, *Energy-Efficient Trochoidal Path Planning for Unmanned
+  Aircraft Under Wind and Performance Constraints* (Drones 2026, 10, 426) — `papers/drones-wind.pdf`
+  (4d) — re-derived, analytically validated ([[0002-analytical-validation-of-dynamics]]), never
+  ported. We take only its **kinematic point-mass model** (its Eqs 1–9: coordinated-turn yaw +
+  wind vector-sum kinematics), not its path-planning methodology (BSB/BBB/SBB maneuver synthesis,
+  the IEM energy metric, the Bayesian path-angle optimization) — those are a *planner*, not
+  vehicle dynamics. The wind terms of that same model are what [[phase-5-plan|Phase 5]] switches on.
 - Guidance laws (goto / waypoint / L1 pure-pursuit): PX4 / ArduPilot guidance as *reference for the
   effect*, not the implementation (same discipline as the ADS-L modelling in Phase 3).

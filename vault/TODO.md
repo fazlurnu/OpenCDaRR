@@ -1,4 +1,2 @@
-1. [[TODO-autopilot-separator-dynamic-integration]], read carefully that .md file.
-### Clean up documents
-
-Clean up all the .md files, some words are separated by 'enter' instead of space because of claude's typing. Don't know why.
+1. After phase-5-plan, first clean up the documentation and start building a github page.
+2. After phase-5, technically what I need is done. So I can already try the validity of everything instead of keep adding stuffs.
