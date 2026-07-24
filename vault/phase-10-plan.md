@@ -1,4 +1,6 @@
-Tidying up the vault and writing up a github page.
+Writing up a github page.
+
+I want the github page to be read by human, so I should also handle most of the part. I can let claude write the details, but I should give outline. Also figures (and how they are generated) are very important.
 
 Github page should contain:
 1. The UML diagram of the repo, v.1
