@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 from opencdarr.performance import Performance
 from opencdarr.state import AircraftState
+from opencdarr.wind import NO_WIND, WindField
 
 _SPD_EPS = 1e-9  # m/s: below this a command has no meaningful direction -> hold current heading
 
@@ -209,14 +210,26 @@ class Dynamics(ABC):
       0013). Superseded the former ``DubinsDynamics``.
 
     Every implementation must advance the odometry accumulators (via :func:`odometry_update`) so
-    ``flight_time`` / ``distance_flown`` stay correct whichever model ran (ADR 0010).
+    ``flight_time`` / ``distance_flown`` stay correct whichever model ran (ADR 0010), fed the
+    **ground** speed (the wind-affected ``V_GS`` under a non-zero wind).
     """
 
     @abstractmethod
     def step(
-        self, state: AircraftState, command: MotionCommand, perf: Performance, dt: float
+        self,
+        state: AircraftState,
+        command: MotionCommand,
+        perf: Performance,
+        dt: float,
+        wind: WindField = NO_WIND,
     ) -> AircraftState:
-        """Advance ``state`` by ``dt`` seconds under ``command``.
+        """Advance ``state`` by ``dt`` seconds under ``command`` in a steady ``wind`` (Phase 5).
+
+        ``wind`` is a **read-only environment input** (default :data:`~opencdarr.wind.NO_WIND`),
+        threaded like ``perf`` / ``dt`` and never stored on the state — the per-aircraft
+        consequence (crab / heading ``ψ``) lives in ``AircraftState.yaw`` (ADR 0016). The ground
+        velocity is the airspeed vector plus ``wind`` (the Eq 9 vector sum); at ``NO_WIND`` a model
+        is byte-identical to its pre-wind self (``ψ == trk``, ``V_GS == V_TAS``).
 
         Pure — a function of the given arguments only; no global or module state is read or
         written, so a clone (IPS particle) evolved through this call stays independent of its

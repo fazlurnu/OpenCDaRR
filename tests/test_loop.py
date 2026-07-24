@@ -11,12 +11,13 @@ from opencdarr.cd import StateBased
 from opencdarr.cns import GnssNavigation
 from opencdarr.cr import MVP, VO
 from opencdarr.crr import PastCPA
-from opencdarr.dynamics import Command, Dynamics
+from opencdarr.dynamics import Command, Dynamics, FixedWing, MotionCommand, Multirotor
 from opencdarr.loop import run_encounter
-from opencdarr.performance import M600, Performance
+from opencdarr.performance import M600, SMALL_FIXEDWING, Performance
 from opencdarr.rng import generator, root_seed_sequence, spawn
 from opencdarr.scenario import create_conflict
 from opencdarr.state import AircraftState
+from opencdarr.wind import NO_WIND, WindField
 
 _RPZ = 50.0
 _LOOKAHEAD = 120.0
@@ -84,7 +85,12 @@ class _FrozenDynamics(Dynamics):
     actually drives the encounter, not a hardcoded call inside `run_encounter` (ADR 0007)."""
 
     def step(
-        self, state: AircraftState, command: Command, perf: Performance, dt: float
+        self,
+        state: AircraftState,
+        command: Command,
+        perf: Performance,
+        dt: float,
+        wind: WindField = NO_WIND,
     ) -> AircraftState:
         return state
 
@@ -164,3 +170,29 @@ def test_bit_for_bit_noisy_mvp() -> None:
 def test_bit_for_bit_noisy_vo() -> None:
     """Seeded GPS-noisy VO encounter reproduces the pre-refactor min_sep exactly (noisy path)."""
     assert _noisy_encounter(VO(margin=1.05)) == _ANCHOR_NOISY_VO
+
+
+# --- 5a wind plumbing: passing wind=NO_WIND explicitly is byte-identical to omitting it, for both
+# airframes (the second half of the 5a gate — wind is inert until a non-zero field is supplied).
+def test_no_wind_step_is_identical_to_omitting_wind() -> None:
+    """``step(..., wind=NO_WIND) == step(...)`` for the multirotor and the fixed-wing."""
+    mr_state = AircraftState(id="M", lat=52.0, lon=4.0, trk=30.0, gs=10.0, yaw=45.0)
+    mr_cmd = MotionCommand.from_track_speed(90.0, 12.0)
+    assert Multirotor().step(mr_state, mr_cmd, M600, _DT) == Multirotor().step(
+        mr_state, mr_cmd, M600, _DT, NO_WIND
+    )
+    fw_state = AircraftState(id="F", lat=52.0, lon=4.0, trk=0.0, gs=17.0, yaw=0.0, bank=0.0)
+    fw_cmd = MotionCommand(target_course=20.0, target_airspeed=18.0)
+    assert FixedWing().step(fw_state, fw_cmd, SMALL_FIXEDWING, 0.1) == FixedWing().step(
+        fw_state, fw_cmd, SMALL_FIXEDWING, 0.1, NO_WIND
+    )
+
+
+def test_run_encounter_no_wind_matches_default() -> None:
+    """Threading ``wind=NO_WIND`` through the loop reproduces the default-run outcome exactly."""
+    own, intr = _encounter()
+    kw = dict(
+        perf=M600, rpz=_RPZ, t_lookahead=_LOOKAHEAD, dt=_DT, detector=StateBased(),
+        resolver=MVP(margin=1.1), recovery=PastCPA(),
+    )
+    assert run_encounter(own, intr, wind=NO_WIND, **kw) == run_encounter(own, intr, **kw)

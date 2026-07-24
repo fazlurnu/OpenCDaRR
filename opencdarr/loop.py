@@ -53,6 +53,7 @@ from opencdarr.separation import (
     project_to_fixedwing,
 )
 from opencdarr.state import AircraftState, DesiredVelocity
+from opencdarr.wind import NO_WIND, WindField
 
 # module-level singleton, not a call in the signature default (ruff B008) - safe to share
 # since Multirotor is stateless (ADR 0007)
@@ -147,6 +148,7 @@ def run_encounter(
     share_intent: bool = False,
     own_autopilot: Autopilot | None = None,
     intr_autopilot: Autopilot | None = None,
+    wind: WindField = NO_WIND,
 ) -> EncounterOutcome:
     """Run one pairwise encounter to termination and report its outcome.
 
@@ -165,6 +167,10 @@ def run_encounter(
     overlay are stepped with *its* ``perf``, it is advanced by *its* ``dynamics``, and a fixed-wing
     airframe automatically gets the velocity→course projection its final command needs
     (:func:`_setpoint_adapter`) — MVP/VO stay vehicle-neutral (they still emit a velocity).
+
+    ``wind`` (default :data:`~opencdarr.wind.NO_WIND`, Phase 5) is the shared, steady environment
+    field threaded into every ``dynamics.step`` — one field for both aircraft, read-only, never
+    stored on either state (ADR 0016). At ``NO_WIND`` the encounter is byte-identical to Phase 4.
 
     The CDR layers run every ``broadcast_interval`` seconds (the ADS-L/ASAS decision rate), not
     every ``dt``: at each tick each aircraft takes a fresh noisy self-measurement and **decides**
@@ -289,10 +295,11 @@ def run_encounter(
             )
             next_broadcast += broadcast_interval
 
-        # advance both from their pre-step states (explicitly simultaneous), each by its airframe
+        # advance both from their pre-step states (explicitly simultaneous), each by its airframe.
+        # ``wind`` is the shared environment field (default NO_WIND -> Phase-4 behaviour, 5a).
         own, intr = (
-            dyn_own.step(own, cmd_own, perf_own, dt),
-            dyn_intr.step(intr, cmd_intr, perf_intr, dt),
+            dyn_own.step(own, cmd_own, perf_own, dt, wind),
+            dyn_intr.step(intr, cmd_intr, perf_intr, dt, wind),
         )
         t += dt
 

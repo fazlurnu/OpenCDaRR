@@ -39,6 +39,7 @@ from opencdarr import geo
 from opencdarr.dynamics.base import _SPD_EPS, Dynamics, MotionCommand, _clip, odometry_update
 from opencdarr.performance import Performance
 from opencdarr.state import AircraftState
+from opencdarr.wind import NO_WIND, WindField
 
 _G = 9.80665  # m/s^2, standard gravity (the g in ψ̇ = g·tan φ / V_TAS)
 _L1_DISTANCE = 80.0  # m: L1 lookahead distance — the path-follower's capture-vs-tracking knob
@@ -125,7 +126,12 @@ class FixedWing(Dynamics):
     """
 
     def step(
-        self, state: AircraftState, command: MotionCommand, perf: Performance, dt: float
+        self,
+        state: AircraftState,
+        command: MotionCommand,
+        perf: Performance,
+        dt: float,
+        wind: WindField = NO_WIND,
     ) -> AircraftState:
         # fail fast on an under-specified command: a fixed-wing needs a lateral, airspeed, or
         # position channel (not a raw velocity — that is a multirotor channel, an absent DOF here)
@@ -193,9 +199,10 @@ class FixedWing(Dynamics):
         else:
             psi_new = psi_cmd % 360.0
 
-        # 7. position: air-relative velocity + wind (wind fixed at zero this pass), then the
-        #    ground-track course and ground speed as OUTPUTS, and a great-circle step along χ.
-        w_x = w_y = 0.0  # Phase 5 feeds a non-zero wind vector here; the integrator is unchanged
+        # 7. position: air-relative velocity + wind (Eq 9 vector sum), then the ground-track course
+        #    and ground speed as OUTPUTS, and a great-circle step along χ. At NO_WIND the wind term
+        #    is (0, 0), so ψ == χ and V_GS == V_TAS (byte-identical to the pre-Phase-5 integrator).
+        w_x, w_y = wind.components()
         r = math.radians(psi_new)
         vx = v * math.sin(r) + w_x
         vy = v * math.cos(r) + w_y

@@ -30,6 +30,7 @@ from opencdarr.dynamics.base import _SPD_EPS, Dynamics, MotionCommand, _clip, od
 from opencdarr.kinematics import velocity_enu
 from opencdarr.performance import Performance
 from opencdarr.state import AircraftState
+from opencdarr.wind import NO_WIND, WindField
 
 _HOVER_CAPTURE = 0.5  # m: within this range of a target position, command a full stop (hover)
 
@@ -119,8 +120,18 @@ class Multirotor(Dynamics):
     """
 
     def step(
-        self, state: AircraftState, command: MotionCommand, perf: Performance, dt: float
+        self,
+        state: AircraftState,
+        command: MotionCommand,
+        perf: Performance,
+        dt: float,
+        wind: WindField = NO_WIND,
     ) -> AircraftState:
+        # ``wind`` is accepted but not yet consumed: the ground-vs-air compensation (interpret
+        # target_velocity as a GROUND velocity, solve for the airspeed vector, clamp in the air
+        # frame) is a behavioural change with its own non-zero-wind tests, landing in Phase 5b. At
+        # NO_WIND it is a no-op, so this signature change is byte-identical (Phase 5a plumbing).
+        del wind
         # 1. translation target, by PX4 OffboardControlMode priority (position > velocity):
         #    a ``target_position`` (mission nominal) is tracked to a hover; else a body-frame or an
         #    inertial ``target_velocity`` (DAA override / resolver). Clamped to the top-speed

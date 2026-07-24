@@ -19,6 +19,26 @@ Same working style as Phases 2–4: one file at a time, read each diff, tick the
 green before the next; every new physical effect adds a file behind an existing interface, not a
 fork of the loop.
 
+## Update — 2026-07-24 (reconciled to the shipped Phase 4)
+
+This plan predates Phase 4b–4e. Three corrections, applied throughout below:
+
+- **The heading field already exists — reuse `AircraftState.yaw`, do not add `heading`.** ADR 0013
+  made `yaw` the fixed-wing heading ψ, and `state.py`'s `yaw` docstring already commits it to become
+  "the heading ψ whose difference from track is the crab angle (Phase 5)." A second `heading` field
+  would be the redundant source-of-truth ADR 0010 §4 rejects. So 5a leaves `state.py` **untouched**;
+  decision 3 is redeemed *by the reuse*, and the ADR (5d) records the reuse rather than a new field.
+- **Class/file names:** `HolonomicDynamics`/`holonomic.py` → **`Multirotor`/`multirotor.py`** (ADR
+  0012); `FixedWingDynamics` → **`FixedWing`** (`fixedwing.py`, ADR 0013). Guidance is the
+  vehicle-neutral **`WaypointAutopilot`** (`autopilot/waypoint.py`) — there is no `autopilot/
+  fixedwing.py`; the fixed-wing crab correction (5c) lands as a wind branch inside `WaypointAutopilot`
+  (or a small helper it calls), keeping one vehicle-neutral autopilot (ADR 0014 §1).
+- **Wind is not stored on `AircraftState`** (confirming decision 1): it is a shared, read-only
+  *environment* input — the same category as `perf`/`dt`, which `AircraftState` also does not store —
+  threaded into `step()`. Storing a copy per aircraft would duplicate the threaded value (a second
+  source of truth) and, on an IPS clone, put a shared environment value on each particle. The only
+  per-aircraft wind consequence, the crab/heading, already lives in `yaw`.
+
 ---
 
 ## The physics we are adding (the paper's Eqs 1–9)
@@ -51,8 +71,8 @@ Two consequences that drive the whole plan:
 - **Heading `ψ` and ground track `χ` split apart.** At `V_WS = 0` they are equal (Phase 4's
   behaviour-preserving special case); under wind they differ by the crab `θ_w`. This is the
   `heading ≠ track` field [[0010-dynamics-subpackage-and-odometry-state]] §4 deferred *"with the
-  wind / independent-yaw model that gives it meaning and its own ADR."* Phase 5 is that model — so
-  `AircraftState.heading` is **added here**, not in Phase 4.
+  wind / independent-yaw model that gives it meaning and its own ADR."* Phase 5 gives it that
+  meaning — the field is the existing `AircraftState.yaw` (ADR 0012/0013), reused here (Update above).
 - **Airspeed and ground speed split apart.** `V_TAS` (what the airframe flies, what stall/`v_max`
   and the drag polar see) is now distinct from `V_GS` (what it makes good over the ground, what
   CD/CR/CRR and odometry see). A constant-`V_TAS` fixed-wing turn traces a *circle in the air frame*
@@ -61,7 +81,7 @@ Two consequences that drive the whole plan:
 
 Fixed-wing vs multirotor differ in **how wind enters**, not in the vector sum itself:
 
-| | Multirotor (`HolonomicDynamics`) | Fixed-wing (`FixedWingDynamics`) |
+| | Multirotor (`Multirotor`) | Fixed-wing (`FixedWing`) |
 |---|---|---|
 | Controlled/limited quantity | **airspeed** vector, ≤ `v_max` in any direction | **airspeed magnitude** `V_TAS` (stall ≤ `V_TAS` ≤ `v_max`) + bank-limited turn |
 | Response to wind | crab freely; can null drift instantly (up to `v_max`); can **hold station / hover into wind** if `V_WS ≤ v_max` | crab only by yawing the whole airframe; turns become trochoidal; **cannot stop** — is pushed downwind through every maneuver |
@@ -112,9 +132,10 @@ changes the feasible set they steer within.
 1. **Wind is environment, not aircraft state.** A steady uniform field is identical for every
    aircraft and read-only, so it is **not** future-affecting *hidden* per-particle state — it is an
    explicit input. It is threaded into `Dynamics.step` as a `wind` argument (see decision 2), the
-   same way `perf` and `dt` are. What *is* per-aircraft — the induced heading/crab — lives in
-   `AircraftState.heading` (decision 3). This keeps the [[0010-dynamics-subpackage-and-odometry-state]]
-   invariant intact: nothing that differs between clones sits outside the clonable state.
+   same way `perf` and `dt` are. What *is* per-aircraft — the induced heading/crab — lives in the
+   existing `AircraftState.yaw` (decision 3, reused not re-added). This keeps the
+   [[0010-dynamics-subpackage-and-odometry-state]] invariant intact: nothing that differs between
+   clones sits outside the clonable state.
 
 2. **A `WindField` value + a `Dynamics.step` signature change (new ADR).** Add
    `opencdarr/wind.py` with a small frozen `WindField` (steady-uniform: constructed from
@@ -126,16 +147,15 @@ changes the feasible set they steer within.
    when a scenario needs it; the [[state|no-speculative-structure]] rule). The `WindField` *type* is
    the seam a spatial field slots behind later, without today carrying dead machinery.
 
-3. **`AircraftState.heading` (ψ) — the deferred field, added here.** New field, **default `= trk`**
-   (via `__post_init__`/factory so every existing construction that never sets it is unaffected and
-   `ψ == trk` at `V_WS = 0`) — clonable, for the identical reason `turn_rate` must be
-   (`state.py`). Fixed-wing integrates it as primary and derives `(trk, gs)` as *ground outputs*;
-   holonomic sets it from its yaw (4e) or air-velocity direction. **No new airspeed field** —
-   `V_TAS = |velocity_enu(state) − wind|` is derivable from the stored ground `(trk, gs)` and the
-   wind, so storing it too would be the redundant second-source-of-truth
-   [[0010-dynamics-subpackage-and-odometry-state]] §4 rejected. Only `heading` is genuinely
-   non-derivable (a fixed-wing's `ψ` is integrated history, not a function of the current ground
-   vector alone).
+3. **The heading `ψ` field already exists — reuse `AircraftState.yaw` (see the Update above).** ADR
+   0012/0013 shipped `yaw` (default `None` ⇒ nose aligned with track, so `ψ == trk` at `V_WS = 0`),
+   the fixed-wing already integrates it as primary and derives `(trk, gs)` as ground outputs, and the
+   multirotor sets it from its independent yaw (4e) or air-velocity direction. So 5a adds **no** state
+   field. **No new airspeed field** either — `V_TAS = |velocity_enu(state) − wind|` is derivable from
+   the stored ground `(trk, gs)` and the wind, so storing it too would be the redundant
+   second-source-of-truth [[0010-dynamics-subpackage-and-odometry-state]] §4 rejected. `yaw` is the
+   one genuinely non-derivable quantity (a fixed-wing's `ψ` is integrated history, not a function of
+   the current ground vector alone) — which is exactly why it is already state.
 
 4. **Command semantics under wind — the load-bearing decision (new ADR).** A `MotionCommand`'s
    linear channels are interpreted in the frame each vehicle naturally controls:
@@ -172,12 +192,12 @@ changes the feasible set they steer within.
 
 ## Phasing (each rung green before the next)
 
-### 5a — `WindField` + kinematics + the `heading` state field (behaviour-preserving at `V_WS = 0`)
+### 5a — `WindField` + kinematics + threading `wind` (behaviour-preserving at `V_WS = 0`) ✅
 
 The point of 5a is that **nothing observable changes** while zero wind is supplied — pure plumbing,
 gated by the bit-for-bit regression, before any aircraft actually feels wind.
 
-- [ ] **`opencdarr/wind.py`** (new) — `WindField` (frozen value; `from_met(theta_wa_deg, v_ws)`
+- [x] **`opencdarr/wind.py`** (new) — `WindField` (frozen value; `from_met(theta_wa_deg, v_ws)`
   factory applying Eq 1; `components() -> (w_x, w_y)`) and `NO_WIND = WindField(0.0, 0.0)`.
   - *Design:* uniform-constant now; the type is the seam for a future spatial/temporal field
     (decision 2). Meteorological "coming-from" convention documented at the boundary (Eq 1), because
@@ -185,7 +205,7 @@ gated by the bit-for-bit regression, before any aircraft actually feels wind.
   - *Check:* a north wind (`θ_wa = 0`) gives `(w_x, w_y) = (0, −V_WS)` — air moving *toward* the
     south; a west wind (`θ_wa = 270`) gives `(+V_WS, 0)`.
 
-- [ ] **`opencdarr/kinematics.py`** — wind helpers used by both dynamics and the autopilots:
+- [x] **`opencdarr/kinematics.py`** — wind helpers used by both dynamics and the autopilots:
   `wind_correction_angle(v_tas, wind, chi)` (Eq 3, returns `None`/raises on the `arcsin`
   out-of-range unachievable-course case), `ground_speed(v_tas, wind, psi)` (Eq 4),
   `air_to_ground(v_air_enu, wind)` / `ground_to_air(v_ground_enu, wind)` (the Eq 9 vector sum and its
@@ -193,32 +213,56 @@ gated by the bit-for-bit regression, before any aircraft actually feels wind.
   - *Check:* `ground_speed` (closed form, Eq 4) equals `|air_to_ground(...)|` (integrated form) across
     a sweep of `ψ`; `air_to_ground`∘`ground_to_air` is identity.
 
-- [ ] **`opencdarr/state.py`** — add `heading: float` (default `= trk`; behaviour-preserving
-  construction, decision 3). Document it as the air-relative heading `ψ`, equal to `trk` exactly when
-  `V_WS = 0` or for a holonomic vehicle not independently yawing; the crab is `heading − trk`.
-  - *Check:* every existing test constructs `AircraftState` unchanged and reads `heading == trk`.
+- [x] **`opencdarr/state.py`** — **no change** (reconciliation, decision 3): the heading `ψ` is the
+  existing `yaw` field. The crab is `yaw − trk` when `yaw` is set; `None`/`ψ == trk` at `V_WS = 0`.
 
-- [ ] **`opencdarr/dynamics/base.py`** — `Dynamics.step` gains `wind: WindField = NO_WIND` (decision
+- [x] **`opencdarr/dynamics/base.py`** — `Dynamics.step` gains `wind: WindField = NO_WIND` (decision
   2); `odometry_update` still takes the **ground** speed (odometry is a ground-path odometer —
   unchanged meaning, now fed the wind-affected `V_GS`). Update the ABC docstring's obligation list.
   - *Check:* every existing `.step(...)` call (no `wind=`) compiles and behaves identically.
 
-- [ ] **`opencdarr/loop.py`** — `run_encounter` accepts an optional `wind: WindField = NO_WIND` and
-  threads it into each `dynamics.step(...)`. No other change.
+- [x] **`opencdarr/dynamics/fixedwing.py`** — replace the hardcoded `w_x = w_y = 0.0` with
+  `w_x, w_y = wind.components()`. At `NO_WIND` this is `(0, 0)` ⇒ **byte-identical**, but it genuinely
+  wires wind into the already-air-relative integrator (redeeming ADR 0013's "wind-ready by
+  construction"), so 5c is mostly the crab autopilot, not a re-derivation.
+
+- [x] **`opencdarr/dynamics/multirotor.py`** — accept `wind` in the signature but leave it **inert**
+  (documented "consumed in 5b"): the ground-vs-air compensation is a behavioural change with its own
+  non-zero-wind tests, so it lands in 5b, not smuggled in here.
+
+- [x] **`opencdarr/loop.py`** — `run_encounter` accepts an optional `wind: WindField = NO_WIND` and
+  threads it into both `dyn_own.step(...)` and `dyn_intr.step(...)` (shared environment, one field for
+  the pair). No other change.
   - *Check (the 5a gate):* full suite green; **MVP/VO IPR sweep bit-for-bit** vs the ADR-0010 anchors
-    with the default `NO_WIND`. One moved bit means 5a is not done.
+    with the default `NO_WIND`, plus an explicit `step(..., wind=NO_WIND) == step(...)` identity test
+    for both airframes. One moved bit means 5a is not done.
 
-### 5b — Multirotor (holonomic) under wind
+### 5b — Multirotor under wind
 
-- [ ] **`opencdarr/dynamics/holonomic.py`** — interpret `command.target_velocity` as a **ground**
+- [ ] **`opencdarr/dynamics/multirotor.py`** — interpret `command.target_velocity` as a **ground**
   velocity (decision 4): compute required airspeed vector `v_air = v_ground_cmd − wind`, apply the
   existing isotropic `v_max`/`ax` limits **in the air frame** (that is where the airframe's envelope
-  lives), then set the new ground velocity `= v_air + wind` and update `(trk, gs)` from it. `heading`
+  lives), then set the new ground velocity `= v_air + wind` and update `(trk, gs)` from it. `yaw`
   tracks the air-velocity direction (or the independent yaw from 4e, unchanged).
   - *Check:* with a feasible command the ground velocity is met exactly regardless of wind (pure
     crab); commanding zero ground velocity **holds station** against a wind with `V_WS ≤ v_max`
     (hover into wind); a ground command needing airspeed `> v_max` clamps and drifts downwind by the
-    reported amount. `V_WS = 0` reproduces Phase-4 holonomic bit-for-bit.
+    reported amount. `V_WS = 0` reproduces Phase-4 multirotor bit-for-bit.
+
+- [ ] **`scripts/wind_multirotor_demo.py`** (new) — the below-/above-envelope contrast, plotted. A
+  multirotor commanded a constant `5 m/s` ground velocity due north in a **crosswind from the west**,
+  at two magnitudes straddling the feasibility crossover (`√(w² + 25) ≤ v_max`, i.e. `w ≲ 6.24 m/s`
+  for the M600's `v_max = 8`):
+  - **below envelope** (`w = 4 m/s`, req airspeed ≈ 6.4 ≤ 8): the drone **crabs** and its **ground
+    track stays straight** — command met exactly, wind invisible in the track;
+  - **above envelope** (`w = 7 m/s`, req airspeed ≈ 8.6 > 8): airspeed **clamps at `v_max`**, the
+    drone **drifts downwind** and its ground track bows east — the shortfall reported, not hidden.
+  - *Plot:* ground tracks (straight vs bowed) + a **wind-vector arrow** (a quiver showing where the
+    air moves, labelled speed + met "coming-from" bearing); the airspeed vs ground-velocity vectors at
+    a few points (the crab in the feasible case, the clamp in the infeasible); a small drift-vs-time
+    panel. Optionally the **station-keeping** binary (hover-into-wind vs blown-downwind) as a second,
+    starker feasible/infeasible pair. Factor the wind-arrow into a helper reused by 5c. Writes
+    `vault/observations/img/wind-multirotor-envelope.png`.
 
 ### 5c — Fixed-wing under wind (trochoidal ground tracks + wind-correction guidance)
 
@@ -232,19 +276,24 @@ gated by the bit-for-bit regression, before any aircraft actually feels wind.
     displaced from the start by `wind × turn-period`; instantaneous `V_GS(t)` matches Eq 4 (its
     Fig. 3).
 
-- [ ] **`opencdarr/autopilot/fixedwing.py`** — add wind correction to the guidance: to make good a
-  desired ground course `χ` (from goto/waypoint steering, Phase 4 4b–4c), command heading
-  `ψ = χ + θ_w(χ)` using Eq 3; on the unachievable-course case (`arcsin` out of range) steer the
-  closest achievable course and surface it, don't silently stall the guidance (decision 4).
-  - *Check:* the fixed-wing flies the same waypoint plan as in Phase-4 4c but *crabbed into wind*, and
+- [ ] **`opencdarr/dynamics/fixedwing.py` (guidance) / `opencdarr/autopilot/waypoint.py`** — add wind
+  correction to the L1 guidance: to make good a desired ground course `χ` (from the leg-tracking law,
+  Phase 4 4d), command heading `ψ = χ + θ_w(χ)` using Eq 3; on the unachievable-course case (`arcsin`
+  out of range) steer the closest achievable course and surface it, don't silently stall the guidance
+  (decision 4). Keep the one vehicle-neutral `WaypointAutopilot` (ADR 0014 §1): the crab is a
+  fixed-wing tracking detail, so it belongs in the fixed-wing tracker or a small wind helper the
+  autopilot calls, not a per-airframe autopilot fork.
+  - *Check:* the fixed-wing flies the same waypoint plan as in Phase-4 4d but *crabbed into wind*, and
     its **ground track** (not its nose) passes through the waypoints within capture radius; a
     cross-wind leg shows a steady non-zero crab equal to Eq 3.
 
-- [ ] **`vault/observations/wind-multirotor-vs-fixedwing.md`** — the contrast doc (mirrors
-  [[controlling-dubins-vs-holonomic]] / [[mixed-fleet-dubins-holonomic]]): same wind field, the
-  multirotor crabs and can hold station while the fixed-wing turns trochoidally and is pushed
-  downwind; side-by-side ground tracks + the `V_GS(ψ)` and crab plots. This is the qualitative payoff
-  that shows the physics is right before the quantitative IPR sweep.
+- [ ] **`scripts/wind_fixedwing_demo.py`** (new) + **`vault/observations/wind-multirotor-vs-fixedwing.md`**
+  — the contrast doc (mirrors [[controlling-dubins-vs-holonomic]] / [[mixed-fleet-dubins-holonomic]]):
+  same wind field, the multirotor crabs and can hold station while the fixed-wing turns trochoidally
+  and is pushed downwind. Side-by-side ground tracks + the **wind-vector arrow** (the same helper 5b
+  factors out) + the `V_GS(ψ)` and crab plots; a full constant-bank turn drawn as a circle in the air
+  frame and a trochoid over the ground (the paper's Fig. 4). The qualitative payoff that shows the
+  physics is right before the quantitative IPR sweep.
 
 ### 5d — Wind-aware separation and the IPR-under-wind sweep (the research payoff)
 
@@ -259,13 +308,14 @@ gated by the bit-for-bit regression, before any aircraft actually feels wind.
   question the whole build exists to answer; capture it as an experiment note with a reproducible
   seed, like the Phase-2/3 sweeps.
 
-- [ ] **ADR 001a — steady-uniform wind model + ground/air command semantics.** Records decisions
-  1–6: wind as a threaded read-only environment input (not hidden state); the `WindField` value and
-  `Dynamics.step` signature change; **`AircraftState.heading` added here** (redeeming the
-  [[0010-dynamics-subpackage-and-odometry-state]] §4 deferral — heading lands *with* the wind model,
-  as promised); ground-velocity vs airspeed command interpretation; and the explicit deferral of
+- [ ] **ADR 0016 — steady-uniform wind model + ground/air command semantics.** Records decisions
+  1–6: wind as a threaded read-only environment input (not hidden state, not on `AircraftState`); the
+  `WindField` value and `Dynamics.step` signature change; the heading `ψ` **reusing the existing
+  `yaw`** (redeeming the [[0010-dynamics-subpackage-and-odometry-state]] §4 deferral — the field lands
+  with the wind model's *meaning*, as promised, via the `yaw` ADR 0012/0013 already shipped, not a new
+  field); ground-velocity vs airspeed command interpretation; and the explicit deferral of
   gusts/shear/turbulence/3-D wind (matching the paper's own future-work boundary). Supersedes nothing;
-  extends 0007–0010 and Phase-4's ADR 0011.
+  extends 0007–0013 and Phase-4's ADR 0011/0015.
 
 ---
 
@@ -274,11 +324,12 @@ gated by the bit-for-bit regression, before any aircraft actually feels wind.
 - [ ] `test_wind.py` — Eq 1 sign convention (N/E/S/W winds → correct `(w_x, w_y)`); `NO_WIND` is zero.
 - [ ] `test_kinematics_wind.py` — Eq 3 crab and Eq 4 ground speed match the integrated vector sum;
   `air_to_ground`/`ground_to_air` inverse; unachievable-course case detected.
-- [ ] `test_state.py` (extend) — `heading` defaults to `trk`; existing constructions unaffected;
-  clones carry `heading`.
-- [ ] `test_loop.py` (extend) — **5a regression: MVP/VO IPR bit-for-bit** with `NO_WIND`.
-- [ ] `test_holonomic_wind.py` — exact ground-velocity tracking under wind; hover-into-wind
-  station-keeping; over-`v_max` clamp + downwind drift; `V_WS = 0` reproduces Phase-4 holonomic.
+- [ ] `test_state.py` — **no new assertions** (no new field; `yaw` behaviour is already tested).
+- [ ] `test_loop.py` (extend) — **5a regression: MVP/VO IPR bit-for-bit** with `NO_WIND`, plus the
+  `step(..., wind=NO_WIND) == step(...)` identity for both airframes.
+- [ ] `test_multirotor_wind.py` — exact ground-velocity tracking under wind (pure crab);
+  hover-into-wind station-keeping; over-`v_max` clamp + downwind drift; `V_WS = 0` reproduces Phase-4
+  multirotor. The below-/above-envelope cases the `wind_multirotor_demo` plots, pinned as asserts.
 - [ ] `test_fixedwing_wind.py` — circle-in-air / trochoid-over-ground; one-revolution endpoint
   displacement; `V_GS(t)` vs Eq 4; crab vs Eq 3 on a held course; `V_WS = 0` reproduces Phase-4
   fixed-wing.
