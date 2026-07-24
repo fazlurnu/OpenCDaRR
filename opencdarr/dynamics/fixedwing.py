@@ -19,10 +19,11 @@ fixedwing-coordinated-turn.md``):
     ẏ = V_TAS·cos ψ + w_y            (Eq 9)
     ψ̇ = g·tan φ / V_TAS              (Eq 8)   bank φ produces the yaw rate
 
-with ground speed ``V_GS = √(ẋ²+ẏ²)`` (Eq 4) and course ``χ = atan2(ẋ, ẏ)`` derived each step. This
-model is **wind-ready by construction**: the wind term ``(w_x, w_y)`` is present but **fixed at
-zero this pass** — Phase 5 turns wind on by feeding a non-zero vector, with no change to the
-integrator. At zero wind ``ψ = χ`` and ``V_GS = V_TAS`` (the inert Phase-5 hook, checked in tests).
+with ground speed ``V_GS = √(ẋ²+ẏ²)`` (Eq 4) and course ``χ = atan2(ẋ, ẏ)`` derived each step. The
+wind term ``(w_x, w_y)`` comes from the ``wind`` argument (Phase 5): under a non-zero wind the
+airframe **crabs** to make good a desired ground course (``ψ = χ + θ_w``, ``_heading_for_course``),
+a constant-bank turn traces a **trochoid** over the ground, and ``ψ ≠ χ``, ``V_GS ≠ V_TAS``. At
+``NO_WIND`` the term is ``(0, 0)``, so ``ψ = χ`` and ``V_GS = V_TAS`` — byte-identical to Phase 4.
 
 Supersedes the coupled-heading ``DubinsDynamics`` (deleted): a fixed-wing's turn radius is
 speed-dependent (``R = V²/(g·tan φ)``) and bounded by stall, which a fixed turn-rate cap cannot
@@ -37,6 +38,7 @@ from dataclasses import replace
 
 from opencdarr import geo
 from opencdarr.dynamics.base import _SPD_EPS, Dynamics, MotionCommand, _clip, odometry_update
+from opencdarr.kinematics import ground_to_air, velocity_enu, wind_correction_angle
 from opencdarr.performance import Performance
 from opencdarr.state import AircraftState
 from opencdarr.wind import NO_WIND, WindField
@@ -99,6 +101,23 @@ def _loiter_course(lat: float, lon: float, center: tuple[float, float], radius: 
     return (brg + offset) % 360.0
 
 
+def _heading_for_course(chi: float, v_tas: float, wind: WindField) -> float:
+    """Heading ψ [deg] to make good ground course ``chi`` under ``wind`` — the crab (Eq 3).
+
+    A fixed-wing steers its *airspeed vector* (heading ψ), but guidance wants the *ground track* χ,
+    so the airframe crabs: ``ψ = χ + θ_w`` with ``θ_w`` from
+    :func:`~opencdarr.kinematics.wind_correction_angle`. When the course is unachievable
+    (downwind-dominated, ``|arg| > 1``) the crab is clamped to ±90° — point as far into the
+    cross-wind as possible (the closest achievable course), not silently pretend (Phase-5 decision
+    4). At ``NO_WIND`` the crab is zero, so ``ψ == χ`` (byte-identical to the pre-wind tracker).
+    """
+    theta_w = wind_correction_angle(v_tas, wind, chi)
+    if theta_w is None:  # unachievable: crab maximally toward the wind's cross-course component
+        arg = (wind.speed / v_tas) * math.sin(math.radians(wind.coming_from) - math.radians(chi))
+        theta_w = math.copysign(90.0, arg)
+    return (chi + theta_w) % 360.0
+
+
 def _stall_bank_limit(airspeed: float, v_stall: float, phi_max: float) -> float:
     """Bank limit [deg] from the stall-in-turn constraint at this airspeed (ADR 0013).
 
@@ -149,9 +168,10 @@ class FixedWing(Dynamics):
 
         psi = state.yaw if state.yaw is not None else state.trk  # heading ψ (nose = airspeed vec)
 
-        # 1. airspeed (longitudinal): clamp the command into the envelope, then ramp by ax*dt.
-        #    v_min is the level stall speed; at zero wind the airspeed equals the ground speed.
-        v_cur = state.gs
+        # 1. airspeed (longitudinal): the *current* airspeed is the ground velocity minus the wind
+        #    (Eq 9 inverted) — under wind ``V_TAS ≠ V_GS``, and at NO_WIND it equals ``state.gs``.
+        #    v_min is the level stall speed. Clamp the command to the envelope, then ramp by ax*dt.
+        v_cur = math.hypot(*ground_to_air(velocity_enu(state), wind))
         v_tgt = _clip(command.target_airspeed, perf.v_min, perf.v_max) if (
             command.target_airspeed is not None
         ) else v_cur
@@ -160,22 +180,24 @@ class FixedWing(Dynamics):
         # 2. bank authority at this airspeed: the structural limit, tightened by stall-in-turn
         phi_max_eff = _stall_bank_limit(v, perf.v_min, perf.phi_max)
 
-        # 3. heading target ψ_cmd, by channel priority: a target_position runs the L1 path-follower
-        #    (leg line -> course); else airspeed_direction is ψ directly (overrides course);
-        #    else course is χ (= ψ at zero wind, WCA lands in Phase 5); else hold heading.
+        # 3. heading target ψ_cmd, by channel priority. The position/loiter/course channels give a
+        #    desired ground *course* χ, so the airframe crabs into wind to make it good
+        #    (ψ = χ + θ_w, _heading_for_course; zero crab at NO_WIND). ``airspeed_direction`` is ψ
+        #    directly (a commanded heading, no crab, overrides course); else hold heading.
         if command.target_position is not None:
             if command.target_loiter_radius is not None:
-                psi_cmd = _loiter_course(
+                chi_cmd = _loiter_course(
                     state.lat, state.lon, command.target_position, command.target_loiter_radius
                 )
             else:
-                psi_cmd = _guidance_course(
+                chi_cmd = _guidance_course(
                     state.lat, state.lon, command.target_leg_start, command.target_position
                 )
+            psi_cmd = _heading_for_course(chi_cmd, v, wind)
         elif command.target_airspeed_direction is not None:
             psi_cmd = command.target_airspeed_direction
         elif command.target_course is not None:
-            psi_cmd = command.target_course
+            psi_cmd = _heading_for_course(command.target_course, v, wind)
         else:
             psi_cmd = psi  # airspeed-only command: hold heading
 

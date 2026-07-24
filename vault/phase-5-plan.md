@@ -264,9 +264,9 @@ gated by the bit-for-bit regression, before any aircraft actually feels wind.
     starker feasible/infeasible pair. Factor the wind-arrow into a helper reused by 5c. Writes
     `vault/observations/img/wind-multirotor-envelope.png`.
 
-### 5c — Fixed-wing under wind (trochoidal ground tracks + wind-correction guidance)
+### 5c — Fixed-wing under wind (trochoidal ground tracks + wind-correction guidance) ✅
 
-- [ ] **`opencdarr/dynamics/fixedwing.py`** — supply the real wind to the already-air-relative
+- [x] **`opencdarr/dynamics/fixedwing.py`** — supply the real wind to the already-air-relative
   integrator (4d): integrate `ψ` via bank (Eq 8, unchanged), form ground velocity by the Eq 9 vector
   sum, derive `(trk, gs)` and advance ground odometry. No structural change if 4d shipped wind-ready
   (decision 6).
@@ -276,7 +276,7 @@ gated by the bit-for-bit regression, before any aircraft actually feels wind.
     displaced from the start by `wind × turn-period`; instantaneous `V_GS(t)` matches Eq 4 (its
     Fig. 3).
 
-- [ ] **`opencdarr/dynamics/fixedwing.py` (guidance) / `opencdarr/autopilot/waypoint.py`** — add wind
+- [x] **`opencdarr/dynamics/fixedwing.py` (guidance) / `opencdarr/autopilot/waypoint.py`** — add wind
   correction to the L1 guidance: to make good a desired ground course `χ` (from the leg-tracking law,
   Phase 4 4d), command heading `ψ = χ + θ_w(χ)` using Eq 3; on the unachievable-course case (`arcsin`
   out of range) steer the closest achievable course and surface it, don't silently stall the guidance
@@ -287,7 +287,7 @@ gated by the bit-for-bit regression, before any aircraft actually feels wind.
     its **ground track** (not its nose) passes through the waypoints within capture radius; a
     cross-wind leg shows a steady non-zero crab equal to Eq 3.
 
-- [ ] **`scripts/wind_fixedwing_demo.py`** (new) + **`vault/observations/wind-multirotor-vs-fixedwing.md`**
+- [x] **`scripts/wind_fixedwing_demo.py`** (new) + **`vault/observations/wind-multirotor-vs-fixedwing.md`**
   — the contrast doc (mirrors [[controlling-dubins-vs-holonomic]] / [[mixed-fleet-dubins-holonomic]]):
   same wind field, the multirotor crabs and can hold station while the fixed-wing turns trochoidally
   and is pushed downwind. Side-by-side ground tracks + the **wind-vector arrow** (the same helper 5b
@@ -330,7 +330,7 @@ gated by the bit-for-bit regression, before any aircraft actually feels wind.
 - [x] `test_multirotor_wind.py` — exact ground-velocity tracking under wind (pure crab);
   hover-into-wind station-keeping; over-`v_max` clamp + downwind drift; `V_WS = 0` reproduces Phase-4
   multirotor. The below-/above-envelope cases the `wind_multirotor_demo` plots, pinned as asserts.
-- [ ] `test_fixedwing_wind.py` — circle-in-air / trochoid-over-ground; one-revolution endpoint
+- [x] `test_fixedwing_wind.py` — circle-in-air / trochoid-over-ground; one-revolution endpoint
   displacement; `V_GS(t)` vs Eq 4; crab vs Eq 3 on a held course; `V_WS = 0` reproduces Phase-4
   fixed-wing.
 - [ ] `test_loop_wind.py` — mixed-fleet-in-wind resolves; IPR reproducible; wind-limited fixed-wing
