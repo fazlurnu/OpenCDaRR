@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from opencdarr import geo
-from opencdarr.cns import GpsNavigation
+from opencdarr.cns import GnssNavigation
 from opencdarr.kinematics import velocity_enu
 from opencdarr.state import AircraftState
 
@@ -25,7 +25,7 @@ def _pos_offset_enu(true: AircraftState, meas: AircraftState) -> tuple[float, fl
 
 def test_zero_noise_measures_true_state() -> None:
     """Default AircraftState declares perfect accuracy (pos_ci95 = vel_ci95 = 0)."""
-    nav = GpsNavigation()
+    nav = GnssNavigation()
     msg = nav.measure(_TRUE, t=5.0, rng=np.random.default_rng(0))
     assert msg.source == "A"
     assert msg.t_meas == 5.0
@@ -38,7 +38,7 @@ def test_zero_noise_measures_true_state() -> None:
 def test_broadcast_declares_the_source_accuracy() -> None:
     """The measured (broadcast) state carries the source's own declared ci95."""
     true = dataclasses.replace(_TRUE, pos_ci95=20.0, vel_ci95=2.0)
-    msg = GpsNavigation().measure(true, t=0.0, rng=np.random.default_rng(0))
+    msg = GnssNavigation().measure(true, t=0.0, rng=np.random.default_rng(0))
     assert msg.state.pos_ci95 == 20.0
     assert msg.state.vel_ci95 == 2.0
 
@@ -46,7 +46,7 @@ def test_broadcast_declares_the_source_accuracy() -> None:
 def test_position_noise_is_zero_mean_and_ci95_calibrated() -> None:
     ci95 = 20.0
     true = dataclasses.replace(_TRUE, pos_ci95=ci95, vel_ci95=0.0)
-    nav = GpsNavigation()
+    nav = GnssNavigation()
     rng = np.random.default_rng(1)
     offsets = np.array(
         [_pos_offset_enu(true, nav.measure(true, 0.0, rng).state) for _ in range(8000)]
@@ -61,7 +61,7 @@ def test_position_noise_is_zero_mean_and_ci95_calibrated() -> None:
 def test_velocity_noise_is_zero_mean_and_ci95_calibrated() -> None:
     vel_ci95 = 2.0
     true = dataclasses.replace(_TRUE, pos_ci95=0.0, vel_ci95=vel_ci95)
-    nav = GpsNavigation()
+    nav = GnssNavigation()
     rng = np.random.default_rng(2)
     ve = np.array([velocity_enu(nav.measure(true, 0.0, rng).state) for _ in range(8000)])
     true_e, true_n = velocity_enu(true)
@@ -73,9 +73,24 @@ def test_velocity_noise_is_zero_mean_and_ci95_calibrated() -> None:
     assert abs(float(np.quantile(radial, 0.95)) - vel_ci95) < 0.3  # 95% radial CI
 
 
+def test_velocity_uses_its_own_pluggable_distribution() -> None:
+    """A custom vel_distribution is honoured (and independent of the position one)."""
+    vel_ci95 = 2.0
+    true = dataclasses.replace(_TRUE, pos_ci95=0.0, vel_ci95=vel_ci95)
+    true_e, true_n = velocity_enu(true)
+
+    def constant_bias(rng: np.random.Generator, ci95: float) -> tuple[float, float]:
+        return ci95, 0.0  # deterministic East-only velocity offset
+
+    nav = GnssNavigation(vel_distribution=constant_bias)
+    ve, vn = velocity_enu(nav.measure(true, 0.0, np.random.default_rng(0)).state)
+    assert ve == pytest.approx(true_e + vel_ci95)
+    assert vn == pytest.approx(true_n)
+
+
 def test_reproducible_per_seed() -> None:
     true = dataclasses.replace(_TRUE, pos_ci95=20.0, vel_ci95=1.0)
-    nav = GpsNavigation()
+    nav = GnssNavigation()
     a = nav.measure(true, 0.0, np.random.default_rng(42)).state
     b = nav.measure(true, 0.0, np.random.default_rng(42)).state
     assert a == b

@@ -40,7 +40,7 @@ def _phi(x: np.ndarray) -> np.ndarray:
 def _iso_cov(ci95: float) -> np.ndarray:
     """Isotropic 2D covariance from a declared 95%-radial CI, regularised to stay invertible.
 
-    Uses the same CI95 -> per-axis-sigma conversion as :class:`~opencdarr.cns.GpsNavigation`
+    Uses the same CI95 -> per-axis-sigma conversion as :class:`~opencdarr.cns.GnssNavigation`
     (``vault/derivations/gps-noise.md``), so "zero declared uncertainty" degenerates to a tiny,
     numerically-safe covariance rather than an exact (singular) zero.
     """

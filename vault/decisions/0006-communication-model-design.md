@@ -108,7 +108,7 @@ root (seed)
                                               draws for both directed links)
 ```
 
-`nav_seq` replaces the old `sim_seq` name (it now feeds only `GpsNavigation.measure`); `comm_seq`
+`nav_seq` replaces the old `sim_seq` name (it now feeds only `GnssNavigation.measure`); `comm_seq`
 is new. Documented here per ADR 0001's obligation that the stream layout be written down, not
 implicit.
 

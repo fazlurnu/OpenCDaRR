@@ -16,15 +16,20 @@ from opencdarr.cns.communication import (
     lognormal_latency,
     uniform_latency,
 )
-from opencdarr.cns.navigation import GpsNavigation
-from opencdarr.cns.noise_distributions import gaussian
+from opencdarr.cns.navigation import GnssNavigation
+from opencdarr.cns.noise_distributions import (
+    gaussian,
+    make_anisotropic_gaussian,
+    make_anisotropic_mixture_gaussian,
+    make_mixture_gaussian,
+)
 from opencdarr.cns.surveillance import LastKnown, age
 
 __all__ = [
     "Comm",
     "CommState",
     "CommunicationModel",
-    "GpsNavigation",
+    "GnssNavigation",
     "InFlight",
     "LastKnown",
     "LatencyDistribution",
@@ -36,5 +41,8 @@ __all__ = [
     "constant_latency",
     "gaussian",
     "lognormal_latency",
+    "make_anisotropic_gaussian",
+    "make_anisotropic_mixture_gaussian",
+    "make_mixture_gaussian",
     "uniform_latency",
 ]
