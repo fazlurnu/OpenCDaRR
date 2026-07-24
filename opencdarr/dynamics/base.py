@@ -58,8 +58,14 @@ class MotionCommand:
         a fixed-wing. Takes precedence over ``target_velocity`` when both are set.
     target_position:
         Desired position ``(lat, lon)`` [deg] — the goto / waypoint channel (PX4
-        ``TrajectorySetpoint.position``; consumed by :class:`~opencdarr.dynamics.Multirotor` from
-        Phase 4d).
+        ``TrajectorySetpoint.position``; the active waypoint). A
+        :class:`~opencdarr.dynamics.Multirotor` flies straight to it and hovers; a
+        :class:`~opencdarr.dynamics.FixedWing` tracks the leg to it.
+    target_leg_start:
+        The previous waypoint ``(lat, lon)`` [deg] — with ``target_position`` (the current
+        waypoint) it is the **leg line** the fixed-wing L1 tracker follows (nulls cross-track).
+        ``None`` for a bare goto ⇒ pure-pursuit to ``target_position``. A multirotor ignores it (it
+        flies to the point, not along the line).
     target_yaw:
         Desired nose heading [deg, aviation] — the multirotor yaw channel (PX4
         ``TrajectorySetpoint.yaw``), **decoupled from the direction of travel**. ``None`` = yaw not
@@ -95,6 +101,7 @@ class MotionCommand:
     target_velocity: tuple[float, float] | None = None
     target_body_velocity: tuple[float, float] | None = None
     target_position: tuple[float, float] | None = None
+    target_leg_start: tuple[float, float] | None = None
     target_yaw: float | None = None
     target_yawspeed: float | None = None
     target_course: float | None = None

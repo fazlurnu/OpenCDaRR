@@ -14,7 +14,7 @@ autopilot (Phase 4d); this class deliberately does none of it.
 
 from __future__ import annotations
 
-from opencdarr.autopilot.base import Autopilot
+from opencdarr.autopilot.base import Autopilot, GuidanceMemory
 from opencdarr.dynamics import MotionCommand
 from opencdarr.performance import Performance
 from opencdarr.state import AircraftState
@@ -24,14 +24,17 @@ class CruiseAutopilot(Autopilot):
     """Hold a fixed cruise ``(heading, speed)`` — a constant velocity command every tick.
 
     Constructed from the aircraft's initial cruise track and ground speed; :meth:`step` ignores the
-    state and performance it is passed and returns the constant command, so the encounter's nominal
-    is frozen exactly as the pre-Phase-4a loop froze it.
+    state, memory, and performance it is passed and returns the constant command (threading the
+    memory through untouched), so the encounter's nominal is frozen exactly as the pre-Phase-4a
+    loop froze it — the behaviour-preserving default the loop still uses when no mission is given.
     """
 
     def __init__(self, heading: float, speed: float) -> None:
         # Precompute the constant command once — its value is this autopilot's whole behaviour.
         self._command = MotionCommand.from_track_speed(heading, speed)
 
-    def step(self, state: AircraftState, perf: Performance) -> MotionCommand:
-        """Return the fixed cruise command, ignoring ``state`` / ``perf`` (see class docstring)."""
-        return self._command
+    def step(
+        self, state: AircraftState, memory: GuidanceMemory, perf: Performance
+    ) -> tuple[MotionCommand, GuidanceMemory]:
+        """Return the fixed cruise command and the unchanged memory (see class docstring)."""
+        return self._command, memory

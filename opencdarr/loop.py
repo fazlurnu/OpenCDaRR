@@ -30,7 +30,7 @@ from dataclasses import dataclass, replace
 import numpy as np
 
 from opencdarr import geo
-from opencdarr.autopilot import CruiseAutopilot
+from opencdarr.autopilot import Autopilot, CruiseAutopilot, GuidanceMemory
 from opencdarr.cd.base import ConflictDetector
 from opencdarr.cns.base import (
     CommState,
@@ -121,6 +121,8 @@ def run_encounter(
     done_timeout: float = 10.0,
     broadcast_interval: float = 1.0,
     share_intent: bool = False,
+    own_autopilot: Autopilot | None = None,
+    intr_autopilot: Autopilot | None = None,
 ) -> EncounterOutcome:
     """Run one pairwise encounter to termination and report its outcome.
 
@@ -168,11 +170,16 @@ def run_encounter(
     # SeparationManager overlays safety on it. CruiseAutopilot holds each aircraft's cruise
     # (heading, speed) frozen from the *true initial* state — byte-identical to the old frozen
     # ``nom_own`` / ``nom_intr`` — so this split reproduces the pre-Phase-4a IPR bit-for-bit.
-    ap_own = CruiseAutopilot(own.trk, own.gs)
-    ap_intr = CruiseAutopilot(intr.trk, intr.gs)
+    # Default to the frozen-cruise nominal (behaviour-preserving); a caller navigating a mission
+    # passes a WaypointAutopilot per aircraft. Guidance progress rides in the threaded
+    # GuidanceMemory (leg index), clonable like PairMemory (ADR 0014).
+    ap_own: Autopilot = own_autopilot or CruiseAutopilot(own.trk, own.gs)
+    ap_intr: Autopilot = intr_autopilot or CruiseAutopilot(intr.trk, intr.gs)
+    gm_own = gm_intr = GuidanceMemory()
     separation = SeparationManager()  # stateless; memory rides in mem_own / mem_intr (ADR 0011 §5)
     mem_own = mem_intr = INACTIVE  # per-direction resopairs membership + inferred-intent memory
-    cmd_own, cmd_intr = ap_own.step(own, perf), ap_intr.step(intr, perf)
+    cmd_own, gm_own = ap_own.step(own, gm_own, perf)
+    cmd_intr, gm_intr = ap_intr.step(intr, gm_intr, perf)
     comm_state = CommState()
 
     conflict = los = False
@@ -222,10 +229,11 @@ def run_encounter(
             else:
                 perceived_intr, perceived_own = tx_intr, tx_own  # instant, perfect delivery
 
-            # guidance: each aircraft's nominal command (CruiseAutopilot ignores the noisy
-            # self-fix, so this is the frozen cruise command — real navigation arrives in Phase 4d)
-            nom_own = ap_own.step(self_own, perf)
-            nom_intr = ap_intr.step(self_intr, perf)
+            # guidance: each aircraft's nominal command + advanced guidance memory. A mission
+            # autopilot navigates from the live self-fix (re-planned each tick, which is what makes
+            # the resume-after-avoidance automatic); CruiseAutopilot ignores it and holds.
+            nom_own, gm_own = ap_own.step(self_own, gm_own, perf)
+            nom_intr, gm_intr = ap_intr.step(self_intr, gm_intr, perf)
             # safety overlay: SeparationManager may override the nominal, releasing back on
             # recovery. perceived_* is None before first contact on a lossy link -> fly nominal
             cmd_own, mem_own = separation.step(
