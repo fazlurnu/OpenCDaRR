@@ -28,3 +28,6 @@ outputs/
 vault/.obsidian/workspace.json
 vault/.obsidian/workspace-mobile.json
 vault/.obsidian/cache
+
+# Reference papers — possibly confidential, kept out of git
+vault/papers/
