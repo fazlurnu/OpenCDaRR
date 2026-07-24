@@ -27,7 +27,7 @@ from dataclasses import replace
 
 from opencdarr import geo
 from opencdarr.dynamics.base import _SPD_EPS, Dynamics, MotionCommand, _clip, odometry_update
-from opencdarr.kinematics import velocity_enu
+from opencdarr.kinematics import air_to_ground, ground_to_air, velocity_enu
 from opencdarr.performance import Performance
 from opencdarr.state import AircraftState
 from opencdarr.wind import NO_WIND, WindField
@@ -117,6 +117,14 @@ class Multirotor(Dynamics):
     encounter read this aircraft's state identically. ``yaw`` is the *additional* decoupled nose
     heading (``None`` until independently commanded); only *how the vehicle reaches* a velocity,
     and that it can point independently, differ.
+
+    Under **wind** (Phase 5): ``target_velocity`` is a *ground* velocity, but the ``v_max``/``ax``
+    envelope is on *airspeed*, so the vehicle solves for the airspeed vector it must fly
+    (``ground_cmd − wind``) and limits *that*. A feasible command is met exactly by crabbing; an
+    infeasible one (required airspeed > ``v_max``) clamps and the vehicle drifts downwind;
+    commanding zero ground velocity holds station against any wind with ``V_WS ≤ v_max`` (hovering
+    into wind). ``yaw`` is left to its independent channel — the crab shows up as ``trk`` differing
+    from the airspeed-vector direction, not as a forced nose heading.
     """
 
     def step(
@@ -127,34 +135,34 @@ class Multirotor(Dynamics):
         dt: float,
         wind: WindField = NO_WIND,
     ) -> AircraftState:
-        # ``wind`` is accepted but not yet consumed: the ground-vs-air compensation (interpret
-        # target_velocity as a GROUND velocity, solve for the airspeed vector, clamp in the air
-        # frame) is a behavioural change with its own non-zero-wind tests, landing in Phase 5b. At
-        # NO_WIND it is a no-op, so this signature change is byte-identical (Phase 5a plumbing).
-        del wind
-        # 1. translation target, by PX4 OffboardControlMode priority (position > velocity):
-        #    a ``target_position`` (mission nominal) is tracked to a hover; else a body-frame or an
-        #    inertial ``target_velocity`` (DAA override / resolver). Clamped to the top-speed
-        #    envelope (no v_min — a multirotor has no separate backward capability); clamp first,
-        #    bound the step toward it, so the result stays in the v_max disk throughout (convex:
-        #    both step endpoints inside -> every point inside).
+        # 1. translation target as a **ground** velocity (Phase-5 decision 4: a resolver / mission
+        #    command targets a ground velocity), by PX4 OffboardControlMode priority (position >
+        #    body-velocity > inertial velocity): a ``target_position`` is tracked to a hover, else
+        #    a body-frame or inertial ``target_velocity`` (DAA override / resolver).
         if command.target_position is not None:
-            cmd_e, cmd_n = _position_to_velocity(state, command.target_position, perf)
+            gnd_e, gnd_n = _position_to_velocity(state, command.target_position, perf)
         elif command.target_body_velocity is not None:
             yaw = state.yaw if state.yaw is not None else state.trk
-            cmd_e, cmd_n = _body_to_enu(*command.target_body_velocity, yaw)
+            gnd_e, gnd_n = _body_to_enu(*command.target_body_velocity, yaw)
         else:
-            cmd_e, cmd_n = command.v_east, command.v_north  # raises if no channel is set
-        tgt_e, tgt_n = _clip_magnitude(cmd_e, cmd_n, perf.v_max)
+            gnd_e, gnd_n = command.v_east, command.v_north  # raises if no channel is set
 
-        # 2. isotropic acceleration limit: bound the *vector* step by ax*dt in any direction (not
-        #    two independent 1D limits — that would be a coupled-heading turn-rate + speed ramp).
-        cur_e, cur_n = velocity_enu(state)
-        step_e, step_n = _clip_magnitude(tgt_e - cur_e, tgt_n - cur_n, perf.ax * dt)
-        new_e, new_n = cur_e + step_e, cur_n + step_n
+        # 2. the envelope (``v_max`` top speed, ``ax`` accel) is on **airspeed**, so all limiting
+        #    happens in the **air frame** (Phase-5 decision 4): lower the ground target and the
+        #    current ground velocity to the air frame (subtract the wind), clamp the target to the
+        #    ``v_max`` disk and bound the step by ``ax*dt`` there, then raise the result back to a
+        #    ground velocity (add the wind). Clamp first, then bound the step, so the air velocity
+        #    stays in the ``v_max`` disk throughout (convex). At ``NO_WIND`` air == ground and this
+        #    is byte-identical to Phase 4. A feasible command is met exactly (pure crab); a ground
+        #    velocity needing airspeed > ``v_max`` clamps and the aircraft drifts downwind; a zero
+        #    ground command holds station against a wind with ``V_WS ≤ v_max`` (hover into wind).
+        atgt_e, atgt_n = _clip_magnitude(*ground_to_air((gnd_e, gnd_n), wind), perf.v_max)
+        acur_e, acur_n = ground_to_air(velocity_enu(state), wind)
+        astep_e, astep_n = _clip_magnitude(atgt_e - acur_e, atgt_n - acur_n, perf.ax * dt)
+        new_e, new_n = air_to_ground((acur_e + astep_e, acur_n + astep_n), wind)
 
-        # 3. direction/magnitude of ground travel from the new vector. A ~zero vector has no
-        #    defined direction -> hold the current track.
+        # 3. direction/magnitude of ground travel from the new **ground** vector. A ~zero vector
+        #    has no defined direction -> hold the current track.
         new_gs = math.hypot(new_e, new_n)
         new_trk = (
             state.trk if new_gs <= _SPD_EPS else math.degrees(math.atan2(new_e, new_n)) % 360.0

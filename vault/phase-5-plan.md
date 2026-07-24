@@ -237,9 +237,9 @@ gated by the bit-for-bit regression, before any aircraft actually feels wind.
     with the default `NO_WIND`, plus an explicit `step(..., wind=NO_WIND) == step(...)` identity test
     for both airframes. One moved bit means 5a is not done.
 
-### 5b — Multirotor under wind
+### 5b — Multirotor under wind ✅
 
-- [ ] **`opencdarr/dynamics/multirotor.py`** — interpret `command.target_velocity` as a **ground**
+- [x] **`opencdarr/dynamics/multirotor.py`** — interpret `command.target_velocity` as a **ground**
   velocity (decision 4): compute required airspeed vector `v_air = v_ground_cmd − wind`, apply the
   existing isotropic `v_max`/`ax` limits **in the air frame** (that is where the airframe's envelope
   lives), then set the new ground velocity `= v_air + wind` and update `(trk, gs)` from it. `yaw`
@@ -249,7 +249,7 @@ gated by the bit-for-bit regression, before any aircraft actually feels wind.
     (hover into wind); a ground command needing airspeed `> v_max` clamps and drifts downwind by the
     reported amount. `V_WS = 0` reproduces Phase-4 multirotor bit-for-bit.
 
-- [ ] **`scripts/wind_multirotor_demo.py`** (new) — the below-/above-envelope contrast, plotted. A
+- [x] **`scripts/wind_multirotor_demo.py`** (new) — the below-/above-envelope contrast, plotted. A
   multirotor commanded a constant `5 m/s` ground velocity due north in a **crosswind from the west**,
   at two magnitudes straddling the feasibility crossover (`√(w² + 25) ≤ v_max`, i.e. `w ≲ 6.24 m/s`
   for the M600's `v_max = 8`):
@@ -327,7 +327,7 @@ gated by the bit-for-bit regression, before any aircraft actually feels wind.
 - [ ] `test_state.py` — **no new assertions** (no new field; `yaw` behaviour is already tested).
 - [ ] `test_loop.py` (extend) — **5a regression: MVP/VO IPR bit-for-bit** with `NO_WIND`, plus the
   `step(..., wind=NO_WIND) == step(...)` identity for both airframes.
-- [ ] `test_multirotor_wind.py` — exact ground-velocity tracking under wind (pure crab);
+- [x] `test_multirotor_wind.py` — exact ground-velocity tracking under wind (pure crab);
   hover-into-wind station-keeping; over-`v_max` clamp + downwind drift; `V_WS = 0` reproduces Phase-4
   multirotor. The below-/above-envelope cases the `wind_multirotor_demo` plots, pinned as asserts.
 - [ ] `test_fixedwing_wind.py` — circle-in-air / trochoid-over-ground; one-revolution endpoint
