@@ -8,7 +8,7 @@ the loop are doing real work.
 from __future__ import annotations
 
 from opencdarr.cd import StateBased
-from opencdarr.cns import GpsNavigation
+from opencdarr.cns import GnssNavigation
 from opencdarr.cr import MVP, VO
 from opencdarr.crr import PastCPA
 from opencdarr.dynamics import Command, Dynamics
@@ -152,7 +152,7 @@ def _noisy_encounter(resolver: MVP | VO) -> float:
     return run_encounter(
         own, intr, perf=M600, rpz=_RPZ, t_lookahead=_LOOKAHEAD, dt=0.2,
         detector=StateBased(), resolver=resolver, recovery=PastCPA(bouncing_guard=True),
-        navigation=GpsNavigation(), rng=generator(seq),
+        navigation=GnssNavigation(), rng=generator(seq),
     ).min_sep
 
 

@@ -185,7 +185,7 @@ flowchart LR
     end
     subgraph CNSf["cns/ — communication-navigation-surveillance"]
         NAVABC["NavigationModel (ABC)<br/>measure(true, t, rng) -> Message"]
-        NAVABC --> GPS["GpsNavigation(distribution)"]
+        NAVABC --> GPS["GnssNavigation(distribution)"]
         NDP["NoiseDistribution (Protocol)<br/>(rng, ci95, trk) -> (e, n)"]
         NDP --> GAUSS["gaussian"]
         GPS -. uses .-> NDP
@@ -298,7 +298,7 @@ Every `.py` in `opencdarr/`, its public surface, and what flows in/out.
 | Module | Symbol | Input | Output |
 |---|---|---|---|
 | `cns/base.py` | `NavigationModel` (ABC) `.measure(true, t, rng)` | true state + RNG | `Message` (noisy self-fix) |
-| `cns/navigation.py` | `GpsNavigation(distribution)` | — | nav impl (uses `geo`, `kinematics`, noise) |
+| `cns/navigation.py` | `GnssNavigation(distribution)` | — | nav impl (uses `geo`, `kinematics`, noise) |
 | `cns/base.py` | `NoiseDistribution` (Protocol) `(rng, ci95, trk)` | — | `(east, north)` error |
 | `cns/noise_distributions.py` | `gaussian`, `CI95_TO_SIGMA` | — | isotropic position noise |
 | `cns/base.py` | `CommunicationModel` (ABC) `.step(state, bcasts, rcvrs, t, rng)` | comm state + broadcasts | new `CommState` |

@@ -86,7 +86,7 @@ Each item: **path · purpose · design justification · check · relations.**
     `SurveillanceModel`**, added when 3b actually landed (not originally listed here).
 - [x] **`opencdarr/cns/noise_distributions.py`** — `gaussian` (isotropic, CI95-parameterised);
   mixture / anisotropic deferred to 3c.
-- [x] **`opencdarr/cns/navigation.py`** — `GpsNavigation()`: **signature evolved from the plan**
+- [x] **`opencdarr/cns/navigation.py`** — `GnssNavigation()`: **signature evolved from the plan**
   — `pos_ci95`/`vel_ci95` are no longer constructor args, they're read off the `AircraftState`
   being measured (moved onto the state so accuracy can differ per aircraft and evolve over a
   run, same as `turn_rate`; see `vault/derivations/gps-noise.md`). Applies position + velocity
@@ -157,7 +157,7 @@ Each item: **path · purpose · design justification · check · relations.**
   splittable if warranted — hasn't been judged necessary yet.
 - [x] **`vault/derivations/gps-noise.md`** — CI95 → per-axis σ (2D radial), position + velocity
   error, the pluggable-distribution signature, **and** where CI95 lives (`AircraftState`, not
-  `GpsNavigation` — added when ci95 moved onto the state).
+  `GnssNavigation` — added when ci95 moved onto the state).
 - [ ] **`vault/derivations/comm-latency.md`** — not written as its own file. Its content
   currently lives split across ADR 0006 (delivery/timing model) and the two observation docs
   ([[communication-reception-latency]] for the t1→t2/staleness numbers,

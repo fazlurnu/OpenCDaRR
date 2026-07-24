@@ -22,7 +22,7 @@ import numpy as np
 from joblib import Parallel, delayed
 
 from opencdarr.cd import StateBased
-from opencdarr.cns import GpsNavigation
+from opencdarr.cns import GnssNavigation
 from opencdarr.cr import MVP, VO
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr import FTR, PastCPA, ProbabilisticFTR
@@ -57,7 +57,7 @@ def _one(dpsi: float, resolver_name: str, recovery_name: str, seq, cfg: argparse
     )
     intr = create_conflict(
         own, intr_id="INT", dpsi=dpsi, dcpa=0.0, tlos=cfg.tlos, rpz=cfg.rpz, side=1)
-    nav = GpsNavigation()
+    nav = GnssNavigation()
     out = run_encounter(
         own, intr, perf=M600, rpz=cfg.rpz, t_lookahead=cfg.lookahead, dt=cfg.dt,
         detector=StateBased(), resolver=_resolver(resolver_name, cfg.margin),

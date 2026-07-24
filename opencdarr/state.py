@@ -152,7 +152,7 @@ class AircraftState:
         [m/s]) — a property of *this* aircraft's sensor, not a fixed simulation-wide constant.
         It lives here, not on the navigation model, for the same reason ``bank`` does: it can
         differ per aircraft and evolve over a run (e.g. degrading GPS coverage), so it must travel
-        with the state to clone correctly. :class:`~opencdarr.cns.GpsNavigation` reads these off
+        with the state to clone correctly. :class:`~opencdarr.cns.GnssNavigation` reads these off
         the aircraft being measured and copies them onto the broadcast — accuracy is declared
         metadata a receiver gets *with* the message, not something it has to be told separately.
         Zero (default) means a perfect, noiseless sensor.

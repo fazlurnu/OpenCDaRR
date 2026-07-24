@@ -6,7 +6,7 @@ from __future__ import annotations
 import pytest
 
 from opencdarr.cd import StateBased
-from opencdarr.cns import Comm, GpsNavigation, uniform_latency
+from opencdarr.cns import Comm, GnssNavigation, uniform_latency
 from opencdarr.config import (
     Config,
     ConflictConfig,
@@ -22,7 +22,7 @@ from opencdarr.performance import M600
 from opencdarr.rng import generator, root_seed_sequence, spawn
 from opencdarr.scenario import sample_pairwise
 
-# GpsNavigation reads its noise magnitude from the sampled states' own vel_ci95 (95% radial),
+# GnssNavigation reads its noise magnitude from the sampled states' own vel_ci95 (95% radial),
 # not a per-axis sigma: 2.4477x a sigma value, so these keep the same effective noise level as
 # before the pos-ci95/vel-ci95 rename.
 _VEL_CI95_2SIGMA = 2.0 * 2.4477
@@ -39,7 +39,7 @@ def _config(seed: int = 1, n: int = 200, pos_ci95: float = 0.0, vel_ci95: float 
     )
 
 
-def _ipr(pos_ci95: float, vel_ci95: float, navigation: GpsNavigation | None) -> float:
+def _ipr(pos_ci95: float, vel_ci95: float, navigation: GnssNavigation | None) -> float:
     return estimate_ipr(
         _config(pos_ci95=pos_ci95, vel_ci95=vel_ci95),
         M600, StateBased(), MVP(1.05), PastCPA(), navigation=navigation,
@@ -50,13 +50,13 @@ def test_zero_noise_navigation_matches_no_navigation() -> None:
     """Perfect-accuracy states (ci95=0) perceive the truth -> same clean result as no
     navigation."""
     assert _ipr(0.0, 0.0, None) == 1.0
-    assert _ipr(0.0, 0.0, GpsNavigation()) == 1.0
+    assert _ipr(0.0, 0.0, GnssNavigation()) == 1.0
 
 
 def test_ipr_degrades_monotonically_with_gps_noise() -> None:
-    clean = _ipr(0.0, 0.0, GpsNavigation())
-    mild = _ipr(50.0, _VEL_CI95_2SIGMA, GpsNavigation())
-    severe = _ipr(200.0, _VEL_CI95_2SIGMA, GpsNavigation())
+    clean = _ipr(0.0, 0.0, GnssNavigation())
+    mild = _ipr(50.0, _VEL_CI95_2SIGMA, GnssNavigation())
+    severe = _ipr(200.0, _VEL_CI95_2SIGMA, GnssNavigation())
     assert clean > mild > severe
     assert clean == 1.0
     assert severe < 0.8  # heavy CNS uncertainty -> a clear drop (the over-clear buffer + the
@@ -66,7 +66,7 @@ def test_ipr_degrades_monotonically_with_gps_noise() -> None:
 
 def test_reproducible_with_navigation() -> None:
     cfg = _config(pos_ci95=50.0, vel_ci95=_VEL_CI95_2SIGMA)
-    nav = GpsNavigation()
+    nav = GnssNavigation()
     r1 = estimate_ipr(cfg, M600, StateBased(), MVP(1.05), PastCPA(), navigation=nav)
     r2 = estimate_ipr(cfg, M600, StateBased(), MVP(1.05), PastCPA(), navigation=nav)
     assert r1 == r2
@@ -141,7 +141,7 @@ def test_communication_and_navigation_are_independent_substreams() -> None:
     kwargs = dict(
         perf=M600, rpz=50.0, t_lookahead=120.0, dt=1.0,
         detector=StateBased(), resolver=MVP(1.05), recovery=PastCPA(),
-        navigation=GpsNavigation(), broadcast_interval=1.0,
+        navigation=GnssNavigation(), broadcast_interval=1.0,
     )
     without_comm = run_encounter(own, intr, rng=generator(nav_seq), **kwargs)
     with_comm = run_encounter(

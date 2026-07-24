@@ -29,11 +29,9 @@ class Message:
 
 
 class NoiseDistribution(Protocol):
-    """A 2D position-error distribution: ``(rng, ci95, trk_deg) -> (east, north)`` error [m]."""
+    """A 2D position-error distribution: ``(rng, ci95) -> (east, north)`` error [m]."""
 
-    def __call__(
-        self, rng: np.random.Generator, ci95: float, trk_deg: float
-    ) -> tuple[float, float]: ...
+    def __call__(self, rng: np.random.Generator, ci95: float) -> tuple[float, float]: ...
 
 
 class NavigationModel(ABC):
