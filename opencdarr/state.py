@@ -17,11 +17,21 @@ step by step, and stay correct to clone.
 Scope
 -----
 ``AircraftState`` is the *certain kinematic core* — a single aircraft's 2D horizontal
-point-mass state. It is deliberately not the whole IPS particle: the particle will also
-carry per-aircraft CDR / recovery memory (e.g. ``resopairs``, the initial intruder
-velocity a recovery criterion compares against) and an RNG substream (``ADR 0001``). Those
-are added by the steps that introduce them (CDR: Steps 2-3; estimator: Steps 5-6), each
+point-mass state — plus two **odometry accumulators** (``flight_time``, ``distance_flown``)
+the dynamics advance each step (ADR 0010). The accumulators are diagnostics, not dynamics
+inputs: nothing reads them back to decide the next step, but they must live *here* rather than
+be recomputed by the loop, because an IPS clone taken mid-flight has to carry its parent's
+elapsed time and path length with it. It is deliberately not the whole IPS particle: the
+particle will also carry per-aircraft CDR / recovery memory (e.g. ``resopairs``, the initial
+intruder velocity a recovery criterion compares against) and an RNG substream (``ADR 0001``).
+Those are added by the steps that introduce them (CDR: Steps 2-3; estimator: Steps 5-6), each
 inside the clonable state, never outside it.
+
+Not stored, on purpose (ADR 0010): the East/North velocity components — derivable from
+``(trk, gs)`` via :func:`~opencdarr.kinematics.velocity_enu`, so a stored copy would be a second
+source of truth that can drift; and a heading distinct from ``trk`` — meaningless until wind
+(crab angle) or independent-yaw control exists, so it lands with that model and its own ADR, not
+as a field that is only ever a copy of ``trk``.
 
 The model is horizontal at fixed altitude, matching every experiment on the roadmap
 (recovery criteria, multi-aircraft conflict, rare events). A future 3D extension would add
@@ -128,6 +138,16 @@ class AircraftState:
         the aircraft being measured and copies them onto the broadcast — accuracy is declared
         metadata a receiver gets *with* the message, not something it has to be told separately.
         Zero (default) means a perfect, noiseless sensor.
+    flight_time:
+        Seconds this aircraft has been advanced (odometry accumulator, ADR 0010). Every
+        :class:`~opencdarr.dynamics.Dynamics` step adds ``dt``. A diagnostic (no dynamics reads it
+        back), but it rides in the state so an IPS clone inherits the parent's elapsed time. Zero
+        (default) for a freshly created aircraft.
+    distance_flown:
+        Ground path length in metres this aircraft has covered (odometry accumulator, ADR 0010).
+        Every step adds ``gs * dt`` (the odometer reading), so a there-and-back path keeps growing
+        even as net displacement returns toward the start. Same rationale as ``flight_time``. Zero
+        (default) at creation.
     """
 
     id: str
@@ -139,6 +159,8 @@ class AircraftState:
     desired: DesiredVelocity | None = None
     pos_ci95: float = 0.0
     vel_ci95: float = 0.0
+    flight_time: float = 0.0
+    distance_flown: float = 0.0
 
 
 def create_aircraft(

@@ -17,7 +17,7 @@ from opencdarr.cd import StateBased
 from opencdarr.cr import MVP
 from opencdarr.crr import PastCPA
 from opencdarr.dynamics import Command, step_dynamics
-from opencdarr.loop import _decide
+from opencdarr.loop import _INACTIVE, _decide
 from opencdarr.performance import M600
 from opencdarr.scenario import create_conflict
 from opencdarr.state import AircraftState
@@ -33,15 +33,17 @@ def run(dpsi: float) -> dict[str, np.ndarray]:
     nom_own = Command.from_track_speed(own.trk, own.gs)
     nom_intr = Command.from_track_speed(intr.trk, intr.gs)
     cmd_own, cmd_intr = nom_own, nom_intr
-    ro = ri = False
+    mem_own = mem_intr = _INACTIVE
     t, nb = 0.0, 0.0
     rows = []
     while t < TMAX + 1e-9:
         if t + 1e-9 >= nb:  # no noise: decide on the true states, once per broadcast interval
-            cmd_own, ro = _decide(own, intr, nom_own, ro, RPZ, LOOKAHEAD, det, res, rec)
-            cmd_intr, ri = _decide(intr, own, nom_intr, ri, RPZ, LOOKAHEAD, det, res, rec)
+            cmd_own, mem_own = _decide(
+                own, intr, nom_own, mem_own, RPZ, LOOKAHEAD, det, res, rec)
+            cmd_intr, mem_intr = _decide(
+                intr, own, nom_intr, mem_intr, RPZ, LOOKAHEAD, det, res, rec)
             nb += BCAST
-        rows.append((t, own.gs, own.trk, own.lat, own.lon, float(ro), cmd_own.gs))
+        rows.append((t, own.gs, own.trk, own.lat, own.lon, float(mem_own.resolving), cmd_own.gs))
         own = step_dynamics(own, cmd_own, M600, DT)
         intr = step_dynamics(intr, cmd_intr, M600, DT)
         t += DT

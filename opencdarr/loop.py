@@ -5,7 +5,7 @@ cadence** (``broadcast_interval``, the ADS-L/ASAS decision rate — 1 Hz in the 
 every integration step: at each broadcast tick each aircraft takes a fresh noisy self-measurement
 and decides (detect → resolve, or recover → resume) for **both directed pairs** (A→B, B→A) on
 its *perceived* view; the resulting command is then **held** while the encounter's
-:class:`~opencdarr.dynamics.Dynamics` model (:class:`~opencdarr.dynamics.PointMassDynamics` by
+:class:`~opencdarr.dynamics.Dynamics` model (:class:`~opencdarr.dynamics.DubinsDynamics` by
 default, ADR 0007) integrates at ``dt`` until the next tick. Deciding every step instead would
 re-draw independent noise 1/``dt``×
 per second and average it away — unphysically robust. Truth is used only to score the encounter
@@ -41,14 +41,14 @@ from opencdarr.cns.base import (
 from opencdarr.cns.surveillance import LastKnown
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr.base import RecoveryCriterion
-from opencdarr.dynamics import Command, Dynamics, PointMassDynamics
+from opencdarr.dynamics import Command, DubinsDynamics, Dynamics
 from opencdarr.kinematics import relative_enu
 from opencdarr.performance import Performance
 from opencdarr.state import AircraftState, DesiredVelocity
 
 # module-level singleton, not a call in the signature default (ruff B008) - safe to share
-# since PointMassDynamics is stateless (ADR 0007)
-_DEFAULT_DYNAMICS: Dynamics = PointMassDynamics()
+# since DubinsDynamics is stateless (ADR 0007)
+_DEFAULT_DYNAMICS: Dynamics = DubinsDynamics()
 
 
 @dataclass(frozen=True)
@@ -170,7 +170,7 @@ def run_encounter(
     With ``resolver=None`` the aircraft fly their nominal paths (a baseline that *should* lose
     separation). With a resolver (and ideally a recovery criterion), they maneuver to clear.
 
-    ``dynamics`` (default :class:`~opencdarr.dynamics.PointMassDynamics`, ADR 0007) is how a
+    ``dynamics`` (default :class:`~opencdarr.dynamics.DubinsDynamics`, ADR 0007) is how a
     :class:`Command` becomes motion each ``dt``; swap it for a different :class:`Dynamics`
     implementation (a different airframe, or a future wind-aware model) without forking this
     function.

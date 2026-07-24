@@ -12,7 +12,7 @@ import dataclasses
 import math
 
 from opencdarr import geo
-from opencdarr.dynamics import Command, Dynamics, PointMassDynamics, step_dynamics
+from opencdarr.dynamics import Command, DubinsDynamics, Dynamics, step_dynamics
 from opencdarr.performance import M600
 from opencdarr.state import AircraftState
 
@@ -113,6 +113,24 @@ def test_reversed_command_turns_around_not_backward() -> None:
     assert abs(s.gs - 10.0) < 1e-9  # forward speed held through the turn
 
 
+# --- Odometry accumulators (ADR 0010) ----------------------------------------
+
+
+def test_odometry_accumulates_time_and_distance() -> None:
+    """flight_time sums dt; distance_flown sums gs*dt (the odometer) — starting from 0."""
+    s = _start(trk=90.0, gs=10.0)
+    assert s.flight_time == 0.0 and s.distance_flown == 0.0  # fresh aircraft
+    cmd = Command.from_track_speed(90.0, 10.0)
+    total_dist = 0.0
+    for _ in range(10):
+        s = step_dynamics(s, cmd, M600, dt=1.0)
+        total_dist += s.gs * 1.0  # gs is a steady 10 here
+    assert s.flight_time == 10.0
+    assert abs(s.distance_flown - total_dist) < 1e-9
+    # cruising 10 m/s for 10 s ~ 100 m, matching the straight-line distance check above
+    assert abs(s.distance_flown - 100.0) < 1e-9
+
+
 # --- Purity ------------------------------------------------------------------
 
 
@@ -128,11 +146,11 @@ def test_step_does_not_mutate_input() -> None:
 # --- Dynamics interface (ADR 0007) --------------------------------------------
 
 
-def test_point_mass_dynamics_matches_step_dynamics() -> None:
-    """PointMassDynamics is a pure pass-through to step_dynamics, not a second implementation."""
+def test_dubins_dynamics_matches_step_dynamics() -> None:
+    """DubinsDynamics is a pure pass-through to step_dynamics, not a second implementation."""
     s = _start(trk=10.0, gs=8.0)
     cmd = Command.from_track_speed(90.0, 15.0)
-    assert PointMassDynamics().step(s, cmd, M600, dt=0.5) == step_dynamics(s, cmd, M600, dt=0.5)
+    assert DubinsDynamics().step(s, cmd, M600, dt=0.5) == step_dynamics(s, cmd, M600, dt=0.5)
 
 
 def test_dynamics_is_not_directly_instantiable() -> None:

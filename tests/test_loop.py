@@ -101,6 +101,6 @@ def test_dynamics_is_pluggable() -> None:
         detector=StateBased(),
     )
     # frozen: the pair never converges, so no loss of separation despite no resolver -
-    # with the default PointMassDynamics this same setup loses separation (see the
+    # with the default DubinsDynamics this same setup loses separation (see the
     # unresolved-encounter test above), so this result is only possible if our Dynamics ran.
     assert outcome.los is False
