@@ -5,37 +5,35 @@ implements the user's core flow: **fly the mission → DAA interrupts (offboard)
 from the same leg.** Build the ladder one rung at a time; each must fly on multirotor **and** fixed-wing
 (same `Mission`, different `Autopilot` implementation / natural command channel).
 
-## Checklist
+## DONE (2026-07-24) — [[0014-mission-position-guidance|ADR 0014]]
 
-- [ ] **`opencdarr/mission.py`** — `Mission` value: `goto: tuple | None`, `flight_plan:
-  list[Waypoint] | None`. Frozen intent; does not control the aircraft. Frame: WGS84 lat/lon (matches
-  `AircraftState`), converted via `geo`/`kinematics` in the autopilot. (A local-NED convenience mirrors
-  PX4 global-vs-local; keep the state truth in lat/lon.)
-- [ ] **`goto` guidance** — `autopilot/goto_multirotor.py` and `autopilot/goto_fixedwing.py`:
-  - multirotor: bearing/range → `MotionCommand(target_velocity = unit(bearing)·cruise_speed)`, slowing
-    to hover near the point.
-  - fixed-wing: an L1 / NPFG-style law → `MotionCommand(target_course=…, target_airspeed=…)`; cannot
-    stop, so arrival = within capture radius, then loiter.
-- [ ] **`Waypoint` + `flight_plan` sequencing** — advance to the next leg on an arrival test (capture
-  radius); emit the leg's command. **The active-leg index is clonable value state** (on the aircraft
-  state or a threaded autopilot-memory value), **never on the autopilot object** — same invariant as
-  `PairMemory` (parent §2). This is the one place hidden state can creep back; the test guards it.
-- [ ] **Loiter after arrival** — multirotor: hover (`target_velocity=0`); fixed-wing: min-radius orbit
-  (`target_course` swept — it cannot stop).
-- [ ] **Mission ↔ Offboard resume (D-mission).** Decide and implement the mode surfacing:
-  - the `SeparationManager` overriding the nominal **is** the Mission→Offboard switch; releasing on
-    recovery **is** the return to Mission. On release the autopilot resumes from the **persisted leg
-    index** — so an encounter that interrupts mid-plan continues, not restarts.
-  - Recommendation: keep it implicit (nominal-vs-final command selection) unless a scenario needs a
-    literal `FlightMode` enum; if surfaced, the enum is clonable state, and the SeparationManager still
-    owns no mode state (it reads/returns, never stores).
+Built the **position-setpoint** design (Q1) with **L1** for the fixed-wing (Q2), as approved.
 
-## Gate
+- [x] **`opencdarr/mission.py`** — `Mission(goto | flight_plan of Waypoint)`, frozen intent, WGS84
+  lat/lon.
+- [x] **Position setpoints tracked in the dynamics** (not vehicle-specific goto autopilots). A single
+  vehicle-neutral **`WaypointAutopilot`** emits `MotionCommand(target_position, target_leg_start,
+  target_airspeed)`; the airframe tracks it. `Multirotor` position tracker = stopping-distance law
+  `√(2·ax·range)` + hover-capture deadband. `FixedWing` = **L1** (leg line → course →
+  coordinated-turn core; pursuit when no leg), `vault/derivations/l1-guidance.md`.
+- [x] **Waypoint sequencing** — advances `leg_index` on a capture radius (flies through intermediate
+  waypoints). **Leg index is threaded `GuidanceMemory`** (ADR ABC change `step(state, memory, perf) ->
+  (cmd, memory)`), clonable — never on the autopilot object.
+- [x] **Loiter** — `MotionCommand.target_loiter_radius` at the final waypoint; MC hovers, FW flies a
+  min-radius orbit (single capture-and-hold law).
+- [x] **Mission ↔ Offboard resume** — **automatic**, no `FlightMode` machine: the autopilot re-plans
+  each tick, so releasing the `SeparationManager` override resumes the mission from the persisted leg
+  (FW L1 re-intercepts the leg line). Demonstrated + tested on the multirotor.
 
-- [ ] `test_autopilot_goto.py` — multirotor reaches a goto point and settles (direct path); fixed-wing
-  reaches it on a feasible curved path and enters loiter.
-- [ ] `test_autopilot_waypoints.py` — a 3-waypoint plan flown in order on **both** airframes; **leg index
-  clones correctly** (an IPS-style clone mid-plan continues from the same leg).
-- [ ] `test_mission_resume.py` — DAA interrupts a mission mid-leg, overrides, recovers, and the aircraft
-  **resumes the same leg** (not leg 0); the resume index survives a clone taken during the override.
-- [ ] `test_autopilot_loiter.py` — multirotor holds position (hover); fixed-wing orbits at min radius.
+## Gate — GREEN
+
+- [x] `test_autopilot_goto.py` — multirotor reaches a goto point and hovers (direct path, no overshoot).
+- [x] `test_autopilot_waypoints.py` — 3-waypoint plan in order; **leg index clones correctly** mid-plan.
+- [x] `test_fixedwing_guidance.py` — L1 nulls a 100 m cross-track offset from either side; flies a plan.
+- [x] `test_autopilot_loiter.py` — MC hovers; FW holds a clean min-radius orbit (one full loop).
+- [x] `test_mission_resume.py` — DAA interrupts leg 1, recovers, **resumes the same leg** to the final
+  waypoint; leg index + pair memory survive a clone taken during the override.
+- [x] Full suite green; my files add zero avoidable ruff/mypy errors.
+
+**Deferred to 4e:** the fixed-wing DAA interrupt (velocity→course projection — MVP/VO emit a velocity a
+fixed-wing can't fly; prototyped in `scripts/l1_reintercept_demo.py`). NPFG/wind → Phase 5.

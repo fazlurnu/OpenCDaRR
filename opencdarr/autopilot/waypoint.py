@@ -6,9 +6,10 @@ airframe's controller (the :class:`~opencdarr.dynamics.base.Dynamics` step) trac
 flies straight in and hovers; a fixed-wing tracks the leg line and orbits). Because it emits a
 position rather than a pre-computed velocity/course, one autopilot serves both airframes.
 
-Sequencing (advancing through ``flight_plan`` legs) and loiter arrive in later 4d sub-steps; this
-first cut handles a single ``goto`` / the first waypoint. The active-leg index lives in the
-threaded :class:`~opencdarr.autopilot.base.GuidanceMemory`, never on this object (ADR 0014).
+It advances through the ``flight_plan`` on a capture radius (flying *through* intermediate
+waypoints) and emits a loiter setpoint at the final one (a fixed-wing orbits it; a multirotor
+hovers). The active-leg index lives in the threaded
+:class:`~opencdarr.autopilot.base.GuidanceMemory`, never on this object (ADR 0014).
 """
 
 from __future__ import annotations
@@ -31,11 +32,16 @@ class WaypointAutopilot(Autopilot):
     """
 
     def __init__(
-        self, mission: Mission, cruise_airspeed: float = 17.0, capture_radius: float = 30.0
+        self,
+        mission: Mission,
+        cruise_airspeed: float = 17.0,
+        capture_radius: float = 30.0,
+        loiter_radius: float = 80.0,
     ) -> None:
         self._waypoints: tuple[Waypoint, ...] = mission.waypoints()
         self._cruise_airspeed = cruise_airspeed
         self._capture_radius = capture_radius
+        self._loiter_radius = loiter_radius
 
     def step(
         self, state: AircraftState, memory: GuidanceMemory, perf: Performance
@@ -56,9 +62,11 @@ class WaypointAutopilot(Autopilot):
 
         wp = wps[leg]
         leg_start = wps[leg - 1] if leg > 0 else None  # the leg line for the fixed-wing L1 tracker
+        final = leg == len(wps) - 1  # loiter at the last waypoint (FW orbits; MC hovers)
         command = MotionCommand(
             target_position=(wp.lat, wp.lon),
             target_leg_start=None if leg_start is None else (leg_start.lat, leg_start.lon),
             target_airspeed=self._cruise_airspeed,
+            target_loiter_radius=self._loiter_radius if final else None,
         )
         return command, memory

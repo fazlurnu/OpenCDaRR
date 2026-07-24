@@ -64,6 +64,11 @@ class MotionCommand:
     target_leg_start:
         The previous waypoint ``(lat, lon)`` [deg] — with ``target_position`` (the current
         waypoint) it is the **leg line** the fixed-wing L1 tracker follows (nulls cross-track).
+    target_loiter_radius:
+        Loiter radius [m] about ``target_position`` (the loiter centre) — set on arrival at the
+        final waypoint. A :class:`~opencdarr.dynamics.FixedWing` flies a min-radius **orbit** at
+        this radius (it cannot stop); a :class:`~opencdarr.dynamics.Multirotor` ignores it and
+        simply **hovers** at the centre (PX4 ``MAV_CMD_NAV_LOITER_*``).
         ``None`` for a bare goto ⇒ pure-pursuit to ``target_position``. A multirotor ignores it (it
         flies to the point, not along the line).
     target_yaw:
@@ -102,6 +107,7 @@ class MotionCommand:
     target_body_velocity: tuple[float, float] | None = None
     target_position: tuple[float, float] | None = None
     target_leg_start: tuple[float, float] | None = None
+    target_loiter_radius: float | None = None
     target_yaw: float | None = None
     target_yawspeed: float | None = None
     target_course: float | None = None

@@ -41,6 +41,61 @@ from opencdarr.performance import Performance
 from opencdarr.state import AircraftState
 
 _G = 9.80665  # m/s^2, standard gravity (the g in ψ̇ = g·tan φ / V_TAS)
+_L1_DISTANCE = 80.0  # m: L1 lookahead distance — the path-follower's capture-vs-tracking knob
+
+
+def _guidance_course(
+    lat: float, lon: float, leg_start: tuple[float, float] | None, target: tuple[float, float]
+) -> float:
+    """Desired ground course [deg, aviation] from the L1 path-follower (ADR 0014).
+
+    Steers toward an **L1 reference point** on the leg line a lookahead ``_L1_DISTANCE`` ahead of
+    the aircraft's foot-of-perpendicular — so an off-track aircraft curves *onto* the line and then
+    tracks *along* it (cross-track error is nulled), rather than cutting to the endpoint. When
+    farther off track than ``_L1_DISTANCE`` it steers at the foot (maximum correction).
+    ``leg_start = None`` (a bare goto) ⇒ pure-pursuit straight at ``target``. Wind is zero this
+    pass, so course = heading.
+
+    Geometry is in a local ENU frame centred on the aircraft (``geo.qdrdist`` bearings/ranges).
+    """
+    te, tn = _enu_from(lat, lon, target)  # target relative to the aircraft
+    if leg_start is None:
+        return math.degrees(math.atan2(te, tn)) % 360.0  # pursuit: steer straight at the target
+    ae, an = _enu_from(lat, lon, leg_start)  # leg start relative to the aircraft
+    ux, uy = te - ae, tn - an  # leg direction (A -> B)
+    leglen = math.hypot(ux, uy)
+    if leglen < _SPD_EPS:
+        return math.degrees(math.atan2(te, tn)) % 360.0  # degenerate leg -> pursuit
+    ux, uy = ux / leglen, uy / leglen
+    # foot of the perpendicular from the aircraft (origin) onto the line through A: F = A + (-A·u)u
+    proj = -(ae * ux + an * uy)
+    fx, fy = ae + proj * ux, an + proj * uy
+    cross = math.hypot(fx, fy)  # cross-track distance
+    ahead = math.sqrt(max(0.0, _L1_DISTANCE * _L1_DISTANCE - cross * cross))
+    rx, ry = fx + ahead * ux, fy + ahead * uy  # the L1 reference point on the leg line
+    return math.degrees(math.atan2(rx, ry)) % 360.0
+
+
+def _enu_from(lat: float, lon: float, point: tuple[float, float]) -> tuple[float, float]:
+    """``point`` (lat, lon) as ENU ``(east, north)`` metres relative to ``(lat, lon)``."""
+    qdr, dist = geo.qdrdist(lat, lon, point[0], point[1])
+    r = math.radians(qdr)
+    return dist * math.sin(r), dist * math.cos(r)
+
+
+def _loiter_course(lat: float, lon: float, center: tuple[float, float], radius: float) -> float:
+    """Desired ground course [deg] to orbit ``center`` at ``radius`` — the fixed-wing loiter (a
+    fixed-wing cannot hover, so it circles; ADR 0014).
+
+    A single law captures *and* holds the circle: steer at an angle ``asin(radius/d)`` off the
+    bearing to the centre, where ``d`` is the range. Far outside (``d ≫ radius``) that offset → 0,
+    so it flies toward the centre; on the circle (``d = radius``) it is 90°, a pure tangent; inside
+    (``d < radius``, clip) it is 90° outward. The radius must exceed the airframe's min turn radius
+    (``V²/(g·tan φ_max)``) for the orbit to be holdable.
+    """
+    brg, dist = geo.qdrdist(lat, lon, center[0], center[1])
+    offset = math.degrees(math.asin(min(1.0, radius / max(dist, _SPD_EPS))))
+    return (brg + offset) % 360.0
 
 
 def _stall_bank_limit(airspeed: float, v_stall: float, phi_max: float) -> float:
@@ -72,14 +127,16 @@ class FixedWing(Dynamics):
     def step(
         self, state: AircraftState, command: MotionCommand, perf: Performance, dt: float
     ) -> AircraftState:
-        # fail fast on an under-specified command: a fixed-wing needs a lateral or airspeed channel
+        # fail fast on an under-specified command: a fixed-wing needs a lateral, airspeed, or
+        # position channel (not a raw velocity — that is a multirotor channel, an absent DOF here)
         if (
-            command.target_course is None
+            command.target_position is None
+            and command.target_course is None
             and command.target_airspeed_direction is None
             and command.target_airspeed is None
         ):
             raise ValueError(
-                "MotionCommand has no fixed-wing channel (target_course / "
+                "MotionCommand has no fixed-wing channel (target_position / target_course / "
                 "target_airspeed_direction / target_airspeed): a fixed-wing cannot fly a raw "
                 "velocity command — project it to a course/airspeed setpoint first (Phase 4e)."
             )
@@ -97,12 +154,22 @@ class FixedWing(Dynamics):
         # 2. bank authority at this airspeed: the structural limit, tightened by stall-in-turn
         phi_max_eff = _stall_bank_limit(v, perf.v_min, perf.phi_max)
 
-        # 3. heading target ψ_cmd: airspeed_direction is ψ directly (overrides course, per PX4);
-        #    course is χ, which at zero wind equals ψ (wind correction angle lands in Phase 5).
-        if command.target_airspeed_direction is not None:
+        # 3. heading target ψ_cmd, by channel priority: a target_position runs the L1 path-follower
+        #    (leg line -> course); else airspeed_direction is ψ directly (overrides course);
+        #    else course is χ (= ψ at zero wind, WCA lands in Phase 5); else hold heading.
+        if command.target_position is not None:
+            if command.target_loiter_radius is not None:
+                psi_cmd = _loiter_course(
+                    state.lat, state.lon, command.target_position, command.target_loiter_radius
+                )
+            else:
+                psi_cmd = _guidance_course(
+                    state.lat, state.lon, command.target_leg_start, command.target_position
+                )
+        elif command.target_airspeed_direction is not None:
             psi_cmd = command.target_airspeed_direction
         elif command.target_course is not None:
-            psi_cmd = command.target_course  # w=0: ψ_cmd = χ_cmd (WCA = 0)
+            psi_cmd = command.target_course
         else:
             psi_cmd = psi  # airspeed-only command: hold heading
 
