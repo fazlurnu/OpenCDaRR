@@ -295,20 +295,20 @@ gated by the bit-for-bit regression, before any aircraft actually feels wind.
   frame and a trochoid over the ground (the paper's Fig. 4). The qualitative payoff that shows the
   physics is right before the quantitative IPR sweep.
 
-### 5d — Wind-aware separation and the IPR-under-wind sweep (the research payoff)
+### 5d — Wind-aware separation and the IPR-under-wind sweep (the research payoff) ✅
 
-- [ ] **Mixed-fleet + wind through `run_encounter`.** The Phase-4 4d mixed multirotor-vs-fixed-wing
+- [x] **Mixed-fleet + wind through `run_encounter`.** The Phase-4 4d mixed multirotor-vs-fixed-wing
   encounter, now in a non-zero wind field, through the same entry point the IPR sweeps use.
   - *Check:* resolves (min-sep ≥ `rpz`) and produces a reproducible IPR; the fixed-wing's
     wind-limited feasible set (decision 4) is exercised, not bypassed.
 
-- [ ] **IPR-vs-wind sweep.** Sweep wind magnitude/bearing (and airframe mix) and record how the
+- [x] **IPR-vs-wind sweep.** Sweep wind magnitude/bearing (and airframe mix) and record how the
   resolved IPR moves — wind biases every aircraft's ground track, changing conflict geometry and the
   feasible avoidance set (a fixed-wing loses maneuver authority upwind). This is *the* Phase-5
   question the whole build exists to answer; capture it as an experiment note with a reproducible
   seed, like the Phase-2/3 sweeps.
 
-- [ ] **ADR 0016 — steady-uniform wind model + ground/air command semantics.** Records decisions
+- [x] **ADR 0016 — steady-uniform wind model + ground/air command semantics.** Records decisions
   1–6: wind as a threaded read-only environment input (not hidden state, not on `AircraftState`); the
   `WindField` value and `Dynamics.step` signature change; the heading `ψ` **reusing the existing
   `yaw`** (redeeming the [[0010-dynamics-subpackage-and-odometry-state]] §4 deferral — the field lands
@@ -333,7 +333,7 @@ gated by the bit-for-bit regression, before any aircraft actually feels wind.
 - [x] `test_fixedwing_wind.py` — circle-in-air / trochoid-over-ground; one-revolution endpoint
   displacement; `V_GS(t)` vs Eq 4; crab vs Eq 3 on a held course; `V_WS = 0` reproduces Phase-4
   fixed-wing.
-- [ ] `test_loop_wind.py` — mixed-fleet-in-wind resolves; IPR reproducible; wind-limited fixed-wing
+- [x] `test_loop_wind.py` — mixed-fleet-in-wind resolves; IPR reproducible; wind-limited fixed-wing
   feasible set exercised.
 
 ---
