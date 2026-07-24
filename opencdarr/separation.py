@@ -24,13 +24,56 @@ prevent — ``state.py``'s no-hidden-state invariant, and
 
 from __future__ import annotations
 
+import math
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 
 from opencdarr.cd.base import ConflictDetector
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr.base import RecoveryCriterion
 from opencdarr.dynamics import MotionCommand
+from opencdarr.performance import Performance
 from opencdarr.state import AircraftState, DesiredVelocity
+
+#: A projection from the vehicle-neutral final command onto the channels one airframe can fly —
+#: injected per aircraft into :meth:`SeparationManager.step`. ``None`` means *no projection* (a
+#: multirotor flies the resolver's velocity command directly). The one non-trivial adapter today is
+#: :func:`project_to_fixedwing` (bound to an airframe's :class:`Performance`).
+SetpointAdapter = Callable[[MotionCommand], MotionCommand]
+
+
+def project_to_fixedwing(command: MotionCommand, perf: Performance) -> MotionCommand:
+    """Project a resolver's avoidance **velocity** onto the fixed-wing course/airspeed channels.
+
+    MVP/VO (and the coast fallback) emit a ground-**velocity** command — a native multirotor
+    setpoint (PX4 ``TrajectorySetpoint.velocity``), but *not* a fixed-wing one: a fixed-wing takes
+    a lateral course + a longitudinal airspeed, and :class:`~opencdarr.dynamics.FixedWing` fails
+    fast on a raw velocity (ADR 0013 §4). This adapter is the missing link — it lowers the velocity
+    onto the channels a fixed-wing can fly:
+
+    - ``target_course`` = the **track** of the avoidance velocity (``atan2(v_east, v_north)``);
+    - ``target_airspeed`` = its **magnitude**, clamped into ``[v_min, v_max]`` (stall .. max
+      airspeed), so the projected setpoint is always inside the airframe envelope.
+
+    It is deliberately an **approximation**, and the approximation *is* the physics: a multirotor
+    reaches the commanded velocity essentially instantly, whereas a fixed-wing can only *converge*
+    to that course under its bank/roll limit and ramp to that airspeed under ``ax``
+    (:meth:`FixedWing.step` tracks the course turn-rate-limited, clamps the airspeed rate). The
+    lag between the velocity the resolver asked for and the velocity the airframe is making good is
+    the correct airframe difference, not a defect — MVP/VO stay vehicle-neutral (ADR 0011 §2), and
+    the projection is realised here, at the separation layer, because the DAA *override* (not just
+    the mission nominal) is what carries the velocity a fixed-wing cannot fly.
+
+    A command that carries no ``target_velocity`` — a position/leg nominal from a
+    :class:`~opencdarr.autopilot.WaypointAutopilot`, or an already-projected course command — is a
+    valid fixed-wing setpoint and passes through untouched.
+    """
+    if command.target_velocity is None:
+        return command  # a position/course command (mission nominal) -> already fixed-wing-flyable
+    v_east, v_north = command.target_velocity
+    course = math.degrees(math.atan2(v_east, v_north)) % 360.0
+    airspeed = min(perf.v_max, max(perf.v_min, math.hypot(v_east, v_north)))
+    return MotionCommand(target_course=course, target_airspeed=airspeed)
 
 
 @dataclass(frozen=True)
@@ -75,6 +118,7 @@ class SeparationManager:
         detector: ConflictDetector,
         resolver: ConflictResolver | None,
         recovery: RecoveryCriterion | None,
+        adapter: SetpointAdapter | None = None,
     ) -> tuple[MotionCommand, PairMemory]:
         """This aircraft's command and new :class:`PairMemory` (directed: ``state`` vs its
         perceived other).
@@ -106,14 +150,23 @@ class SeparationManager:
         anything from that source (before first contact on a lossy link) — it cannot avoid a threat
         it has never heard of, so it flies nominal (ADR 0006 §5). The list is the n>2
         future-proofed shape (ADR 0011 §6); the loop feeds the single perceived other (or ``[]``).
+
+        ``adapter`` (default ``None`` = identity) projects the final command onto the channels the
+        aircraft's airframe can fly, applied to **every** exit — nominal, override, or coast — so a
+        fixed-wing never leaves this layer holding a raw velocity it cannot fly (Phase 4e /
+        :func:`project_to_fixedwing`). A multirotor passes ``None`` and the pre-Phase-4e path is
+        byte-identical.
         """
+        def emit(command: MotionCommand, mem: PairMemory) -> tuple[MotionCommand, PairMemory]:
+            return (command if adapter is None else adapter(command)), mem
+
         other = perceived_traffic[0] if perceived_traffic else None
         if resolver is None or other is None:
-            return nominal, INACTIVE  # resolution disabled, or nothing received: fly nominal
+            return emit(nominal, INACTIVE)  # resolution disabled, or nothing received: fly nominal
 
         detected = detector.detect(state, other, rpz, t_lookahead)
         if not (memory.resolving or detected):  # resopairs.update(confpairs)
-            return nominal, INACTIVE
+            return emit(nominal, INACTIVE)
 
         # record the other's velocity on the tick this pair becomes active — the inferred-intent
         # fallback, captured before any avoidance maneuver has had a chance to distort it
@@ -123,8 +176,8 @@ class SeparationManager:
             other = replace(other, desired=onset)  # inferred; declared intent is never overwritten
 
         if recovery is not None and recovery.should_resume(state, other, rpz):
-            return nominal, INACTIVE  # recovery clears the pair from resopairs -> nominal
+            return emit(nominal, INACTIVE)  # recovery clears the pair from resopairs -> nominal
         if detected:
-            return resolver.resolve(state, other, rpz), active  # in confpairs: MVP
+            return emit(resolver.resolve(state, other, rpz), active)  # in confpairs: MVP
         # active but detection cleared: coast on the current velocity
-        return MotionCommand.from_track_speed(state.trk, state.gs), active
+        return emit(MotionCommand.from_track_speed(state.trk, state.gs), active)

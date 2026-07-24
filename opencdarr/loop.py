@@ -42,15 +42,35 @@ from opencdarr.cns.base import (
 from opencdarr.cns.surveillance import LastKnown
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr.base import RecoveryCriterion
-from opencdarr.dynamics import Dynamics, MotionCommand, Multirotor
+from opencdarr.dynamics import Dynamics, FixedWing, MotionCommand, Multirotor
 from opencdarr.kinematics import relative_enu
 from opencdarr.performance import Performance
-from opencdarr.separation import INACTIVE, PairMemory, SeparationManager
+from opencdarr.separation import (
+    INACTIVE,
+    PairMemory,
+    SeparationManager,
+    SetpointAdapter,
+    project_to_fixedwing,
+)
 from opencdarr.state import AircraftState, DesiredVelocity
 
 # module-level singleton, not a call in the signature default (ruff B008) - safe to share
 # since Multirotor is stateless (ADR 0007)
 _DEFAULT_DYNAMICS: Dynamics = Multirotor()
+
+
+def _setpoint_adapter(dynamics: Dynamics, perf: Performance) -> SetpointAdapter | None:
+    """The command projection this airframe needs before its final command reaches the dynamics.
+
+    A :class:`~opencdarr.dynamics.FixedWing` cannot fly a raw velocity (ADR 0013 §4), so its final
+    command is projected onto course/airspeed (:func:`~opencdarr.separation.project_to_fixedwing`,
+    Phase 4e); a :class:`~opencdarr.dynamics.Multirotor` flies the resolver's velocity directly, so
+    it needs no projection (``None`` = identity, the byte-identical pre-Phase-4e path). The loop is
+    the composition root pairing an airframe with its adapter — the manager stays vehicle-neutral.
+    """
+    if isinstance(dynamics, FixedWing):
+        return lambda command: project_to_fixedwing(command, perf)
+    return None
 
 
 @dataclass(frozen=True)
@@ -106,6 +126,10 @@ def run_encounter(
     *,
     perf: Performance,
     dynamics: Dynamics = _DEFAULT_DYNAMICS,
+    own_dynamics: Dynamics | None = None,
+    intr_dynamics: Dynamics | None = None,
+    own_perf: Performance | None = None,
+    intr_perf: Performance | None = None,
     rpz: float,
     t_lookahead: float,
     dt: float,
@@ -133,6 +157,14 @@ def run_encounter(
     :class:`Command` becomes motion each ``dt``; swap it for a different :class:`Dynamics`
     implementation (a different airframe, or a future wind-aware model) without forking this
     function.
+
+    **Mixed fleet (ADR 0011 §7, Phase 4e):** ``dynamics`` / ``perf`` are the *shared* airframe;
+    pass ``own_dynamics`` / ``own_perf`` / ``intr_dynamics`` / ``intr_perf`` to give a side
+    its own bundle (each defaults to the shared one), so a multirotor-vs-fixed-wing encounter runs
+    through this same entry point the IPR sweeps use. Each aircraft's autopilot and separation
+    overlay are stepped with *its* ``perf``, it is advanced by *its* ``dynamics``, and a fixed-wing
+    airframe automatically gets the velocity→course projection its final command needs
+    (:func:`_setpoint_adapter`) — MVP/VO stay vehicle-neutral (they still emit a velocity).
 
     The CDR layers run every ``broadcast_interval`` seconds (the ADS-L/ASAS decision rate), not
     every ``dt``: at each tick each aircraft takes a fresh noisy self-measurement and **decides**
@@ -164,6 +196,15 @@ def run_encounter(
     if communication is not None and comm_rng is None:
         raise ValueError("communication requires comm_rng (its own RNG substream, ADR 0006 §6)")
     surveil = surveillance or LastKnown()
+    # per-aircraft bundle (ADR 0011 §7): each side falls back to the shared dynamics/perf, so the
+    # single-airframe callers (and the bit-for-bit anchors) are unchanged; a mixed-fleet caller
+    # overrides one or both sides. The setpoint adapter is airframe-derived (fixed-wing: project).
+    dyn_own = own_dynamics or dynamics
+    dyn_intr = intr_dynamics or dynamics
+    perf_own = own_perf or perf
+    perf_intr = intr_perf or perf
+    adapter_own = _setpoint_adapter(dyn_own, perf_own)
+    adapter_intr = _setpoint_adapter(dyn_intr, perf_intr)
     own = replace(own, desired=DesiredVelocity.from_track_speed(own.trk, own.gs))
     intr = replace(intr, desired=DesiredVelocity.from_track_speed(intr.trk, intr.gs))
     # Layered flow (ADR 0011): a per-aircraft Autopilot produces the nominal command, the
@@ -178,8 +219,8 @@ def run_encounter(
     gm_own = gm_intr = GuidanceMemory()
     separation = SeparationManager()  # stateless; memory rides in mem_own / mem_intr (ADR 0011 §5)
     mem_own = mem_intr = INACTIVE  # per-direction resopairs membership + inferred-intent memory
-    cmd_own, gm_own = ap_own.step(own, gm_own, perf)
-    cmd_intr, gm_intr = ap_intr.step(intr, gm_intr, perf)
+    cmd_own, gm_own = ap_own.step(own, gm_own, perf_own)
+    cmd_intr, gm_intr = ap_intr.step(intr, gm_intr, perf_intr)
     comm_state = CommState()
 
     conflict = los = False
@@ -232,24 +273,26 @@ def run_encounter(
             # guidance: each aircraft's nominal command + advanced guidance memory. A mission
             # autopilot navigates from the live self-fix (re-planned each tick, which is what makes
             # the resume-after-avoidance automatic); CruiseAutopilot ignores it and holds.
-            nom_own, gm_own = ap_own.step(self_own, gm_own, perf)
-            nom_intr, gm_intr = ap_intr.step(self_intr, gm_intr, perf)
+            nom_own, gm_own = ap_own.step(self_own, gm_own, perf_own)
+            nom_intr, gm_intr = ap_intr.step(self_intr, gm_intr, perf_intr)
             # safety overlay: SeparationManager may override the nominal, releasing back on
-            # recovery. perceived_* is None before first contact on a lossy link -> fly nominal
+            # recovery. perceived_* is None before first contact on a lossy link -> fly nominal.
+            # adapter_* projects the final command onto each airframe's channels (fixed-wing: a
+            # velocity override -> course/airspeed; multirotor: None, velocity flown directly).
             cmd_own, mem_own = separation.step(
                 self_own, [] if perceived_intr is None else [perceived_intr], nom_own, mem_own,
-                rpz, t_lookahead, detector, resolver, recovery,
+                rpz, t_lookahead, detector, resolver, recovery, adapter_own,
             )
             cmd_intr, mem_intr = separation.step(
                 self_intr, [] if perceived_own is None else [perceived_own], nom_intr, mem_intr,
-                rpz, t_lookahead, detector, resolver, recovery,
+                rpz, t_lookahead, detector, resolver, recovery, adapter_intr,
             )
             next_broadcast += broadcast_interval
 
-        # advance both from their pre-step states (explicitly simultaneous)
+        # advance both from their pre-step states (explicitly simultaneous), each by its airframe
         own, intr = (
-            dynamics.step(own, cmd_own, perf, dt),
-            dynamics.step(intr, cmd_intr, perf, dt),
+            dyn_own.step(own, cmd_own, perf_own, dt),
+            dyn_intr.step(intr, cmd_intr, perf_intr, dt),
         )
         t += dt
 

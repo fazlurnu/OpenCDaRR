@@ -23,18 +23,24 @@ is the physically correct difference, not a bug.
 
 ## Checklist
 
-- [ ] **Velocity→fixed-wing projection adapter** (per above), with the vehicle-neutral resolver output
-  unchanged.
-- [ ] **Per-aircraft bundle wired end-to-end** — `run_encounter` runs a multirotor vs a fixed-wing
+- [x] **Velocity→fixed-wing projection adapter** (per above), with the vehicle-neutral resolver output
+  unchanged. `separation.project_to_fixedwing` + `SetpointAdapter`, threaded through
+  `SeparationManager.step` and applied to every command it returns; MVP/VO untouched. See
+  [[0015-velocity-to-fixedwing-projection]].
+- [x] **Per-aircraft bundle wired end-to-end** — `run_encounter` runs a multirotor vs a fixed-wing
   (each its own `dynamics` / `perf` / `autopilot`), the same entry point the IPR sweeps use (ADR 0011
-  §7, done in 4a).
-- [ ] **Observation write-up** — the mixed-fleet DAA result, contrasting how each airframe resolves the
-  same geometry (multirotor sidesteps; fixed-wing turns through a feasible arc), in the
+  §7). `own_dynamics`/`own_perf`/`intr_dynamics`/`intr_perf` default to the shared bundle (bit-for-bit
+  for single-airframe callers); the adapter is airframe-derived (`loop._setpoint_adapter`).
+- [x] **Observation write-up** — [[mixed-fleet-daa]]: the mixed-fleet DAA result, contrasting how each
+  airframe resolves the same geometry (multirotor changes velocity freely; fixed-wing turns through a
+  feasible, bank-limited arc and converges to the MVP velocity), in the
   [[mixed-fleet-dubins-holonomic]] lineage.
 
 ## Gate
 
-- [ ] `test_loop_mixed_fleet.py` — multirotor-vs-fixed-wing through `run_encounter` **resolves**
-  (min-sep ≥ rpz) and produces a **reproducible IPR** from seed.
-- [ ] The projection adapter has a unit test: an avoidance velocity yields a feasible
-  `(target_course, target_airspeed)` the fixed-wing converges to without violating stall / turn limits.
+- [x] `test_loop_mixed_fleet.py` — multirotor-vs-fixed-wing through `run_encounter` **resolves**
+  (min-sep ≥ rpz, deterministic anchors MVP 95.96 m / VO 96.13 m), plus a seeded noisy `min_sep` and a
+  **reproducible IPR** = 1.0 from seed 0. Fixed-wing MVP/VO re-anchor pinned (MVP 53.34 m / VO 53.41 m).
+- [x] `test_setpoint_adapter.py` — an avoidance velocity yields a feasible
+  `(target_course, target_airspeed)` the fixed-wing converges to without violating stall / turn limits;
+  a position nominal passes through untouched; airspeed clamps into the envelope.

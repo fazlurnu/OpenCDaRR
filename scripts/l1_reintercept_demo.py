@@ -5,9 +5,10 @@ with MVP, then the L1 tracker re-intercepts the *planned leg line* (not just the
 Cross-track error is pushed off during the avoidance and driven back to zero by L1 -- the point of
 L1 over pure-pursuit.
 
-NOTE (Phase 4e preview): a fixed-wing cannot fly a raw velocity, so the MVP avoidance velocity is
-projected to a (course, airspeed) setpoint by ``_project_velocity`` -- a prototype of the Phase-4e
-velocity->course adapter. The mission / L1 half is all real Phase-4d code.
+NOTE: a fixed-wing cannot fly a raw velocity, so the MVP avoidance velocity is projected to a
+(course, airspeed) setpoint by ``separation.project_to_fixedwing`` -- the production Phase-4e
+velocity->course adapter (this demo's original ``_project_velocity`` prototype, now shipped;
+ADR 0015). The mission / L1 half is all real Phase-4d code.
 
 Writes ``vault/observations/img/fixedwing-l1-reintercept.png``.
 
@@ -33,7 +34,7 @@ from opencdarr.dynamics import FixedWing, MotionCommand  # noqa: E402
 from opencdarr.mission import Mission  # noqa: E402
 from opencdarr.performance import SMALL_FIXEDWING as P  # noqa: E402
 from opencdarr.scenario import create_conflict  # noqa: E402
-from opencdarr.separation import INACTIVE, SeparationManager  # noqa: E402
+from opencdarr.separation import INACTIVE, SeparationManager, project_to_fixedwing  # noqa: E402
 from opencdarr.state import AircraftState  # noqa: E402
 
 LAT0, LON0, DT, BCAST = 52.0, 4.0, 0.1, 1.0
@@ -47,13 +48,8 @@ def _enu(lat: float, lon: float) -> tuple[float, float]:
 
 
 def _project_velocity(cmd: MotionCommand) -> MotionCommand:
-    """Phase-4e prototype: a resolver's velocity -> a (course, airspeed) a fixed-wing can fly."""
-    if cmd.target_velocity is None:
-        return cmd  # a position/course command (the mission nominal) -> pass through
-    ve, vn = cmd.target_velocity
-    course = math.degrees(math.atan2(ve, vn)) % 360.0
-    airspeed = min(P.v_max, max(P.v_min, math.hypot(ve, vn)))
-    return MotionCommand(target_course=course, target_airspeed=airspeed)
+    """The Phase-4e adapter (ADR 0015): a resolver velocity -> a fixed-wing (course, airspeed)."""
+    return project_to_fixedwing(cmd, P)
 
 
 def run():
