@@ -41,6 +41,19 @@ def _clip_magnitude(vx: float, vy: float, max_mag: float) -> tuple[float, float]
     return vx * scale, vy * scale
 
 
+def _body_to_enu(v_fwd: float, v_right: float, yaw_deg: float) -> tuple[float, float]:
+    """Rotate a body-frame velocity ``(forward, right)`` into inertial ``(east, north)`` by yaw.
+
+    Forward points along ``yaw`` (aviation, 0=N, CW); right is 90° clockwise from forward. This is
+    the PX4 ``MAV_FRAME_BODY_FRD`` velocity setpoint resolved through the vehicle's heading — a
+    nose-relative command, so it only means a fixed world direction for a given ``yaw``.
+    """
+    r = math.radians(yaw_deg)
+    v_east = v_fwd * math.sin(r) + v_right * math.cos(r)
+    v_north = v_fwd * math.cos(r) - v_right * math.sin(r)
+    return v_east, v_north
+
+
 def _step_yaw(
     state: AircraftState, command: MotionCommand, perf: Performance, dt: float
 ) -> float | None:
@@ -86,11 +99,17 @@ class Multirotor(Dynamics):
     def step(
         self, state: AircraftState, command: MotionCommand, perf: Performance, dt: float
     ) -> AircraftState:
-        # 1. translation target: the commanded vector, clamped to the top-speed envelope (no
-        #    v_min — a multirotor has no separate backward capability). Clamp first, bound the step
-        #    toward it, so the result stays inside the v_max disk throughout (convex: both step
-        #    endpoints inside -> every point on the step inside).
-        tgt_e, tgt_n = _clip_magnitude(command.v_east, command.v_north, perf.v_max)
+        # 1. translation target: the commanded vector (inertial ``target_velocity``, or the
+        #    body-frame ``target_body_velocity`` rotated through the current yaw — a nose-relative
+        #    command). Clamped to the top-speed envelope (no v_min — a multirotor has no separate
+        #    backward capability); clamp first, bound the step toward it, so the result stays in
+        #    the v_max disk throughout (convex: both step endpoints inside -> every point inside).
+        if command.target_body_velocity is not None:
+            yaw = state.yaw if state.yaw is not None else state.trk
+            cmd_e, cmd_n = _body_to_enu(*command.target_body_velocity, yaw)
+        else:
+            cmd_e, cmd_n = command.v_east, command.v_north  # raises if neither channel is set
+        tgt_e, tgt_n = _clip_magnitude(cmd_e, cmd_n, perf.v_max)
 
         # 2. isotropic acceleration limit: bound the *vector* step by ax*dt in any direction (not
         #    two independent 1D limits — that would be a coupled-heading turn-rate + speed ramp).

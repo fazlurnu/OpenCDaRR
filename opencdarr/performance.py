@@ -64,8 +64,8 @@ class Performance:
 #   v_max, v_min     -> bluesky/resources/performance/OpenAP/rotor/aircraft.json (M600 envelop)
 #   ax               -> 5.0 m/s^2. Set by the user (override). For reference, the value MEASURED
 #                       from BlueSky's running perf model is 3.5 m/s^2: traf.perf.axmax reads 2.0
-#                       right after cre() (a placeholder), but the OpenAP rotor model resets it to a
-#                       constant 3.5 once the aircraft is moving (accel probe: 10.3->18 and 18->6
+#                       right after cre() (a placeholder), but the OpenAP rotor model resets it to
+#                       a constant 3.5 once the aircraft is moving (accel probe: 10.3->18 and 18->6
 #                       both ramp at 3.5). 5.0 is a more aggressive multirotor acceleration.
 #   yaw_rate_max -> 90.0 deg/s. NOT a BlueSky value (BlueSky's point-mass rotor model couples
 #                   heading to track, so it has no independent yaw rate). A spec-level figure for

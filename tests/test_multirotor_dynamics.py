@@ -203,3 +203,47 @@ def test_fixed_wing_channels_are_ignored() -> None:
         target_velocity=(3.0, 4.0), target_course=200.0, target_airspeed=99.0
     )
     assert _MR.step(s, base, M600, 0.1) == _MR.step(s, with_fw, M600, 0.1)
+
+
+# --- Body-frame velocity channel (PX4 MAV_FRAME_BODY_FRD) -------------------------------------
+
+
+def test_body_forward_resolves_through_yaw() -> None:
+    """A body-forward command is nose-relative: nose north -> travels north; nose east -> east."""
+    # nose north (yaw=0): forward -> north
+    n = _MR.step(_start(trk=0.0, gs=0.0, yaw=0.0),
+                 MotionCommand(target_body_velocity=(10.0, 0.0)), M600, 1.0)
+    ve, vn = velocity_enu(n)
+    assert abs(ve) < 1e-9 and vn > 0.0
+    # nose east (yaw=90): the *same* forward command now goes east
+    e = _MR.step(_start(trk=0.0, gs=0.0, yaw=90.0),
+                 MotionCommand(target_body_velocity=(10.0, 0.0)), M600, 1.0)
+    ve, vn = velocity_enu(e)
+    assert ve > 0.0 and abs(vn) < 1e-9
+
+
+def test_body_right_is_ninety_clockwise_from_nose() -> None:
+    """Body-right with the nose north points east (90° CW from forward)."""
+    s = _MR.step(_start(trk=0.0, gs=0.0, yaw=0.0),
+                 MotionCommand(target_body_velocity=(0.0, 10.0)), M600, 1.0)
+    ve, vn = velocity_enu(s)
+    assert ve > 0.0 and abs(vn) < 1e-9
+
+
+def test_body_forward_matches_equivalent_inertial_command() -> None:
+    """At a fixed yaw, a body-forward command equals the inertial command it rotates to."""
+    s = _start(trk=0.0, gs=5.0, yaw=90.0)  # nose east
+    body = _MR.step(s, MotionCommand(target_body_velocity=(12.0, 0.0)), M600, 0.3)
+    inertial = _MR.step(s, MotionCommand(target_velocity=(12.0, 0.0)), M600, 0.3)  # 12 east
+    assert body == inertial
+
+
+def test_body_forward_while_yawing_curves_the_inertial_path() -> None:
+    """Body-forward held while the nose slews turns the inertial travel with the yaw (the reason a
+    body-frame nominal cannot be a frozen constant)."""
+    s = _start(trk=0.0, gs=10.0, yaw=0.0)
+    cmd = MotionCommand(target_body_velocity=(10.0, 0.0), target_yaw=90.0)
+    for _ in range(200):
+        s = _MR.step(s, cmd, M600, 0.1)
+    assert s.yaw is not None and abs(((s.yaw - 90.0 + 180.0) % 360.0) - 180.0) < 1e-6  # nose east
+    assert abs(((s.trk - 90.0 + 180.0) % 360.0) - 180.0) < 0.5  # travel followed the nose to east

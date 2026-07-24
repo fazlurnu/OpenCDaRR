@@ -47,8 +47,15 @@ class MotionCommand:
     Attributes
     ----------
     target_velocity:
-        Desired **ground** velocity ``(v_east, v_north)`` [m/s] — the resolver / multirotor channel
-        (PX4 ``TrajectorySetpoint.velocity``).
+        Desired **ground** velocity ``(v_east, v_north)`` [m/s], inertial ENU frame — the resolver
+        / multirotor channel (PX4 ``TrajectorySetpoint.velocity`` in ``MAV_FRAME_LOCAL_NED``).
+    target_body_velocity:
+        Desired velocity in the **body frame** ``(v_forward, v_right)`` [m/s] — forward is the nose
+        direction (``yaw``), right is 90° clockwise from it (PX4 ``MAV_FRAME_BODY_FRD``). Resolved
+        to an inertial ``(v_east, v_north)`` through the current ``yaw`` inside
+        :class:`~opencdarr.dynamics.Multirotor`, so "forward" is a fixed world direction only when
+        ``yaw`` says so. A multirotor-only channel (it needs the decoupled yaw); an absent DOF for
+        a fixed-wing. Takes precedence over ``target_velocity`` when both are set.
     target_position:
         Desired position ``(lat, lon)`` [deg] — the goto / waypoint channel (PX4
         ``TrajectorySetpoint.position``; consumed by :class:`~opencdarr.dynamics.Multirotor` from
@@ -86,6 +93,7 @@ class MotionCommand:
     """
 
     target_velocity: tuple[float, float] | None = None
+    target_body_velocity: tuple[float, float] | None = None
     target_position: tuple[float, float] | None = None
     target_yaw: float | None = None
     target_yawspeed: float | None = None
