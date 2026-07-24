@@ -29,9 +29,11 @@ inside the clonable state, never outside it.
 
 Not stored, on purpose (ADR 0010): the East/North velocity components — derivable from
 ``(trk, gs)`` via :func:`~opencdarr.kinematics.velocity_enu`, so a stored copy would be a second
-source of truth that can drift; and a heading distinct from ``trk`` — meaningless until wind
-(crab angle) or independent-yaw control exists, so it lands with that model and its own ADR, not
-as a field that is only ever a copy of ``trk``.
+source of truth that can drift. A heading distinct from ``trk`` (``yaw``) *is* now stored — the
+independent-yaw consumer that gives it meaning exists (the :class:`~opencdarr.dynamics.Multirotor`
+model, ADR 0012), so the field lands with that model exactly as this note anticipated, rather than
+as a copy of ``trk``; it defaults to ``None`` (nose aligned with track) so every existing
+construction is unchanged. Altitude / vertical rate remain deferred to a future 3D ADR.
 
 The model is horizontal at fixed altitude, matching every experiment on the roadmap
 (recovery criteria, multi-aircraft conflict, rare events). A future 3D extension would add
@@ -99,7 +101,8 @@ class AircraftState:
     Frozen (immutable): a copy can never alias its source, and no attribute — declared
     field or stray — can be assigned after construction, so nothing can smuggle hidden
     state onto an instance. Both serve the no-hidden-state invariant above. Evolve it
-    functionally with :func:`dataclasses.replace`, e.g. inside ``step_dynamics`` (Step 1).
+    functionally with :func:`dataclasses.replace`, e.g. inside a
+    :class:`~opencdarr.dynamics.Dynamics` step.
 
     ``slots`` / a NumPy-backed layout is deliberately *not* used yet: it interacts badly
     with ``frozen`` (a known CPython class-recreation wart) and is a memory optimisation we
@@ -118,12 +121,27 @@ class AircraftState:
     gs:
         Ground speed in metres per second (SI internally; unit conversions live at the
         BlueSky boundary, not here).
-    turn_rate:
-        Current turn rate in degrees per second, signed (positive = clockwise). This is
-        *state*, not a derived quantity: the M600 caps how fast the turn rate itself can
-        change (``max_dtr2``), so the next step's turn rate is bounded relative to this
-        one. It must therefore travel inside the state — an IPS clone that lost it would
-        turn differently from its parent. Zero for an aircraft flying straight.
+    yaw:
+        The direction the airframe's nose points, in degrees (aviation convention), **decoupled
+        from the direction of travel** ``trk``. ``None`` (default) means the nose is aligned with
+        the track (no independent yaw has been commanded) — so every construction that predates the
+        independent-yaw model reads unchanged, and a coupled-heading airframe never has to set it.
+        A concrete value is an independently-controlled heading: a
+        :class:`~opencdarr.dynamics.Multirotor` can translate one way while pointing another
+        (camera-pointing missions), converging ``yaw`` toward a commanded ``target_yaw`` under its
+        yaw-rate limit, independent of ``trk`` (ADR 0012). It is *state*, not derived — like
+        ``bank`` it must clone with the particle — and under wind it becomes the heading ``ψ``
+        whose difference from track is the crab angle (Phase 5). A
+        :class:`~opencdarr.dynamics.FixedWing` always carries ``yaw`` as its heading ``ψ`` (nose =
+        airspeed vector); at zero wind it equals ``trk``.
+    bank:
+        Bank (roll) angle ``φ`` in degrees, signed (positive = right bank). *State*, not derived:
+        a :class:`~opencdarr.dynamics.FixedWing` limits how fast bank can change (roll rate
+        ``roll_rate_max``), so the next step's bank is bounded relative to this one — an IPS clone
+        that lost it would roll differently from its parent (the same reason the deleted
+        turn-rate-limited model carried its turn rate in state). The coordinated-turn yaw rate is
+        ``ψ̇ = g·tan φ / V_TAS`` (ADR 0013). Zero (default) for level flight; a multirotor never
+        banks and leaves it at zero.
     desired:
         The aircraft's intended (desired/nominal) velocity — its *intent* — or ``None`` when it has
         declared none. Held in the state (not a global) so it clones with the particle;
@@ -132,7 +150,7 @@ class AircraftState:
     pos_ci95, vel_ci95:
         The aircraft's own **declared measurement accuracy** (95% radial position [m] / velocity
         [m/s]) — a property of *this* aircraft's sensor, not a fixed simulation-wide constant.
-        It lives here, not on the navigation model, for the same reason ``turn_rate`` does: it can
+        It lives here, not on the navigation model, for the same reason ``bank`` does: it can
         differ per aircraft and evolve over a run (e.g. degrading GPS coverage), so it must travel
         with the state to clone correctly. :class:`~opencdarr.cns.GpsNavigation` reads these off
         the aircraft being measured and copies them onto the broadcast — accuracy is declared
@@ -155,7 +173,8 @@ class AircraftState:
     lon: float
     trk: float
     gs: float
-    turn_rate: float = 0.0
+    yaw: float | None = None
+    bank: float = 0.0
     desired: DesiredVelocity | None = None
     pos_ci95: float = 0.0
     vel_ci95: float = 0.0
@@ -171,18 +190,18 @@ def create_aircraft(
     lon: float,
     trk: float,
     gs: float,
-    turn_rate: float = 0.0,
+    bank: float = 0.0,
     pos_ci95: float = 0.0,
     vel_ci95: float = 0.0,
 ) -> AircraftState:
     """Create an :class:`AircraftState`, validating it against the flight envelope.
 
     The pure-value counterpart of BlueSky's ``cre`` (which mutates a global ``bs.traf``):
-    it returns a new state and touches nothing else. Unlike a speed *command* — which
-    ``step_dynamics`` clamps into the envelope at runtime — an out-of-envelope *initial*
-    condition is a scenario specification error, so this **fails fast** with ``ValueError``
-    rather than silently clamping. Direct ``AircraftState(...)`` construction remains for
-    internal state evolution (e.g. ``step_dynamics``, whose outputs are in-envelope by
+    it returns a new state and touches nothing else. Unlike a command — which a
+    :class:`~opencdarr.dynamics.Dynamics` step clamps into the envelope at runtime — an
+    out-of-envelope *initial* condition is a scenario specification error, so this **fails fast**
+    with ``ValueError`` rather than silently clamping. Direct ``AircraftState(...)`` construction
+    remains for internal state evolution (a ``Dynamics.step``'s outputs are in-envelope by
     construction); ``create_aircraft`` is the validated entry point at the scenario boundary.
     """
     if not perf.v_min <= gs <= perf.v_max:
@@ -190,14 +209,13 @@ def create_aircraft(
             f"initial ground speed {gs} m/s for {id!r} is outside the envelope "
             f"[{perf.v_min}, {perf.v_max}] m/s"
         )
-    if abs(turn_rate) > perf.max_tr:
+    if abs(bank) > perf.phi_max:
         raise ValueError(
-            f"initial turn rate {turn_rate} deg/s for {id!r} exceeds the max turn rate "
-            f"{perf.max_tr} deg/s"
+            f"initial bank {bank} deg for {id!r} exceeds the max bank angle {perf.phi_max} deg"
         )
     if pos_ci95 < 0.0 or vel_ci95 < 0.0:
         raise ValueError(f"pos_ci95/vel_ci95 must be >= 0; got {pos_ci95=}, {vel_ci95=}")
     return AircraftState(
-        id=id, lat=lat, lon=lon, trk=trk, gs=gs, turn_rate=turn_rate,
+        id=id, lat=lat, lon=lon, trk=trk, gs=gs, bank=bank,
         pos_ci95=pos_ci95, vel_ci95=vel_ci95,
     )

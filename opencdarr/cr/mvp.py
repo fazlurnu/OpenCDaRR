@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 
 from opencdarr.cr.base import ConflictResolver
-from opencdarr.dynamics import Command
+from opencdarr.dynamics import MotionCommand
 from opencdarr.kinematics import relative_enu, velocity_enu
 from opencdarr.state import AircraftState
 
@@ -29,14 +29,15 @@ class MVP(ConflictResolver):
     def __init__(self, margin: float = 1.0) -> None:
         self.margin = margin
 
-    def resolve(self, own: AircraftState, intr: AircraftState, rpz: float) -> Command:
+    def resolve(self, own: AircraftState, intr: AircraftState, rpz: float) -> MotionCommand:
         rpz_eff = rpz * self.margin
 
         rel = relative_enu(own, intr)
         rx, ry, vx, vy, dist = rel.rx, rel.ry, rel.vx, rel.vy, rel.dist
         v2 = vx * vx + vy * vy
         if v2 < _PARALLEL_EPS:
-            return Command(*velocity_enu(own))  # no relative motion: hold current velocity
+            # no relative motion: hold current velocity
+            return MotionCommand.from_velocity(*velocity_enu(own))
 
         t_cpa = -(rx * vx + ry * vy) / v2
         cx, cy = rx + vx * t_cpa, ry + vy * t_cpa  # relative position at CPA (own -> intr)
@@ -57,4 +58,5 @@ class MVP(ConflictResolver):
         vox, voy = velocity_enu(own)
         new_vx = vox - scale * cx
         new_vy = voy - scale * cy
-        return Command(v_east=new_vx, v_north=new_vy)  # the resolved velocity vector, directly
+        # the resolved velocity vector, directly
+        return MotionCommand(target_velocity=(new_vx, new_vy))

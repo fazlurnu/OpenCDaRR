@@ -1,7 +1,7 @@
 # ADR 0011 — MotionCommand supersedes Command; Mission / Autopilot / SeparationManager separation
 
-- Status: proposed
-- Date: 2026-07-22
+- Status: accepted (4a gate green — see the Update below)
+- Date: 2026-07-22 (updated 2026-07-24 for the PX4-offboard Phase-4 rewrite)
 - Deciders: Fazlur Rahman
 
 ## Context
@@ -181,4 +181,46 @@ bundle is threaded as plain per-aircraft arguments until a real need for a named
 - Closes the per-aircraft-dynamics follow-up in [[mixed-fleet-dubins-holonomic]] (§7).
 - Implements the layer separation of [[TODO-autopilot-separator-dynamic-integration]]; the full rung
   plan is `vault/phase-4-plan.md`.
-- The fixed-wing and VTOL ADRs this anticipates are not yet written — downstream of Phase 4d / 4e.
+- The fixed-wing and VTOL ADRs this anticipates are not yet written — downstream of Phase 4c / 4b.
+
+## Update — 2026-07-24 (PX4-offboard rewrite of Phase 4, and the 4a gate)
+
+The Phase-4 plan was rewritten to anchor the whole stack on **PX4 offboard-control semantics** (the
+`MotionCommand` is a PX4 offboard *setpoint*, the layers above it are the Mission↔Offboard mode
+structure a DAA-equipped drone flies under; `vault/phase-4-plan.md`). Three decisions refine — but do
+not reverse — this ADR:
+
+- **Gate achieved (§Consequences).** 4a is built and **green**: `CruiseAutopilot`
+  (`autopilot/cruise.py`) + `SeparationManager` (`separation.py`) reproduce the pre-split loop
+  **bit-for-bit**. The regression pins the exact `min_sep` float — a strictly stronger check than the
+  aggregate IPR — for the noiseless MVP/VO encounters (`109.5894691711749` / `110.03070025405336`) and
+  the seeded GPS-noisy self-fix path (`127.15549192351872` / `127.1339570429545`), in `test_loop.py`.
+  Status is therefore promoted **proposed → accepted**, matching how ADR 0008/0010 recorded their
+  regression as an achieved fact.
+
+- **D1 — fixed-wing channel semantics (refines §1/§3).** The `target_heading` / `target_speed` fields
+  named here are provisional. PX4 fixed-wing offboard over **ROS 2** (v1.17) takes a richer setpoint —
+  `FixedWingLateralSetpoint` (`course` χ / `airspeed_direction` ψ / lateral accel) +
+  `FixedWingLongitudinalSetpoint` (`altitude`/`height_rate` + `equivalent_airspeed`). So in Phase 4c
+  `target_heading` **splits** into `target_course` / `target_airspeed_direction` and `target_speed`
+  becomes `target_airspeed`. The §1 principle (one vehicle-neutral command, per-vehicle interpretation)
+  is unchanged; only the fixed-wing field names/semantics are made PX4-accurate.
+
+- **D2 — hard-replace (refines the Relations to 0009/Dubins).** Multirotor and FixedWing **replace**
+  Holonomic and Dubins (deletion), rather than sit beside them. The BlueSky validation and the IPR
+  anchors transfer to the new classes via a bit-for-bit reproduction gate before deletion — the
+  classes go, the validation does not (`vault/phase-4-plan.md` D2). So this ADR's "builds on the
+  multirotor models of 0009" becomes "the new models reproduce, then supersede, those integrators."
+
+- **D3 — yaw resolved in 4b (refines §4).** `AircraftState.yaw` + `target_yaw` / `target_yawspeed`
+  land **with the Multirotor model** (4b), not a final rung, because a PX4 multirotor `TrajectorySetpoint`
+  carries yaw natively. This resolves the deferral §4 (and [[0008-velocity-vector-command]] §4 /
+  [[0010-dynamics-subpackage-and-odometry-state]] §4) named, under ADR 001x.
+
+Two scoping notes on the 4a build, both to keep it minimal and non-speculative (`state.py`'s rule):
+`run_encounter`'s **external** signature is unchanged (shared `dynamics`/`perf`); per-aircraft external
+threading (§7) is deferred to the mixed-fleet rung (4e) where it is actually needed, though per-aircraft
+**autopilots** are already threaded internally. The PX4 priority **channel-resolver** helper (§1 refined)
+is deferred to 4b, where the first model that needs multi-channel resolution lands — no consumer exists
+in 4a. `PairMemory` / `_decide` / `_INACTIVE` keep byte-compatible shims in `loop.py` for the scripts and
+tests that import them directly.

@@ -5,7 +5,7 @@ cadence** (``broadcast_interval``, the ADS-L/ASAS decision rate — 1 Hz in the 
 every integration step: at each broadcast tick each aircraft takes a fresh noisy self-measurement
 and decides (detect → resolve, or recover → resume) for **both directed pairs** (A→B, B→A) on
 its *perceived* view; the resulting command is then **held** while the encounter's
-:class:`~opencdarr.dynamics.Dynamics` model (:class:`~opencdarr.dynamics.DubinsDynamics` by
+:class:`~opencdarr.dynamics.Dynamics` model (:class:`~opencdarr.dynamics.Multirotor` by
 default, ADR 0007) integrates at ``dt`` until the next tick. Deciding every step instead would
 re-draw independent noise 1/``dt``×
 per second and average it away — unphysically robust. Truth is used only to score the encounter
@@ -30,6 +30,7 @@ from dataclasses import dataclass, replace
 import numpy as np
 
 from opencdarr import geo
+from opencdarr.autopilot import CruiseAutopilot
 from opencdarr.cd.base import ConflictDetector
 from opencdarr.cns.base import (
     CommState,
@@ -41,14 +42,15 @@ from opencdarr.cns.base import (
 from opencdarr.cns.surveillance import LastKnown
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr.base import RecoveryCriterion
-from opencdarr.dynamics import Command, DubinsDynamics, Dynamics
+from opencdarr.dynamics import Dynamics, MotionCommand, Multirotor
 from opencdarr.kinematics import relative_enu
 from opencdarr.performance import Performance
+from opencdarr.separation import INACTIVE, PairMemory, SeparationManager
 from opencdarr.state import AircraftState, DesiredVelocity
 
 # module-level singleton, not a call in the signature default (ruff B008) - safe to share
-# since DubinsDynamics is stateless (ADR 0007)
-_DEFAULT_DYNAMICS: Dynamics = DubinsDynamics()
+# since Multirotor is stateless (ADR 0007)
+_DEFAULT_DYNAMICS: Dynamics = Multirotor()
 
 
 @dataclass(frozen=True)
@@ -60,87 +62,42 @@ class EncounterOutcome:
     min_sep: float  # minimum separation reached [m]
 
 
-@dataclass(frozen=True)
-class PairMemory:
-    """One aircraft's CDR memory about a **directed** pair — its ``resopairs`` entry.
-
-    Born when the pair first becomes active, cleared when recovery resumes. A plain frozen value,
-    threaded through the loop rather than held on an algorithm object, so it clones with the
-    particle when IPS lands (Step 5) — ``state.py``'s docstring names exactly these two fields
-    together as the per-aircraft CDR/recovery memory the particle will carry.
-
-    ``onset_velocity`` is the other aircraft's velocity **as perceived when the pair became
-    active**, used as an *inferred* stand-in for its desired velocity when that wasn't shared:
-    before a conflict starts the other was presumably flying its nominal path, so its velocity at
-    onset approximates its intent. Declared intent always wins when present; this is the fallback
-    (:class:`~opencdarr.state.DesiredVelocity`).
-    """
-
-    resolving: bool = False
-    onset_velocity: DesiredVelocity | None = None
-
-
-_INACTIVE = PairMemory()
+# The separation (detect → resolve → recover) logic now lives in ``opencdarr/separation.py`` as
+# :class:`~opencdarr.separation.SeparationManager` (ADR 0011, Phase 4a). ``PairMemory`` /
+# ``INACTIVE`` are re-exported from there; the module-level ``_INACTIVE`` alias and the ``_decide``
+# shim below keep the pre-Phase-4a call surface (``loop._decide`` / ``loop._INACTIVE``) working
+# byte-for-byte for the tests and scripts that import them directly, via a shared manager.
+_INACTIVE = INACTIVE
+_SEPARATION = SeparationManager()
 
 
 def _decide(
     ac: AircraftState,
     other: AircraftState | None,
-    nominal: Command,
+    nominal: MotionCommand,
     memory: PairMemory,
     rpz: float,
     t_lookahead: float,
     detector: ConflictDetector,
     resolver: ConflictResolver | None,
     recovery: RecoveryCriterion | None,
-) -> tuple[Command, PairMemory]:
-    """One aircraft's command and new :class:`PairMemory` (directed: ac vs its perceived other).
+) -> tuple[MotionCommand, PairMemory]:
+    """Backward-compatible shim for :meth:`SeparationManager.step` (see the note above).
 
-    Mirrors the reference control flow exactly (``resumenav_cpa`` + ``resopairs`` + the env's
-    apply step). ``memory.resolving`` is our ``resopairs`` membership. Each tick:
-
-    1. ``resopairs = resopairs ∪ confpairs`` — a current detection makes the pair active. On the
-       tick a pair *becomes* active, the other's currently-perceived velocity is recorded as
-       ``onset_velocity`` (the reference's ``_intr_init_vel``, recorded at the same moment).
-    2. **Recovery runs on every active pair**, including a freshly-detected one: if
-       ``should_resume`` (past-CPA, not in LoS, not bouncing) the pair leaves ``resopairs``,
-       reverts to **nominal**, and its memory is cleared. This is the key point — a pair that is
-       detected *but already past CPA* (common under near-parallel measurement noise) reverts
-       rather than maneuvering.
-    3. Otherwise the aircraft follows the resolution: MVP while currently in ``confpairs``
-       (detected), else **coast** on its current velocity (active but detection cleared).
-
-    A resolution force therefore acts only on ``confpairs``; recovery acts on all of ``resopairs``.
-
-    Intent-based recovery criteria (:class:`~opencdarr.crr.FTR`,
-    :class:`~opencdarr.crr.ProbabilisticFTR`) read the other's ``desired`` velocity. When it was
-    not shared, ``onset_velocity`` is substituted into ``other.desired`` here, so those criteria
-    need no extra argument and stay unchanged — declared intent, when present, is never
-    overwritten.
-
-    ``other`` is ``None`` when Phase 3b's :class:`~opencdarr.cns.base.SurveillanceModel` reports
-    that ``ac`` has never received anything from that source (before first contact on a lossy
-    link) — it cannot avoid a threat it has never heard of, so it flies nominal (ADR 0006 §5).
+    Adapts the single perceived ``other`` (possibly ``None``) to the manager's
+    ``perceived_traffic`` list, then delegates — identical decisions to the old ``_decide``.
     """
-    if resolver is None or other is None:
-        return nominal, _INACTIVE  # resolution disabled, or nothing received: fly nominal
-
-    detected = detector.detect(ac, other, rpz, t_lookahead)
-    if not (memory.resolving or detected):  # resopairs.update(confpairs)
-        return nominal, _INACTIVE
-
-    # record the other's velocity on the tick this pair becomes active — the inferred-intent
-    # fallback, captured before any avoidance maneuver has had a chance to distort it
-    onset = memory.onset_velocity or DesiredVelocity.from_track_speed(other.trk, other.gs)
-    active = PairMemory(resolving=True, onset_velocity=onset)
-    if other.desired is None:
-        other = replace(other, desired=onset)  # inferred; declared intent is never overwritten
-
-    if recovery is not None and recovery.should_resume(ac, other, rpz):
-        return nominal, _INACTIVE  # recovery clears the pair from resopairs -> nominal
-    if detected:
-        return resolver.resolve(ac, other, rpz), active  # in confpairs: MVP
-    return Command.from_track_speed(ac.trk, ac.gs), active  # active but detection cleared: coast
+    return _SEPARATION.step(
+        ac,
+        [] if other is None else [other],
+        nominal,
+        memory,
+        rpz,
+        t_lookahead,
+        detector,
+        resolver,
+        recovery,
+    )
 
 
 def run_encounter(
@@ -170,7 +127,7 @@ def run_encounter(
     With ``resolver=None`` the aircraft fly their nominal paths (a baseline that *should* lose
     separation). With a resolver (and ideally a recovery criterion), they maneuver to clear.
 
-    ``dynamics`` (default :class:`~opencdarr.dynamics.DubinsDynamics`, ADR 0007) is how a
+    ``dynamics`` (default :class:`~opencdarr.dynamics.Multirotor`, ADR 0007) is how a
     :class:`Command` becomes motion each ``dt``; swap it for a different :class:`Dynamics`
     implementation (a different airframe, or a future wind-aware model) without forking this
     function.
@@ -207,10 +164,15 @@ def run_encounter(
     surveil = surveillance or LastKnown()
     own = replace(own, desired=DesiredVelocity.from_track_speed(own.trk, own.gs))
     intr = replace(intr, desired=DesiredVelocity.from_track_speed(intr.trk, intr.gs))
-    nom_own = Command.from_track_speed(own.trk, own.gs)
-    nom_intr = Command.from_track_speed(intr.trk, intr.gs)
-    mem_own = mem_intr = _INACTIVE  # per-direction resopairs membership + inferred-intent memory
-    cmd_own, cmd_intr = nom_own, nom_intr
+    # Layered flow (ADR 0011): a per-aircraft Autopilot produces the nominal command, the
+    # SeparationManager overlays safety on it. CruiseAutopilot holds each aircraft's cruise
+    # (heading, speed) frozen from the *true initial* state — byte-identical to the old frozen
+    # ``nom_own`` / ``nom_intr`` — so this split reproduces the pre-Phase-4a IPR bit-for-bit.
+    ap_own = CruiseAutopilot(own.trk, own.gs)
+    ap_intr = CruiseAutopilot(intr.trk, intr.gs)
+    separation = SeparationManager()  # stateless; memory rides in mem_own / mem_intr (ADR 0011 §5)
+    mem_own = mem_intr = INACTIVE  # per-direction resopairs membership + inferred-intent memory
+    cmd_own, cmd_intr = ap_own.step(own, perf), ap_intr.step(intr, perf)
     comm_state = CommState()
 
     conflict = los = False
@@ -260,12 +222,18 @@ def run_encounter(
             else:
                 perceived_intr, perceived_own = tx_intr, tx_own  # instant, perfect delivery
 
-            cmd_own, mem_own = _decide(
-                self_own, perceived_intr, nom_own, mem_own,
+            # guidance: each aircraft's nominal command (CruiseAutopilot ignores the noisy
+            # self-fix, so this is the frozen cruise command — real navigation arrives in Phase 4d)
+            nom_own = ap_own.step(self_own, perf)
+            nom_intr = ap_intr.step(self_intr, perf)
+            # safety overlay: SeparationManager may override the nominal, releasing back on
+            # recovery. perceived_* is None before first contact on a lossy link -> fly nominal
+            cmd_own, mem_own = separation.step(
+                self_own, [] if perceived_intr is None else [perceived_intr], nom_own, mem_own,
                 rpz, t_lookahead, detector, resolver, recovery,
             )
-            cmd_intr, mem_intr = _decide(
-                self_intr, perceived_own, nom_intr, mem_intr,
+            cmd_intr, mem_intr = separation.step(
+                self_intr, [] if perceived_own is None else [perceived_own], nom_intr, mem_intr,
                 rpz, t_lookahead, detector, resolver, recovery,
             )
             next_broadcast += broadcast_interval

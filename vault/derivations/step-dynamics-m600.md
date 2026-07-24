@@ -1,5 +1,12 @@
 # Derivation — `step_dynamics` for the M600 (2D horizontal)
 
+> **Historical (Phase 4c, ADR 0013).** `step_dynamics` / `DubinsDynamics` — the coupled-heading,
+> turn-rate-limited integrator this derives — was **deleted** in Phase 4c and superseded by
+> [`FixedWing`](fixedwing-coordinated-turn.md) (coordinated-turn, bank-limited) and, for rotorcraft,
+> [`Multirotor`](../decisions/0012-multirotor-and-yaw-carrying-state.md). The BlueSky trajectory
+> anchor it backed ([ADR 0005](../decisions/0005-trajectory-validated-against-bluesky.md)) was retired
+> with it. Kept as the historical record of the M600 turn-rate model and its BlueSky provenance.
+
 The governing equations for one time step of a single M600, turn-rate- and speed-limited,
 as a **pure** map `(state, command, perf, dt) -> state`. Re-derived from the BlueSky fork —
 `bluesky/traffic/traffic.py:518-542` (integration) and `:288-289` (constants) — not

@@ -1,24 +1,28 @@
-"""Dynamics — the pluggable physics boundary (ADR 0007 / 0009 / 0010).
+"""Dynamics — the pluggable physics boundary (ADR 0007 / 0011 / 0012 / 0013).
 
-The control input (:class:`Command`), the contribution-surface ABC (:class:`Dynamics`), and the
-implementations, one per file beside ``base.py`` (mirroring ``cd/``, ``cr/``, ``crr/``):
+The control input (:class:`MotionCommand`), the contribution-surface ABC (:class:`Dynamics`), and
+the implementations, one per file beside ``base.py`` (mirroring ``cd/``, ``cr/``, ``crr/``):
 
-- :class:`DubinsDynamics` — turn-rate-limited, heading coupled to travel (``dubins.py``);
-  wraps the raw integrator :func:`step_dynamics`.
-- :class:`HolonomicDynamics` — isotropic acceleration limit, no coupled heading (``holonomic.py``).
+- :class:`Multirotor` — isotropic acceleration limit, no coupled heading, independent yaw; consumes
+  a PX4 ``TrajectorySetpoint``-shaped command (``multirotor.py``, ADR 0012). Superseded
+  ``HolonomicDynamics``.
+- :class:`FixedWing` — non-holonomic coordinated-turn point mass: bank-limited heading, stall/load
+  envelope, finite roll, wind-ready; consumes PX4 ``FixedWing{Lateral,Longitudinal}Setpoint``
+  channels (``fixedwing.py``, ADR 0013). Superseded ``DubinsDynamics``.
 
-The public surface is re-exported here, so ``from opencdarr.dynamics import Command, Dynamics,
-DubinsDynamics, HolonomicDynamics, step_dynamics`` is unchanged by the package split.
+The public surface is re-exported here, so ``from opencdarr.dynamics import MotionCommand,
+Dynamics, Multirotor, FixedWing`` is unchanged by the package split. ``Command`` remains a
+backward-compatible alias of :class:`MotionCommand` during the Phase-4 migration.
 """
 
-from opencdarr.dynamics.base import Command, Dynamics
-from opencdarr.dynamics.dubins import DubinsDynamics, step_dynamics
-from opencdarr.dynamics.holonomic import HolonomicDynamics
+from opencdarr.dynamics.base import Command, Dynamics, MotionCommand
+from opencdarr.dynamics.fixedwing import FixedWing
+from opencdarr.dynamics.multirotor import Multirotor
 
 __all__ = [
     "Command",
     "Dynamics",
-    "DubinsDynamics",
-    "HolonomicDynamics",
-    "step_dynamics",
+    "FixedWing",
+    "MotionCommand",
+    "Multirotor",
 ]

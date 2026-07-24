@@ -1,9 +1,9 @@
-"""Dynamics fundamentals shared by every implementation (ADR 0010).
+"""Dynamics fundamentals shared by every implementation (ADR 0010 / 0011).
 
-Holds the control input (:class:`Command`), the contribution-surface ABC (:class:`Dynamics`),
-and the small helpers every implementation reuses (``_clip``, the zero-speed guard, and the
-odometry accumulator update). The concrete models live beside this file — ``dubins.py`` and
-``holonomic.py`` — one per file, mirroring ``cd/``, ``cr/``, ``crr/``.
+Holds the control input (:class:`MotionCommand`), the contribution-surface ABC
+(:class:`Dynamics`), and the small helpers every implementation reuses (``_clip``, the zero-speed
+guard, and the odometry accumulator update). The concrete models live beside this file —
+``multirotor.py`` and ``dubins.py`` — one per file, mirroring ``cd/``, ``cr/``, ``crr/``.
 """
 
 from __future__ import annotations
@@ -19,48 +19,135 @@ _SPD_EPS = 1e-9  # m/s: below this a command has no meaningful direction -> hold
 
 
 @dataclass(frozen=True)
-class Command:
-    """A control command: the desired ground **velocity** vector, East–North [m/s] (ADR 0008).
+class MotionCommand:
+    """The vehicle-neutral motion command — the single currency between guidance, separation, and
+    dynamics (ADR 0011, superseding the pure-velocity command of ADR 0008).
 
-    A command says *where the aircraft wants to go*, as a velocity vector — not a heading and a
-    speed. This keeps the control interface neutral about the airframe: a :class:`Dynamics` model
-    decides how to chase the target vector (:class:`~opencdarr.dynamics.DubinsDynamics`
-    reconstructs a track and turns toward it; :class:`~opencdarr.dynamics.HolonomicDynamics` drives
-    ``v_east`` / ``v_north`` directly). The resolvers (:class:`~opencdarr.cr.MVP`,
-    :class:`~opencdarr.cr.VO`) already compute a velocity vector internally, so they return one
-    with no polar round-trip.
+    A command is a PX4-offboard-shaped *setpoint*, not a state to snap to: each field targets one
+    channel of motion, and a :class:`Dynamics` model reads whichever fields its vehicle understands
+    and ignores the rest — :class:`~opencdarr.dynamics.Multirotor` reads ``target_velocity`` (and
+    ``target_yaw``); a fixed-wing (Phase 4c) reads the course/airspeed channels. Every field
+    defaults to ``None`` ("unspecified", PX4's ``NaN`` / unset ``type_mask``); a model **fails
+    fast** when no channel it requires is present (the missing-channel case of the ADR 0011
+    feasibility taxonomy — an under-specified command for that vehicle is a programming error,
+    surfaced here rather than silently obeyed).
 
-    Build one from an aviation heading and speed with :meth:`from_track_speed`; read ``trk`` /
-    ``gs`` back as derived properties. A zero vector has no defined direction (``trk`` returns 0)
-    — a coupled-heading model reads that as "hold current heading". Backward flight (facing
-    decoupled from travel), which the old signed-speed command could express, is deliberately not
-    representable here — it belongs to a future yaw-carrying state, not the velocity command
-    (ADR 0008).
+    ``target_velocity`` is the resolvers' native output (the old velocity-vector command is exactly
+    a :class:`MotionCommand` with just that field set), so the :meth:`from_track_speed` /
+    :meth:`from_velocity` constructors and the ``gs`` / ``trk`` / ``v_east`` / ``v_north`` derived
+    reads are preserved over it, and every existing call site reads unchanged. ``target_yaw`` /
+    ``target_yawspeed`` land with :class:`~opencdarr.dynamics.Multirotor` (ADR 0012); the
+    fixed-wing course/airspeed channels with Phase 4c; ``target_altitude`` /
+    ``target_vertical_speed`` are defined but ignored until 3D lands (ADR 0011 §1).
+
+    Facing decoupled from travel — flying one way while pointing another — is now expressible via
+    ``target_yaw`` (the yaw-carrying state [[0008-velocity-vector-command]] §4 deferred, realised
+    in ADR 0012), not by smuggling a sign into the velocity channel.
 
     Attributes
     ----------
-    v_east, v_north:
-        Desired ground-velocity components, East and North, in metres per second.
+    target_velocity:
+        Desired **ground** velocity ``(v_east, v_north)`` [m/s] — the resolver / multirotor channel
+        (PX4 ``TrajectorySetpoint.velocity``).
+    target_position:
+        Desired position ``(lat, lon)`` [deg] — the goto / waypoint channel (PX4
+        ``TrajectorySetpoint.position``; consumed by :class:`~opencdarr.dynamics.Multirotor` from
+        Phase 4d).
+    target_yaw:
+        Desired nose heading [deg, aviation] — the multirotor yaw channel (PX4
+        ``TrajectorySetpoint.yaw``), **decoupled from the direction of travel**. ``None`` = yaw not
+        commanded (hold current yaw). Read by :class:`~opencdarr.dynamics.Multirotor` (ADR 0012);
+        an *absent degree of freedom* for a coupled-heading fixed-wing, ignored there (Phase 4c).
+    target_yawspeed:
+        Desired yaw rate [deg/s] — the multirotor yaw-rate channel (PX4
+        ``TrajectorySetpoint.yawspeed``); used when ``target_yaw`` is unset.
+    target_course:
+        Desired ground-track course χ [deg, aviation] — the fixed-wing lateral channel (PX4
+        ``FixedWingLateralSetpoint.course``). Read by :class:`~opencdarr.dynamics.FixedWing`
+        (ADR 0013); an absent DOF for a multirotor, ignored there.
+    target_airspeed_direction:
+        Desired heading ψ of the airspeed vector [deg, aviation] — the fixed-wing lateral channel
+        (PX4 ``FixedWingLateralSetpoint.airspeed_direction``). **Overrides ``target_course`` when
+        set** (PX4 semantics). Equals ``target_course`` when there is no wind; their difference is
+        the crab angle (Phase 5).
+    target_airspeed:
+        Desired equivalent airspeed [m/s] — the fixed-wing longitudinal channel (PX4
+        ``FixedWingLongitudinalSetpoint.equivalent_airspeed``). An *airspeed*, not a ground speed
+        (they differ under wind, Phase 5).
+    target_lateral_accel:
+        Desired lateral acceleration [m/s²] — the fixed-wing lateral feedforward channel (PX4
+        ``FixedWingLateralSetpoint.lateral_acceleration``); optional, a feedforward on the bank.
+    target_altitude:
+        Desired altitude [m] — the fixed-wing longitudinal channel (PX4
+        ``FixedWingLongitudinalSetpoint.altitude``); defined, ignored (2D this pass, ADR 0011 §1).
+    target_vertical_speed:
+        Desired vertical / height rate [m/s] — PX4 ``FixedWingLongitudinalSetpoint.height_rate``;
+        defined, ignored (2D this pass).
     """
 
-    v_east: float
-    v_north: float
+    target_velocity: tuple[float, float] | None = None
+    target_position: tuple[float, float] | None = None
+    target_yaw: float | None = None
+    target_yawspeed: float | None = None
+    target_course: float | None = None
+    target_airspeed_direction: float | None = None
+    target_airspeed: float | None = None
+    target_lateral_accel: float | None = None
+    target_altitude: float | None = None
+    target_vertical_speed: float | None = None
 
     @classmethod
-    def from_track_speed(cls, hdg: float, spd: float) -> Command:
-        """Build a command from an aviation heading [deg] and ground speed [m/s]."""
+    def from_track_speed(cls, hdg: float, spd: float) -> MotionCommand:
+        """Build a velocity command from an aviation heading [deg] and ground speed [m/s]."""
         r = math.radians(hdg)
-        return cls(v_east=spd * math.sin(r), v_north=spd * math.cos(r))
+        return cls(target_velocity=(spd * math.sin(r), spd * math.cos(r)))
+
+    @classmethod
+    def from_velocity(cls, v_east: float, v_north: float) -> MotionCommand:
+        """Build a velocity command from East/North ground-velocity components [m/s]."""
+        return cls(target_velocity=(v_east, v_north))
+
+    @property
+    def _velocity(self) -> tuple[float, float]:
+        """``target_velocity``, or fail fast if a caller needs it while unset (ADR 0011 §1)."""
+        if self.target_velocity is None:
+            raise ValueError(
+                "MotionCommand has no target_velocity: this channel requires a ground-velocity "
+                "vector (v_east/v_north/gs/trk are derived from it). An under-specified command "
+                "for this vehicle is a programming error."
+            )
+        return self.target_velocity
+
+    @property
+    def v_east(self) -> float:
+        """East component of ``target_velocity`` [m/s] (raises if it is unset)."""
+        return self._velocity[0]
+
+    @property
+    def v_north(self) -> float:
+        """North component of ``target_velocity`` [m/s] (raises if it is unset)."""
+        return self._velocity[1]
 
     @property
     def gs(self) -> float:
-        """Commanded ground speed [m/s] — the vector's magnitude."""
-        return math.hypot(self.v_east, self.v_north)
+        """Commanded ground speed [m/s] — magnitude of ``target_velocity``."""
+        v_east, v_north = self._velocity
+        return math.hypot(v_east, v_north)
 
     @property
     def trk(self) -> float:
-        """Commanded track [deg, aviation convention] — direction of the vector (0 if zero)."""
-        return math.degrees(math.atan2(self.v_east, self.v_north)) % 360.0
+        """Commanded track [deg, aviation] — direction of ``target_velocity`` (0 if zero)."""
+        v_east, v_north = self._velocity
+        return math.degrees(math.atan2(v_east, v_north)) % 360.0
+
+
+# Backward-compatible name for the pure-velocity command (ADR 0008), which :class:`MotionCommand`
+# (ADR 0011) supersedes. The alias keeps ``from_track_speed`` / ``gs`` / ``trk`` / ``isinstance``
+# call sites reading unchanged through the Phase-4a migration; it is removed once the loop and its
+# callers speak ``MotionCommand`` directly. Note: direct ``Command(v_east=, v_north=)`` positional
+# construction no longer exists — build a velocity command via :meth:`MotionCommand.from_velocity`
+# or ``MotionCommand(target_velocity=(...))``.
+Command = MotionCommand
 
 
 def _clip(value: float, low: float, high: float) -> float:
@@ -94,11 +181,11 @@ class Dynamics(ABC):
 
     Implementations live beside this file:
 
-    - :class:`~opencdarr.dynamics.DubinsDynamics` — turn-rate-limited, coupled heading
-      (``dubins.py``).
-    - :class:`~opencdarr.dynamics.HolonomicDynamics` — isotropic accel, no coupled heading
-      (``holonomic.py``).
-    - e.g. a wind-aware dynamics model — *future, not implemented* (ADR 0007 names the shape).
+    - :class:`~opencdarr.dynamics.Multirotor` — isotropic accel, no coupled heading, independent
+      yaw; consumes a PX4 ``TrajectorySetpoint``-shaped command (``multirotor.py``, ADR 0012).
+    - :class:`~opencdarr.dynamics.FixedWing` — non-holonomic coordinated-turn point mass:
+      bank-limited heading, stall/load envelope, finite roll, wind-ready (``fixedwing.py``, ADR
+      0013). Superseded the former ``DubinsDynamics``.
 
     Every implementation must advance the odometry accumulators (via :func:`odometry_update`) so
     ``flight_time`` / ``distance_flown`` stay correct whichever model ran (ADR 0010).
@@ -106,7 +193,7 @@ class Dynamics(ABC):
 
     @abstractmethod
     def step(
-        self, state: AircraftState, command: Command, perf: Performance, dt: float
+        self, state: AircraftState, command: MotionCommand, perf: Performance, dt: float
     ) -> AircraftState:
         """Advance ``state`` by ``dt`` seconds under ``command``.
 

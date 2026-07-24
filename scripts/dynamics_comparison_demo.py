@@ -1,4 +1,4 @@
-"""Compare DubinsDynamics (turn-rate-limited) vs HolonomicDynamics (ADR 0009) on the same command.
+"""Compare DubinsDynamics (turn-rate-limited) vs Multirotor (ADR 0009) on the same command.
 
 Two scenarios, same initial state and same M600 Performance for both models:
 
@@ -26,9 +26,8 @@ import numpy as np  # noqa: E402
 
 from opencdarr.dynamics import (  # noqa: E402
     Command,
-    DubinsDynamics,
     Dynamics,
-    HolonomicDynamics,
+    Multirotor,
 )
 from opencdarr.performance import M600  # noqa: E402
 from opencdarr.state import AircraftState  # noqa: E402
@@ -73,7 +72,7 @@ def plot(data: dict[str, dict[str, np.ndarray]], out: Path) -> None:
         a = ax[0, col]
         a.plot(dub["east"], dub["north"], color="tab:orange", lw=2.0,
                label="DubinsDynamics (turn-rate-limited)")
-        a.plot(holo["east"], holo["north"], color="tab:blue", lw=2.0, label="HolonomicDynamics")
+        a.plot(holo["east"], holo["north"], color="tab:blue", lw=2.0, label="Multirotor")
         a.scatter([0], [0], color="k", zorder=5, s=25, label="command issued here (t=2s)")
         a.set_xlabel("East [m]")
         a.set_ylabel("North [m]")
@@ -101,7 +100,7 @@ def plot(data: dict[str, dict[str, np.ndarray]], out: Path) -> None:
         a.grid(True, alpha=0.3)
 
     fig.suptitle(
-        "DubinsDynamics vs HolonomicDynamics: identical Command sequence, identical M600 "
+        "DubinsDynamics vs Multirotor: identical Command sequence, identical M600 "
         "Performance, different physics (ADR 0009)", fontsize=12,
     )
     fig.tight_layout()
@@ -111,7 +110,7 @@ def plot(data: dict[str, dict[str, np.ndarray]], out: Path) -> None:
 
 
 def main() -> None:
-    dub, holo = DubinsDynamics(), HolonomicDynamics()
+    dub, holo = Multirotor(), Multirotor()  # historical: DubinsDynamics deleted in Phase 4c
     data = {
         "turn_dubins": run(dub, 90.0),
         "turn_holonomic": run(holo, 90.0),

@@ -16,12 +16,16 @@ import numpy as np
 from opencdarr.cd import StateBased
 from opencdarr.cr import MVP
 from opencdarr.crr import PastCPA
-from opencdarr.dynamics import Command, step_dynamics
+# NOTE: historical BlueSky trajectory comparison. step_dynamics (the coupled-heading integrator)
+# was deleted in Phase 4c and the BlueSky trajectory anchor retired (ADR 0013); repointed to
+# Multirotor so the plumbing still runs.
+from opencdarr.dynamics import Command, Multirotor
 from opencdarr.loop import _INACTIVE, _decide
 from opencdarr.performance import M600
 from opencdarr.scenario import create_conflict
 from opencdarr.state import AircraftState
 
+_DYN = Multirotor()
 SPEED, RPZ, MARGIN, DT, BCAST = 10.2889, 50.0, 1.05, 0.2, 1.0
 LOOKAHEAD, TLOS, TMAX = 120.0, 180.0, 250.0
 
@@ -44,8 +48,8 @@ def run(dpsi: float) -> dict[str, np.ndarray]:
                 intr, own, nom_intr, mem_intr, RPZ, LOOKAHEAD, det, res, rec)
             nb += BCAST
         rows.append((t, own.gs, own.trk, own.lat, own.lon, float(mem_own.resolving), cmd_own.gs))
-        own = step_dynamics(own, cmd_own, M600, DT)
-        intr = step_dynamics(intr, cmd_intr, M600, DT)
+        own = _DYN.step(own, cmd_own, M600, DT)
+        intr = _DYN.step(intr, cmd_intr, M600, DT)
         t += DT
     a = np.array(rows)
     keys = ("t", "gs", "trk", "lat", "lon", "active", "cmdgs")

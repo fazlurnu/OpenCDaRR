@@ -1,4 +1,4 @@
-"""Mixed-fleet encounter: OWN flies DubinsDynamics, INT flies HolonomicDynamics.
+"""Mixed-fleet encounter: OWN flies DubinsDynamics, INT flies Multirotor.
 
 A genuine two-aircraft conflict (detect -> resolve -> recover: StateBased + MVP + PastCPA), where
 each aircraft is advanced by its *own* Dynamics model. CD/CR/CRR never change: they only ever read
@@ -31,7 +31,10 @@ from opencdarr import geo  # noqa: E402
 from opencdarr.cd import StateBased  # noqa: E402
 from opencdarr.cr import MVP  # noqa: E402
 from opencdarr.crr import PastCPA  # noqa: E402
-from opencdarr.dynamics import Command, DubinsDynamics, HolonomicDynamics  # noqa: E402
+# NOTE: historical demo. DubinsDynamics was deleted in Phase 4c (superseded by FixedWing); the real
+# multirotor-vs-fixed-wing mixed fleet lands in Phase 4e (needs the velocity->course projection).
+# Repointed to Multirotor for both sides so the velocity-command plumbing still runs.
+from opencdarr.dynamics import Command, Multirotor  # noqa: E402
 from opencdarr.loop import _INACTIVE, _decide  # noqa: E402
 from opencdarr.performance import M600  # noqa: E402
 from opencdarr.scenario import create_conflict  # noqa: E402
@@ -60,7 +63,7 @@ def _spans(t: np.ndarray, active: np.ndarray) -> list[tuple[float, float]]:
 
 def run() -> dict[str, np.ndarray]:
     det, res, rec = StateBased(), MVP(MARGIN), PastCPA(bouncing_guard=True)
-    own_dyn, intr_dyn = DubinsDynamics(), HolonomicDynamics()
+    own_dyn, intr_dyn = Multirotor(), Multirotor()
 
     own = AircraftState(id="OWN", lat=52.0, lon=4.0, trk=0.0, gs=SPEED)
     intr = create_conflict(own, intr_id="INT", dpsi=DPSI, dcpa=DCPA, tlos=TLOS, rpz=RPZ, side=1)
@@ -110,7 +113,7 @@ def plot(d: dict[str, np.ndarray], out: Path) -> None:
 
     a = ax[0, 0]
     a.plot(d["own_e"], d["own_n"], color="tab:orange", lw=2.0, label="OWN (DubinsDynamics)")
-    a.plot(d["int_e"], d["int_n"], color="tab:blue", lw=2.0, label="INT (HolonomicDynamics)")
+    a.plot(d["int_e"], d["int_n"], color="tab:blue", lw=2.0, label="INT (Multirotor)")
     a.scatter([d["own_e"][0]], [d["own_n"][0]], color="tab:orange", marker="^", s=60, zorder=5)
     a.scatter([d["int_e"][0]], [d["int_n"][0]], color="tab:blue", marker="^", s=60, zorder=5)
     a.set_xlabel("East [m]")
@@ -171,7 +174,7 @@ def plot(d: dict[str, np.ndarray], out: Path) -> None:
         a.grid(True, alpha=0.3)
 
     fig.suptitle(
-        f"Mixed-fleet encounter: OWN (DubinsDynamics) vs INT (HolonomicDynamics), "
+        f"Mixed-fleet encounter: OWN (DubinsDynamics) vs INT (Multirotor), "
         f"dpsi={DPSI:.0f} deg, dcpa={DCPA:.0f} m — same CD/CR/CRR (StateBased+MVP+PastCPA)",
         fontsize=12,
     )
