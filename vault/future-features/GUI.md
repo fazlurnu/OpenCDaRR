@@ -1,0 +1,1 @@
+Make a GUI such that user can select an aircraft to spawn, the initial position, the target waypoint (or waypoints).
