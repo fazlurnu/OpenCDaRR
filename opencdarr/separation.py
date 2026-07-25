@@ -12,9 +12,10 @@ control flow, the ``resopairs`` semantics, and the inferred-intent fallback are 
 
 No-hidden-state invariant (load-bearing, ADR 0011 §5)
 -----------------------------------------------------
-:class:`SeparationManager` holds **no mutable object state**. The per-directed-pair CDR/recovery
-memory is the :class:`PairMemory` value, threaded **in** to ``step`` and returned **out**, never
-stored on ``self``. This is not stylistic: the interacting-particle system clones a particle by
+:class:`SeparationManager` holds **no mutable object state**. The per-aircraft CDR/recovery memory
+is the :class:`FleetMemory` value (a set of active directed pairs, Phase 6), threaded **in** to
+``step`` and returned **out**, never stored on ``self``. This is not stylistic: the
+interacting-particle system clones a particle by
 copying its state, and any future-affecting value kept *outside* the state is silently shared
 between clones — exactly the KI-1 recovery-state leak (``docs/lesson-learnt.md``), invisible at
 1e-9. A stateful manager would reintroduce precisely the hazard the clonable design exists to
@@ -77,34 +78,54 @@ def project_to_fixedwing(command: MotionCommand, perf: Performance) -> MotionCom
 
 
 @dataclass(frozen=True)
-class PairMemory:
-    """One aircraft's CDR memory about a **directed** pair — its ``resopairs`` entry.
+class FleetMemory:
+    """One aircraft's CDR memory — its ``resopairs`` set of active **directed** pairs (Phase 6).
 
-    Born when the pair first becomes active, cleared when recovery resumes. A plain frozen value,
-    threaded through :meth:`SeparationManager.step` rather than held on the manager object, so it
-    clones with the particle when IPS lands (Step 5) — ``state.py``'s docstring names exactly these
-    two fields together as the per-aircraft CDR/recovery memory the particle will carry.
-
-    ``onset_velocity`` is the other aircraft's velocity **as perceived when the pair became
-    active**, an *inferred* stand-in for its desired velocity when that wasn't shared: before a
-    conflict starts the other was presumably flying its nominal path, so its velocity at onset
-    approximates its intent. Declared intent always wins when present; this is the fallback
-    (:class:`~opencdarr.state.DesiredVelocity`).
+    ``resopairs`` maps each active intruder's ``id`` to the **onset velocity** for that pair — the
+    intruder's velocity as perceived when the pair became active, an *inferred* stand-in for its
+    desired velocity when that wasn't shared (before a conflict the other was presumably flying its
+    nominal path). Declared intent always wins when present; this is the fallback. Held as a sorted
+    tuple so the value is immutable, comparable, and hashable — a clonable value threaded through
+    :meth:`SeparationManager.step`, never on the manager object (the no-hidden-state invariant, one
+    level up from the single-pair memory Phases 2–5 used). With more aircraft there is *more* of
+    this per-aircraft memory, so a clone that lost any of it would diverge — the invariant is more
+    load-bearing at scale, not less (ADR 0004).
     """
 
-    resolving: bool = False
-    onset_velocity: DesiredVelocity | None = None
+    resopairs: tuple[tuple[str, DesiredVelocity], ...] = ()
+
+    @property
+    def resolving(self) -> bool:
+        """Whether this aircraft is actively resolving against *any* pair."""
+        return bool(self.resopairs)
+
+    @property
+    def onset_velocity(self) -> DesiredVelocity | None:
+        """Pairwise back-compat: the sole active pair's onset velocity, or ``None`` (n≠1)."""
+        return self.resopairs[0][1] if len(self.resopairs) == 1 else None
+
+    def onset_for(self, intruder_id: str) -> DesiredVelocity | None:
+        """The recorded onset velocity for ``intruder_id`` if its pair is active, else ``None``."""
+        for pair_id, onset in self.resopairs:
+            if pair_id == intruder_id:
+                return onset
+        return None
 
 
-#: The inactive (no live conflict) memory — a fresh pair carries this.
-INACTIVE = PairMemory()
+#: Backward-compatible alias for the pre-Phase-6 single-pair memory name. The value is now a
+#: per-aircraft :class:`FleetMemory` (a set of directed pairs); at n = 2 it carries one entry whose
+#: ``resolving`` / ``onset_velocity`` read exactly as the old ``PairMemory`` did.
+PairMemory = FleetMemory
+
+#: The inactive (no live conflict) memory — a fresh aircraft carries this.
+INACTIVE = FleetMemory()
 
 
 class SeparationManager:
     """Detect → resolve → recover overlay: nominal command → final command (stateless object).
 
-    A single instance is shared across an encounter's directed pairs; it holds nothing — all memory
-    rides in the :class:`PairMemory` values threaded through :meth:`step`.
+    A single instance is shared across the fleet; it holds nothing — all memory rides in the
+    :class:`FleetMemory` values threaded through :meth:`step`.
     """
 
     def step(
@@ -112,72 +133,78 @@ class SeparationManager:
         state: AircraftState,
         perceived_traffic: list[AircraftState],
         nominal: MotionCommand,
-        memory: PairMemory,
+        memory: FleetMemory,
         rpz: float,
         t_lookahead: float,
         detector: ConflictDetector,
         resolver: ConflictResolver | None,
         recovery: RecoveryCriterion | None,
         adapter: SetpointAdapter | None = None,
-    ) -> tuple[MotionCommand, PairMemory]:
-        """This aircraft's command and new :class:`PairMemory` (directed: ``state`` vs its
-        perceived other).
+    ) -> tuple[MotionCommand, FleetMemory]:
+        """This aircraft's command and new :class:`FleetMemory` (directed: ``state`` vs its
+        perceived traffic).
 
-        Mirrors the reference control flow exactly (``resumenav_cpa`` + ``resopairs`` + the env's
-        apply step). ``memory.resolving`` is our ``resopairs`` membership. Each tick:
+        The N-aircraft generalisation of the reference ``resopairs`` control flow (Phase 6, ADR
+        0004); at ``len(perceived_traffic) == 1`` it is byte-identical to Phases 2–5. Each tick:
 
-        1. ``resopairs = resopairs ∪ confpairs`` — a current detection makes the pair active. On
-           the tick a pair *becomes* active, the other's currently-perceived velocity is recorded
-           as ``onset_velocity`` (the reference's ``_intr_init_vel``, at the same moment).
-        2. **Recovery runs on every active pair**, including a freshly-detected one: if
-           ``should_resume`` (past-CPA, not in LoS, not bouncing) the pair leaves ``resopairs``,
-           reverts to **nominal**, and its memory is cleared. This is the key point — a pair that
-           is detected *but already past CPA* (common under near-parallel measurement noise)
-           reverts rather than maneuvering.
-        3. Otherwise the aircraft follows the resolution: MVP while currently in ``confpairs``
-           (detected), else **coast** on its current velocity (active but detection cleared).
+        1. ``resopairs = resopairs ∪ confpairs`` — a current detection against **any** perceived
+           intruder makes that directed pair active. On the tick a pair *becomes* active, that
+           intruder's currently-perceived velocity is recorded as its onset velocity.
+        2. **Recovery runs per active pair**: if ``should_resume`` (past-CPA, not in LoS, not
+           bouncing) for that pair, it leaves ``resopairs``. The aircraft reverts to **nominal**
+           only once ``resopairs`` is empty — i.e. it is clear of **all** its conflicts (the
+           aggregate "resume when clear of all" emerges from the per-pair removals, so the recovery
+           criterion stays a directed pairwise primitive, unchanged).
+        3. Otherwise it follows the resolution **against the currently-detected set** (the active
+           ``confpairs``): the resolver composes them its own way — MVP sums, VO unions (ADR 0004 /
+           Phase 6). With no current detection but a still-active pair it **coasts**.
 
-        A resolution force therefore acts only on ``confpairs``; recovery on all of ``resopairs``.
+        Resolution acts on ``confpairs``; recovery on all of ``resopairs``. The resolver is called
+        with ``preferred=None`` (stay closest to the *current* velocity) — biasing VO toward the
+        nominal destabilised it (see the note at the call site); return-to-nominal is CRR's job.
 
-        Intent-based recovery criteria (:class:`~opencdarr.crr.FTR`,
-        :class:`~opencdarr.crr.ProbabilisticFTR`) read the other's ``desired`` velocity. When it
-        was not shared, ``onset_velocity`` is substituted into ``other.desired`` here, so those
-        criteria need no extra argument and stay unchanged — declared intent, when present, is
-        never overwritten.
+        Intent-based recovery (:class:`~opencdarr.crr.FTR`) reads the other's ``desired``; when not
+        shared, the pair's onset velocity is substituted in here so the criterion stays unchanged —
+        declared intent, when present, is never overwritten.
 
-        ``perceived_traffic`` is empty when Phase 3b's
-        :class:`~opencdarr.cns.base.SurveillanceModel` reports that ``state`` has never received
-        anything from that source (before first contact on a lossy link) — it cannot avoid a threat
-        it has never heard of, so it flies nominal (ADR 0006 §5). The list is the n>2
-        future-proofed shape (ADR 0011 §6); the loop feeds the single perceived other (or ``[]``).
-
-        ``adapter`` (default ``None`` = identity) projects the final command onto the channels the
-        aircraft's airframe can fly, applied to **every** exit — nominal, override, or coast — so a
-        fixed-wing never leaves this layer holding a raw velocity it cannot fly (Phase 4e /
-        :func:`project_to_fixedwing`). A multirotor passes ``None`` and the pre-Phase-4e path is
-        byte-identical.
+        ``perceived_traffic`` empty ⇒ nothing received (before first contact on a lossy link, or no
+        traffic) ⇒ fly nominal (ADR 0006 §5). ``adapter`` (default ``None`` = identity) projects
+        each exit's command onto the aircraft's airframe channels (Phase 4e /
+        :func:`project_to_fixedwing`); a multirotor passes ``None`` (byte-identical path).
         """
-        def emit(command: MotionCommand, mem: PairMemory) -> tuple[MotionCommand, PairMemory]:
+        def emit(command: MotionCommand, mem: FleetMemory) -> tuple[MotionCommand, FleetMemory]:
             return (command if adapter is None else adapter(command)), mem
 
-        other = perceived_traffic[0] if perceived_traffic else None
-        if resolver is None or other is None:
+        if resolver is None or not perceived_traffic:
             return emit(nominal, INACTIVE)  # resolution disabled, or nothing received: fly nominal
 
-        detected = detector.detect(state, other, rpz, t_lookahead)
-        if not (memory.resolving or detected):  # resopairs.update(confpairs)
-            return emit(nominal, INACTIVE)
+        new_resopairs: list[tuple[str, DesiredVelocity]] = []
+        conflicting: list[AircraftState] = []  # detected pairs still active -> the resolution set
+        for other in perceived_traffic:
+            detected = detector.detect(state, other, rpz, t_lookahead)
+            onset = memory.onset_for(other.id)  # None if this pair was not already active
+            if onset is None and not detected:
+                continue  # resopairs ∪ confpairs: neither active nor newly detected -> not a pair
+            # record the onset velocity on the tick the pair becomes active (inferred intent)
+            onset = onset or DesiredVelocity.from_track_speed(other.trk, other.gs)
+            other_eff = other if other.desired is not None else replace(other, desired=onset)
+            # per-pair recovery: a cleared pair leaves resopairs (aggregate resume when all clear)
+            if recovery is not None and recovery.should_resume(state, other_eff, rpz):
+                continue
+            new_resopairs.append((other.id, onset))
+            if detected:
+                conflicting.append(other_eff)  # resolution acts on confpairs
 
-        # record the other's velocity on the tick this pair becomes active — the inferred-intent
-        # fallback, captured before any avoidance maneuver has had a chance to distort it
-        onset = memory.onset_velocity or DesiredVelocity.from_track_speed(other.trk, other.gs)
-        active = PairMemory(resolving=True, onset_velocity=onset)
-        if other.desired is None:
-            other = replace(other, desired=onset)  # inferred; declared intent is never overwritten
-
-        if recovery is not None and recovery.should_resume(state, other, rpz):
-            return emit(nominal, INACTIVE)  # recovery clears the pair from resopairs -> nominal
-        if detected:
-            return emit(resolver.resolve(state, other, rpz), active)  # in confpairs: MVP
-        # active but detection cleared: coast on the current velocity
+        if not new_resopairs:
+            return emit(nominal, INACTIVE)  # clear of all conflicts -> resume nominal
+        active = FleetMemory(resopairs=tuple(sorted(new_resopairs, key=lambda p: p[0])))
+        if conflicting:
+            # preferred=None -> the resolver stays closest to the CURRENT velocity (VO shortest way
+            # out). Biasing VO toward the *nominal* was tried and destabilised it: greedy
+            # nearest-to-nominal cone projection snaps back to the nominal when it briefly seems
+            # feasible, re-enters the conflict, oscillates, and lost separation (min_sep 4 m vs rpz
+            # 50). Returning to the nominal is the recovery layer's job (CRR), not the resolver's.
+            # The `preferred` channel stays in the interface for a future stable (ORCA) resolver.
+            return emit(resolver.resolve(state, conflicting, rpz, None), active)
+        # active but no current detection: coast on the current velocity
         return emit(MotionCommand.from_track_speed(state.trk, state.gs), active)

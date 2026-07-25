@@ -46,7 +46,7 @@ def test_vo_opens_miss_to_zone(dpsi: float, dcpa: float) -> None:
     intr = create_conflict(own, intr_id="INT", dpsi=dpsi, dcpa=dcpa, tlos=60.0, rpz=_RPZ)
     assert _miss_distance(own, intr) < _RPZ  # genuinely a conflict to start
 
-    cmd = VO().resolve(own, intr, _RPZ)
+    cmd = VO().resolve(own, [intr], _RPZ)
     # shortest way out -> velocity on the cone edge -> trajectory tangent to the zone
     assert _miss_distance(_apply(own, cmd), intr) == pytest.approx(_RPZ, abs=0.5)
 
@@ -54,7 +54,7 @@ def test_vo_opens_miss_to_zone(dpsi: float, dcpa: float) -> None:
 def test_vo_margin_opens_beyond_rpz() -> None:
     own = _own()
     intr = create_conflict(own, intr_id="INT", dpsi=90.0, dcpa=20.0, tlos=60.0, rpz=_RPZ)
-    cmd = VO(margin=1.2).resolve(own, intr, _RPZ)
+    cmd = VO(margin=1.2).resolve(own, [intr], _RPZ)
     assert _miss_distance(_apply(own, cmd), intr) == pytest.approx(1.2 * _RPZ, abs=0.5)
 
 
@@ -62,13 +62,13 @@ def test_vo_is_the_minimal_change_to_the_edge() -> None:
     """Shortest way out: the resolved speed change is small (edge is near the current velocity)."""
     own = _own()
     intr = create_conflict(own, intr_id="INT", dpsi=90.0, dcpa=20.0, tlos=60.0, rpz=_RPZ)
-    cmd = VO().resolve(own, intr, _RPZ)
+    cmd = VO().resolve(own, [intr], _RPZ)
     assert abs(cmd.gs - own.gs) < own.gs  # a fraction of the speed, not a reversal
 
 
 def test_vo_returns_a_command() -> None:
     own = _own()
     intr = create_conflict(own, intr_id="INT", dpsi=90.0, dcpa=20.0, tlos=60.0, rpz=_RPZ)
-    cmd = VO().resolve(own, intr, _RPZ)
+    cmd = VO().resolve(own, [intr], _RPZ)
     assert isinstance(cmd, Command)
     assert 0.0 <= cmd.trk < 360.0

@@ -31,7 +31,7 @@ _WIND = WindField.from_met(270.0, 6.0)  # 6 m/s from the west — a crosswind on
 
 # Deterministic (noiseless) min_sep anchors in the west wind; a moved bit means the wind coupling
 # changed. VO clears by only ~1 m — the wind pushes this geometry close to the rpz limit.
-_ANCHOR_WIND_MVP = 54.85144470789156
+_ANCHOR_WIND_MVP = 54.898044526517275
 _ANCHOR_WIND_VO = 51.02865852313175
 # Seeded noisy anchor (seed 0, single substream) through the full GPS-noise self-fix path.
 _ANCHOR_WIND_NOISY_MVP = 335.00927541159706

@@ -121,7 +121,7 @@ def test_dynamics_is_pluggable() -> None:
 # coupled-heading model (the turn-rate limit never bound there), the noisy ones moved (Multirotor
 # sidesteps cleanly where that turn-rate limit used to bind). The MVP/VO IPR on the *fixed-wing*
 # airframe re-anchors in Phase 4e (it needs the velocity->course/airspeed projection).
-_ANCHOR_NOISELESS_MVP = 109.5894691711749
+_ANCHOR_NOISELESS_MVP = 109.49370533404944
 _ANCHOR_NOISELESS_VO = 110.03070025405336
 _ANCHOR_NOISY_MVP = 267.74240154935825
 _ANCHOR_NOISY_VO = 261.9742439798254

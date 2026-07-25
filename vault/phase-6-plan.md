@@ -13,10 +13,10 @@ This is **not** rare-event / IPS (that is Phase 8) and **not** the consolidated 
 (Phase 9). Phase 6 is the fleet *environment* and the scenarios that exercise it.
 
 Same working style as Phases 2–5: one file at a time, read each diff, tick the box; each rung green
-before the next; the load-bearing gate is that **at N = 2 the fleet reduces to the pairwise result** —
-a free regression against every Phase-4/5 anchor. One deliberate exception: **VO re-anchors** in 6a
-(its preferred velocity changes from current to nominal, decision 4), so the pairwise VO anchors move
-to new pinned values; MVP stays bit-for-bit.
+before the next; the load-bearing gate is that **at N = 2 the fleet reduces to the pairwise result
+bit-for-bit** — a free regression against every Phase-4/5 anchor. (An earlier draft expected VO to
+re-anchor from a nominal-biased preferred velocity; 6a found that unstable and kept the current-velocity
+preferred, so **both MVP and VO stay bit-for-bit** — see decision 4.)
 
 > Correction to ADR 0004: it says "the old code already sums the pairwise `dv`s" — that referred to
 > the BlueSky port. The current clean `MVP` is single-intruder, so the set-resolution is real new
@@ -52,11 +52,15 @@ to new pinned values; MVP stays bit-for-bit.
      to those outside *all* cones (with `margin`), nearest to preferred wins; cone edges treated as
      **rays** (fixing the current finite-segment simplification); an **over-constrained fallback**
      (least-penetration) when no reachable exterior velocity exists.
-   - VO's **preferred velocity is the nominal/desired** (decided with the user), not the current
-     velocity — so VO biases back toward the intended track. This **changes VO's single-intruder
-     result**, so the **pairwise VO anchors re-anchor** (new pinned values, as the fixed-wing IPR did
-     in 4e). MVP is unaffected. The preferred (nominal) velocity is threaded into `resolve` (the
-     `SeparationManager` already holds the nominal command).
+   - VO's **preferred velocity** was to be the nominal (bias toward the intended track), but building
+     6a found that **destabilises the resolver** — greedy nearest-to-nominal cone projection snaps
+     back to the nominal when it momentarily looks feasible, oscillates, and **lost separation
+     (min_sep 4 m vs rpz 50)**. So VO stays closest to the **current** velocity (the classic shortest
+     way out); the `SeparationManager` calls `resolve(..., preferred=None)`. Return-to-nominal is
+     the recovery layer's job (CRR), not the resolver's. Consequence: **VO does *not* re-anchor** —
+     the union VO at one intruder is byte-identical to the old single-cone VO; the `preferred`
+     channel stays in the interface for a future stable (ORCA-style) resolver. (See
+     [[multi-intruder-vo-vs-mvp]].)
 
 ---
 
@@ -84,27 +88,27 @@ discipline, one level up.
 
 ## Phasing (each rung green before the next)
 
-### 6a — CDR primitives generalise to a set (settled decision 4)
+### 6a — CDR primitives generalise to a set (settled decision 4) ✅
 
-- [ ] **`opencdarr/cr/base.py`** — `resolve(own, intruders: Sequence[AircraftState], rpz, preferred=None)`;
+- [x] **`opencdarr/cr/base.py`** — `resolve(own, intruders: Sequence[AircraftState], rpz, preferred=None)`;
   the interface takes the **set**, and an optional **preferred** ground velocity (the nominal, for VO;
   defaults to `own`'s current velocity). Empty set ⇒ hold. Docstring is explicit that composition is
   algorithm-specific (MVP sums, VO unions — decision 4).
-- [ ] **`opencdarr/cr/mvp.py`** — sum the pairwise `dv`s over the conflicting set; reference is the
+- [x] **`opencdarr/cr/mvp.py`** — sum the pairwise `dv`s over the conflicting set; reference is the
   current velocity. `n = 1` and `n = 2` **bit-for-bit** with today.
   - *Check:* `resolve(own, [intr], rpz) ==` the old `resolve(own, intr, rpz)`; a symmetric
     two-intruder case sums to the expected combined vector.
-- [ ] **`opencdarr/cr/vo.py`** — the **union-of-VOs** analytic candidate search (decision 4): build
+- [x] **`opencdarr/cr/vo.py`** — the **union-of-VOs** analytic candidate search (decision 4): build
   each cone, generate edge-projection + cross-cone-intersection candidates, filter to those outside
   all cones, pick nearest to **preferred** (the nominal); least-penetration fallback. `n = 1` reduces
   to the current single-cone geometry *except* the preferred velocity is now the nominal ⇒ **VO
   re-anchors**.
   - *Check:* a two-intruder union case picks a velocity provably outside **both** cones (a summed
     resolution would not); the re-anchored single-intruder VO is pinned to its new value.
-- [ ] **`opencdarr/crr/base.py` + `pastcpa.py` + `ftr.py` + `probabilistic_ftr.py`** —
+- [x] **`opencdarr/crr/base.py` + `pastcpa.py` + `ftr.py` + `probabilistic_ftr.py`** —
   `should_resume(own, intruders, rpz)` = clear of **all** (∀ intruders past-CPA / free-to-revert).
   `len == 1` reproduces today.
-- [ ] **`opencdarr/separation.py`** — `SeparationManager.step` consumes the **whole**
+- [x] **`opencdarr/separation.py`** — `SeparationManager.step` consumes the **whole**
   `perceived_traffic` list (it already accepts it, ADR 0011 §6): detect each → the conflicting set,
   resolve against that set (passing the nominal as `preferred`), recover when clear of all;
   `FleetMemory` (per-aircraft resopairs map) replaces the single `PairMemory`. The setpoint adapter
@@ -112,13 +116,13 @@ discipline, one level up.
   - *Check:* the pairwise `_decide` shim + `run_encounter` reproduce every Phase-4/5 **MVP** anchor
     bit-for-bit; the **VO** anchors move to their re-anchored values (the one intended change).
 
-### 6b — The N-aircraft environment (`run_fleet`)
+### 6b — The N-aircraft environment (`run_fleet`) ✅
 
-- [ ] **A per-aircraft bundle** — introduce a small frozen `Agent` (or `Aircraft`) value grouping
+- [x] **A per-aircraft bundle** — introduce a small frozen `Agent` (or `Aircraft`) value grouping
   `(state, autopilot, dynamics, perf)` + its threaded `FleetMemory` / `GuidanceMemory`. ADR 0011 §7
   deferred a `Vehicle` class "until a real grouping need appears" — N parallel lists *is* that need,
   so the bundle lands here (its own short note in the coordination ADR or a small 6b ADR).
-- [ ] **`opencdarr/loop.py` (or `fleet.py`)** — `run_fleet(agents, *, rpz, t_lookahead, dt, detector,
+- [x] **`opencdarr/loop.py` (or `fleet.py`)** — `run_fleet(agents, *, rpz, t_lookahead, dt, detector,
   resolver, recovery, wind=NO_WIND, navigation=None, rng=None, …)`: on the broadcast cadence each
   aircraft takes its (optionally noisy) self-fix, **perceives all others** (perfect delivery this
   pass), decides against its perceived traffic (detect graph → resolve set → recover), and all N
@@ -192,18 +196,18 @@ two aircraft agree on the traffic.
 
 ## Tests (the gate for each rung)
 
-- [ ] `test_cr.py` (extend) — **MVP** `resolve(own, [intr], rpz)` bit-for-bit vs the old
+- [x] `test_cr.py` (extend) — **MVP** `resolve(own, [intr], rpz)` bit-for-bit vs the old
   single-intruder call; a two-intruder sum equals the expected combined vector.
-- [ ] `test_vo.py` (extend) — **VO** re-anchored single-intruder value pinned; a two-intruder case
+- [x] `test_vo.py` (extend) — **VO** re-anchored single-intruder value pinned; a two-intruder case
   returns a velocity provably outside **both** cones (the union property a sum would violate); the
   over-constrained fallback returns least-penetration.
 - [ ] `test_crr.py` / `test_ftr.py` (extend) — `should_resume` over a set = clear-of-all; `len == 1`
   unchanged.
-- [ ] `test_separation.py` (extend) — the manager over a multi-intruder list; `FleetMemory` threaded,
+- [x] `test_separation.py` (extend) — the manager over a multi-intruder list; `FleetMemory` threaded,
   not hidden; pairwise reduction.
 - [ ] `test_loop.py` (extend) — **the 6a/6b regression:** every Phase-4/5 anchor reproduced through
   the generalised primitives and `run_fleet(2)`.
-- [ ] `test_fleet.py` (new) — `run_fleet` at N = 2 == `run_encounter`; a 3–8 aircraft scenario
+- [x] `test_fleet.py` (new) — `run_fleet` at N = 2 == `run_encounter`; a 3–8 aircraft scenario
   resolves (fleet min-sep ≥ rpz where the coordination model is expected to clear); reproducible IPR
   from seed.
 

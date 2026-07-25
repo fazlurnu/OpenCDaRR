@@ -48,7 +48,7 @@ def test_resolution_opens_miss_to_zone(dpsi: float, dcpa: float) -> None:
     intr = create_conflict(own, intr_id="INT", dpsi=dpsi, dcpa=dcpa, tlos=60.0, rpz=_RPZ)
     assert _miss_distance(own, intr) < _RPZ  # genuinely a conflict to start
 
-    cmd = MVP().resolve(own, intr, _RPZ)
+    cmd = MVP().resolve(own, [intr], _RPZ)
     resolved = _apply(own, cmd)
     # own alone maneuvers to make its trajectory tangent to the zone -> miss ~ rpz
     assert _miss_distance(resolved, intr) == pytest.approx(_RPZ, abs=0.5)
@@ -58,14 +58,14 @@ def test_margin_opens_beyond_rpz() -> None:
     """A margin > 1 clears with a buffer: miss reaches ~margin*rpz."""
     own = _own()
     intr = create_conflict(own, intr_id="INT", dpsi=90.0, dcpa=20.0, tlos=60.0, rpz=_RPZ)
-    cmd = MVP(margin=1.2).resolve(own, intr, _RPZ)
+    cmd = MVP(margin=1.2).resolve(own, [intr], _RPZ)
     assert _miss_distance(_apply(own, cmd), intr) == pytest.approx(1.2 * _RPZ, abs=0.5)
 
 
 def test_resolve_returns_a_command() -> None:
     own = _own()
     intr = create_conflict(own, intr_id="INT", dpsi=90.0, dcpa=20.0, tlos=60.0, rpz=_RPZ)
-    cmd = MVP().resolve(own, intr, _RPZ)
+    cmd = MVP().resolve(own, [intr], _RPZ)
     assert isinstance(cmd, Command)
     assert 0.0 <= cmd.trk < 360.0
 
@@ -74,6 +74,6 @@ def test_no_relative_motion_returns_nominal() -> None:
     """Parallel, equal speed -> nothing to resolve -> unchanged command."""
     own = _own()
     intr = AircraftState(id="INT", lat=52.0, lon=4.009, trk=0.0, gs=10.0)
-    cmd = MVP().resolve(own, intr, _RPZ)
+    cmd = MVP().resolve(own, [intr], _RPZ)
     assert cmd.trk == pytest.approx(own.trk)
     assert cmd.gs == pytest.approx(own.gs)

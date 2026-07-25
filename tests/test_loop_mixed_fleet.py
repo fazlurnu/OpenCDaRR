@@ -38,14 +38,14 @@ _DPSI = 90.0
 _TLOS = 60.0
 
 # Deterministic (noiseless) min_sep anchors — a moved bit means the mixed-fleet physics changed.
-_ANCHOR_MIXED_MVP = 95.95820946411477
+_ANCHOR_MIXED_MVP = 95.88552098523046
 _ANCHOR_MIXED_VO = 96.1341634173678
 # Seeded noisy anchors (seed 0, single substream) through the full GPS-noise self-fix path.
 _ANCHOR_MIXED_NOISY_MVP = 116.6801776651861
 _ANCHOR_MIXED_NOISY_VO = 118.32565406140854
 # Fixed-wing MVP/VO re-anchor (both aircraft fixed-wing), noiseless: two slow-turning fixed-wings
 # clear the same crossing by a tighter margin than the mixed/multirotor case.
-_ANCHOR_FW_MVP = 53.338481757697984
+_ANCHOR_FW_MVP = 53.5791250988019
 _ANCHOR_FW_VO = 53.409145945952126
 
 

@@ -85,7 +85,8 @@ non-cooperative intruder, to isolate the airframe response:
 ADR 0013's Consequences deferred "the MVP/VO IPR on the *fixed-wing* airframe" to this rung (it
 needed the projection). It is now pinned in `test_loop_mixed_fleet.py` as the both-fixed-wing pair
 on the same 90 deg crossing — the analogue, on the fixed-wing airframe, of the multirotor `min_sep`
-anchors in `test_loop.py`: **MVP 53.34 m, VO 53.41 m**. Two slow-turning fixed-wings clear the same
+anchors in `test_loop.py`: **MVP 53.58 m, VO 53.41 m** (the MVP value re-anchored slightly with the
+Phase-6 `_BIAS_EPS` fix, [[headon-threshold]]). Two slow-turning fixed-wings clear the same
 geometry by a **tighter margin** than the mixed/multirotor case (91.7 m) — the non-holonomic turn
 limit costs miss distance, exactly as expected.
 
