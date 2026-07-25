@@ -1,8 +1,8 @@
 """Broadcast-interval jitter: fixed vs per-transmission-dithered transmit clock.
 
 The companion to [[broadcast-phase-offset]]. A *phase* offset shifts an aircraft's broadcast comb
-but keeps it regular; **jitter** dithers *every* gap (``interval + U(-j, +j)``), the per-transmission
-slot randomisation real ADS-B uses to avoid systematic co-channel collisions. This drives the real
+but keeps it regular; **jitter** dithers *every* gap (``interval + U(-j, +j)``), the slot
+randomisation real ADS-B uses to avoid systematic co-channel collisions. This drives the real
 :class:`~opencdarr.cns.Comm` over one lossy link (reception 0.8, lognormal latency) under two
 transmit schedules and compares the **inter-arrival gap of received messages** — panel 5 of
 [[communication-reception-latency]]:
@@ -10,7 +10,7 @@ transmit schedules and compares the **inter-arrival gap of received messages** �
 * **Fixed** (old): gaps land at exactly ``k·interval`` — sharp humps, ``k−1`` = run of drops.
 * **Jittered** (new): each hump smears (and widens with ``k``, ~√k·jitter), the regular comb gone.
 
-Mirrors ``run_fleet(..., broadcast_jitter=…)`` — the same ``interval + U(-j, +j)`` draw. Reproduce::
+Mirrors ``run_fleet(..., broadcast_jitter=…)`` — the same ``U(-j, +j)`` gap draw. Reproduce::
 
     PYTHONPATH=. python scripts/broadcast_jitter_demo.py
 
@@ -102,14 +102,15 @@ def main() -> None:
         ax.hist(gaps, bins=bins, density=True, color=col, alpha=0.85)
         for k in (1, 2, 3):
             ax.axvline(k, color="0.6", ls="--", lw=0.9)
-        ax.set_title(f"{name} inter-arrival gaps — {'sharp humps at k·interval' if name=='Fixed' else 'smeared, widening with k'}",
-                     fontsize=10)
+        sub = "sharp humps at k·interval" if name == "Fixed" else "smeared, widening with k"
+        ax.set_title(f"{name} inter-arrival gaps — {sub}", fontsize=10)
         ax.set_xlabel("gap between received messages [s]")
         ax.set_ylabel("density")
         ax.set_xlim(0, 4)
 
     fig.tight_layout(rect=(0, 0, 1, 0.94))
-    out = Path(__file__).resolve().parents[1] / "vault/observations/img/broadcast-jitter-comparison.png"
+    out = (Path(__file__).resolve().parents[1]
+           / "vault/observations/img/broadcast-jitter-comparison.png")
     fig.savefig(out, dpi=120)
     print("wrote", out)
 

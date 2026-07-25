@@ -30,7 +30,7 @@ from opencdarr import geo
 from opencdarr.cns.base import CommState, Message
 from opencdarr.cns.communication import Comm, constant_latency
 from opencdarr.cns.navigation import GnssNavigation
-from opencdarr.cns.surveillance import LastKnown, age
+from opencdarr.cns.surveillance import LastKnown
 from opencdarr.state import AircraftState
 
 # --- scenario constants -------------------------------------------------------------------
@@ -173,10 +173,10 @@ def main() -> None:
         "one source (AC1), two independent observers; links P(1→2)=0.85, P(1→3)=0.45",
         fontsize=12, fontweight="bold",
     )
-    plot_track(axs[0, 0], clean, "A. No navigation noise — belief lags on the curve (staleness only)")
-    plot_err(axs[0, 1], clean, "A. Error is a clean sawtooth: grows stale, snaps down on delivery")
-    plot_track(axs[1, 0], noisy, "B. With GNSS noise (pos 10 m / vel 1 m/s) — beliefs scatter off-track")
-    plot_err(axs[1, 1], noisy, "B. Sawtooth troughs no longer reach the floor: an irreducible noise floor")
+    plot_track(axs[0, 0], clean, "A. No nav noise — belief lags on the curve (staleness only)")
+    plot_err(axs[0, 1], clean, "A. Clean sawtooth: grows stale, snaps down on delivery")
+    plot_track(axs[1, 0], noisy, "B. GNSS noise (10 m / 1 m/s) — beliefs scatter off-track")
+    plot_err(axs[1, 1], noisy, "B. Troughs never reach the floor — irreducible noise floor")
     fig.tight_layout(rect=(0, 0, 1, 0.95))
 
     out = "vault/observations/img/surveillance-asymmetric-perception.png"

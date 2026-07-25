@@ -17,7 +17,7 @@ at each instant, which is what a multi-intruder resolver actually rides.
   near its ceiling — the ego is *never* fresh on everyone, but also never simultaneously stalest on
   everyone. A different, more realistic uncertainty structure.
 
-That the demo can produce the offset *at all* using the stock models is the point: the models key on
+That the demo can produce the offset *at all* using the stock models is the point: they key on
 per-message ``t_meas`` and already support it — only the loop's single cadence does not.
 
 Reproduce::
@@ -127,8 +127,8 @@ def plot(ax: plt.Axes, ts: list[float], errs: list[list[float]], title: str) -> 
 
 
 def main() -> None:
-    aligned_phases = [0.0] * N_INT                                 # today's model: one global cadence
-    even_phases = [i / N_INT * INTERVAL for i in range(N_INT)]     # evenly staggered
+    aligned_phases = [0.0] * N_INT                             # today's model: one global cadence
+    even_phases = [i / N_INT * INTERVAL for i in range(N_INT)]  # evenly staggered
     # realistic: each aircraft draws a random initial firing time in [0, interval), then every
     # interval after (ADS-B randomises its slot; would come from a per-aircraft RNG substream)
     rng_phase = np.random.default_rng(0)
@@ -162,7 +162,7 @@ def main() -> None:
 
     for tag, e in (("aligned  ", e_align), ("even     ", e_even), ("randomised", e_rand)):
         mean, std, lo = stats(ts, e)
-        print(f"{tag} max-staleness: mean={mean:5.1f} m  std={std:4.1f} m  floor(all-fresh)={lo:5.1f} m")
+        print(f"{tag} max-staleness: mean={mean:5.1f}m  std={std:4.1f}m  floor={lo:5.1f}m")
     print("randomised first-contact times [s]:",
           "  ".join(f"INT{i}={fc:.1f}" for i, fc in enumerate(fc_rand)),
           "  (phase+latency; some < 1 s)")
