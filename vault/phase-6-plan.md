@@ -155,13 +155,20 @@ baseline is enough for the environment, scenarios (6d), and IPR (6e).
   (104.0 / 51.1 / **41.6** / 51.6 m). Observation [[fleet-scenarios]] in the
   [[mixed-fleet-dubins-holonomic]] lineage; converging_ring is the headline (mitigated, not cleared).
 
-### 6e — Multi-aircraft IPR sweep (the quantitative payoff)
+### 6e — Multi-aircraft IPR sweep (the quantitative payoff) ✅
 
-- [ ] **`scripts/ipr_fleet_sweep.py` + observation** — sweep fleet size / geometry (and, later, wind),
-  N seeded GNSS-noisy realisations per point; IPR = 1 − (runs with any-pair LoS)/N. The N-aircraft
-  analogue of `ipr_angle_sweep` / `ipr_wind_sweep`, reproducible from seed. Reports how the resolved
-  IPR degrades with fleet density — the "does DAA hold as traffic thickens?" question.
-  - *Check:* at N = 2 the fleet IPR equals the pairwise IPR for the same geometry/seed.
+- [x] **`scripts/ipr_fleet_sweep.py` + observation** — sweeps swap-ring **fleet size** (2…16), 200
+  seeded GNSS-noisy realisations per point; IPR = 1 − (runs with **any-pair** LoS)/n. The N-aircraft
+  analogue of `ipr_angle_sweep` / `ipr_wind_sweep`, reproducible from `--seed`. Findings (observation
+  [[fleet-ipr-sweep]]): IPR degrades with density (**MVP 1.0→0.93, VO 1.0→0.805** over N = 2…16),
+  median min-sep 107→54 m; the deterministic margin is *pinned to rpz* so what thins is **noise
+  robustness** across a growing any-pair union. **VO appears more brittle at density** (reverse of the
+  pairwise ranking, cf. [[near-parallel-ipr-inversion]]) and its noiseless ring **collapses at
+  exactly-symmetric N = 6/14** while noise *breaks the symmetry and rescues it* — but the VO findings
+  are **provisional**: VO is our own custom union-of-cones impl (decision 4), so these could reflect a
+  bug/limitation of *this* resolver, not velocity-obstacle avoidance in general (caveat in the note).
+  - [x] *Check:* at N = 2 the fleet IPR equals the pairwise IPR for the same geometry/seed —
+    `--verify-n2` confirms `run_fleet == run_encounter` **IDENTICAL over 200 substreams**.
 
 ### 6f — Communication & surveillance uncertainty at N (asymmetric perception)
 
