@@ -178,19 +178,31 @@ same sky. This is where the multi-aircraft DAA gets genuinely hard — the symme
 assumption 6b–6e rely on breaks, and the `FleetMemory` must stay correct when no
 two aircraft agree on the traffic.
 
-- [ ] **`opencdarr/cns/` at N** — each aircraft broadcasts once per tick; the
+- [x] **`opencdarr/cns/` at N** — each aircraft broadcasts once per tick; the
   :class:`CommunicationModel` steps over all **n(n−1) directed links** (per-link reception + latency,
   each drawing from its own substream, ADR 0006 §6); each decision reads
   :class:`SurveillanceModel`'s `perceived(...)` for that directed link — the last message *that* link
   delivered, or `None` before first contact (fly nominal). An aircraft's own self-fix never goes
-  through comm.
-- [ ] **`run_fleet`** threads `communication` / `surveillance` / `comm_rng` (as `run_encounter`
-  already does pairwise), building each aircraft's perceived-traffic list per-link.
-  - *Check:* at N = 2 with a comm model, `run_fleet` reproduces `run_encounter`'s lossy-comm result
-    bit-for-bit; a 3+-aircraft case where a link is down shows an aircraft flying on a stale/absent
-    perception of one neighbour while resolving another (asymmetric perception exercised, not bypassed).
-- [ ] **Observation** — how asymmetric perception degrades the fleet IPR vs perfect perception (6e),
-  reusing the sweep with a lossy link.
+  through comm. (The models already supported this — `Comm.step` loops all links; only the loop wiring
+  was new.)
+- [x] **`run_fleet`** threads `communication` / `surveillance` / `comm_rng` (as `run_encounter`
+  already does pairwise), building each aircraft's perceived-traffic list per-link. The perfect-delivery
+  latch generalises into the comm/surveillance path; aligned default kept bit-for-bit.
+  - *Check ✅:* at N = 2 with a comm model, `run_fleet` reproduces `run_encounter`'s lossy-comm result
+    bit-for-bit (comm-only **and** comm+GNSS, `test_fleet.py`); a 3-aircraft mutually-blind pair loses
+    separation while the connected third stays safe — perfect > one-pair-blind > blackout (= unresolved),
+    asymmetric perception exercised, not bypassed.
+- [x] **Observation** — [[fleet-lossy-ipr]]: perfect-vs-lossy IPR on the same noise. Lossy erodes below
+  perfect and the gap **widens with density** (Δ 0 → 0.065 over N = 2…12); the nugget is that the
+  *median* margin **rises** under lossy (staleness → over-reaction) while the IPR **falls** — the tail,
+  not the margin, is the safety story.
+
+**Sub-decision landed (transmit timing, [[priority-coordination]]-adjacent):** `broadcast_phase`
+(+ `random_broadcast_phase`) and `broadcast_jitter` (+ `broadcast_rng`) model unsynchronised /
+dithered transmitters, both defaulting to today's aligned-fixed behaviour (gate intact). Observations
+[[broadcast-phase-offset]] (aligned correlates fleet staleness; offset decorrelates it),
+[[broadcast-jitter]] (dither dissolves the k·interval comb), [[surveillance-asymmetric-perception]]
+(staleness + GNSS self-noise stack).
 
 ---
 

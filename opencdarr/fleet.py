@@ -10,9 +10,11 @@ pairwise-primitive design (ADR 0004) makes this a change of *environment*, not o
 detection iterates the conflict graph, resolution composes the set (MVP sums, VO unions, Phase 6a),
 and recovery waits until an aircraft is clear of **all** its conflicts.
 
-**Perfect perception this pass** (Phase-6 plan decision 3): each aircraft sees the other broadcasts
-directly (instant, perfect delivery), with optional GNSS self-noise (``navigation`` + ``rng``). The
-lossy communication / surveillance model over the n(n−1) directed links is deferred to 6g.
+**Perception**: by default each aircraft sees the others' broadcasts directly (instant, perfect
+delivery), with optional GNSS self-noise (``navigation`` + ``rng``). Passing ``communication`` /
+``surveillance`` / ``comm_rng`` (6f) makes perception **lossy and asymmetric** over the n(n−1)
+directed links — per-link reception + latency, each aircraft acting on the last message *that* link
+delivered (or ``None`` before first contact ⇒ fly nominal) — mirroring :func:`run_encounter`.
 
 **Reduces to the pairwise runner** at n = 2: ``run_fleet`` with two agents reproduces
 :func:`~opencdarr.loop.run_encounter` (no-communication path) bit-for-bit — the free multi-aircraft
@@ -30,7 +32,14 @@ import numpy as np
 from opencdarr import geo
 from opencdarr.autopilot import Autopilot, CruiseAutopilot, GuidanceMemory
 from opencdarr.cd.base import ConflictDetector
-from opencdarr.cns.base import NavigationModel
+from opencdarr.cns.base import (
+    CommState,
+    CommunicationModel,
+    Message,
+    NavigationModel,
+    SurveillanceModel,
+)
+from opencdarr.cns.surveillance import LastKnown
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr.base import RecoveryCriterion
 from opencdarr.dynamics import Dynamics, MotionCommand
@@ -83,10 +92,10 @@ def random_broadcast_phase(
     """Draw an independent initial broadcast offset in ``[0, broadcast_interval)`` per aircraft.
 
     The realistic unsynchronised-transmitter model: aircraft spawn at different times, so each runs
-    the *same* interval at a *random phase* rather than a shared ``t = 0`` tick — the aligned default
-    is the pessimally-correlated case where every aircraft's staleness peaks together (real ADS-B even
-    dithers its slot to avoid exactly that). Seed-reproducible and clone-safe when ``rng`` is a
-    spawned substream (ADR 0001). Pass the result as ``run_fleet(..., broadcast_phase=...)``. See
+    the *same* interval at a *random phase*, not a shared ``t=0`` tick — the aligned default is the
+    pessimally-correlated case where every aircraft's staleness peaks together (real ADS-B dithers
+    its slot to avoid exactly that). Seed-reproducible and clone-safe when ``rng`` is a spawned
+    substream (ADR 0001). Pass the result as ``run_fleet(..., broadcast_phase=...)``. See
     ``vault/observations/broadcast-phase-offset.md``.
     """
     return [float(x) for x in rng.uniform(0.0, broadcast_interval, n)]
@@ -104,6 +113,9 @@ def run_fleet(
     wind: WindField = NO_WIND,
     navigation: NavigationModel | None = None,
     rng: np.random.Generator | None = None,
+    communication: CommunicationModel | None = None,
+    surveillance: SurveillanceModel | None = None,
+    comm_rng: np.random.Generator | None = None,
     t_max: float = 600.0,
     done_timeout: float = 10.0,
     broadcast_interval: float = 1.0,
@@ -115,7 +127,10 @@ def run_fleet(
     """Advance the fleet to termination and report its outcome (see the module docstring).
 
     Each aircraft decides on the broadcast cadence from its (optionally noisy) self-fix against its
-    perceived traffic — every *other* aircraft's broadcast (perfect delivery here). The command
+    perceived traffic. Without ``communication`` this is every *other* aircraft's current broadcast
+    (perfect delivery); with it, each aircraft reads :class:`SurveillanceModel`'s ``perceived`` per
+    directed link — the last message *that* link delivered, or ``None`` (absent) before first
+    contact, so that neighbour is dropped from the perceived set until first heard. The command
     is held while the dynamics integrate at ``dt``; all aircraft advance together. The outcome
     (conflict / LoS / min-sep) is measured on the **true** states every step. Terminates once every
     pair is diverging and separated and no aircraft is resolving for ``done_timeout``, or at
@@ -124,14 +139,14 @@ def run_fleet(
     ``broadcast_phase`` offsets each aircraft's broadcast clock: ``None`` (default) aligns all of
     them at ``t = 0`` (one shared cadence — today's behaviour, and the reduction to
     :func:`~opencdarr.loop.run_encounter` at n = 2). Pass one offset per aircraft (e.g. from
-    :func:`random_broadcast_phase`) to model unsynchronised transmitters spawned at different times;
-    aircraft ``i`` then broadcasts *and* decides at ``phase[i] + k·broadcast_interval``, reading each
-    other aircraft's **last** transmitted state rather than a synchronous snapshot.
+    :func:`random_broadcast_phase`) to model unsynchronised transmitters spawned at offset times;
+    aircraft ``i`` then broadcasts *and* decides at ``phase[i] + k*broadcast_interval``, reading
+    each other aircraft's **last** transmitted state rather than a synchronous snapshot.
 
-    ``broadcast_jitter`` (seconds, default 0 ⇒ fixed interval) dithers *each* gap: the next broadcast
-    lands ``broadcast_interval + U(-jitter, +jitter)`` later, the per-transmission slot randomisation
+    ``broadcast_jitter`` (seconds, 0 = fixed interval) dithers *each* gap: the next broadcast
+    lands ``broadcast_interval + U(-jitter, +jitter)`` later, per-transmission slot randomisation
     real ADS-B uses to avoid systematic co-channel collisions (a fixed offset only shifts the comb;
-    jitter breaks its regularity). Requires ``broadcast_rng`` — its own substream (ADR 0006 §6) — and
+    jitter breaks its regularity). Requires ``broadcast_rng`` (its own substream, ADR 0006 §6) and
     must be ``< broadcast_interval`` so gaps stay positive.
     """
     n = len(agents)
@@ -166,7 +181,7 @@ def run_fleet(
     else:
         if len(broadcast_phase) != n:
             raise ValueError(
-                f"broadcast_phase must have one entry per aircraft (got {len(broadcast_phase)}, n={n})"
+                f"broadcast_phase needs n={n} entries, got {len(broadcast_phase)}"
             )
         if any(p < 0.0 for p in broadcast_phase):
             raise ValueError(f"broadcast_phase entries must be >= 0, got {list(broadcast_phase)}")
@@ -179,7 +194,11 @@ def run_fleet(
             f"got {broadcast_jitter}"
         )
     if broadcast_jitter > 0.0 and broadcast_rng is None:
-        raise ValueError("broadcast_jitter requires broadcast_rng (its own substream, ADR 0006 §6)")
+        raise ValueError("broadcast_jitter requires broadcast_rng (a substream, ADR 0006 §6)")
+    if communication is not None and comm_rng is None:
+        raise ValueError("communication requires comm_rng (its own RNG substream, ADR 0006 §6)")
+    surveil = surveillance or LastKnown()
+    comm_state = CommState()  # clonable value state, threaded (as run_encounter); ids stable
     next_bc = list(phases)
     last_tx: list[AircraftState | None] = [None] * n  # each aircraft's last transmitted self-fix
     eps = 1e-9  # float guard so a tick lands on t = k*broadcast_interval reached by dt steps
@@ -199,9 +218,9 @@ def run_fleet(
         # default, a per-aircraft subset once phases are offset
         firing = [i for i in range(n) if t + eps >= next_bc[i]]
         if firing:
-            # pass 1 — each firing aircraft takes its (noisy) self-fix and latches what it transmits,
+            # pass 1 — each firing aircraft takes its (noisy) self-fix and latches its transmit,
             # in agent order, BEFORE any decision. Aligned phases fire all n in order, so the draws
-            # and the transmit snapshot are bit-for-bit with the old single-cadence path. An aircraft
+            # and the transmit snapshot are bit-for-bit with the old aligned path. An aircraft
             # keeps its own intent; the broadcast strips it unless shared.
             selfs: dict[int, AircraftState] = {}
             for i in firing:
@@ -211,19 +230,39 @@ def run_fleet(
                     fix = states[i]
                 selfs[i] = replace(fix, desired=states[i].desired)
                 last_tx[i] = replace(fix, desired=states[i].desired if share_intent else None)
-            # pass 2 — each firing aircraft decides against the latest broadcast it holds of every
-            # other aircraft (its last_tx latch). Perfect delivery this pass: the latch is each
-            # aircraft's most recent transmit, None before it has ever broadcast (fly nominal).
+            # push this tick's broadcasts through the (lossy) comm layer, if present: each firing
+            # aircraft's transmit is offered to every receiver over its own directed link (per-link
+            # reception + latency from comm_rng, ADR 0006 §6). Broadcasts and receivers stay in
+            # agent order so the draw sequence matches run_encounter's at n = 2 (the lossy gate).
+            if communication is not None:
+                broadcasts = [
+                    Message(source=states[i].id, state=tx, t_meas=t)
+                    for i in firing
+                    if (tx := last_tx[i]) is not None  # always true for a firing aircraft
+                ]
+                receivers = [states[k].id for k in range(n)]
+                comm_state = communication.step(comm_state, broadcasts, receivers, t, comm_rng)
+            # pass 2 — each firing aircraft decides against what it currently holds of every other
+            # aircraft: with comm, the last message each link delivered (None ⇒ never heard,
+            # so dropped from the set); without comm, the last_tx latch (None before first tx).
             for i in firing:
                 nom, gms[i] = aps[i].step(selfs[i], gms[i], perfs[i])
-                perceived = [
-                    tx for j in range(n) if j != i and (tx := last_tx[j]) is not None
-                ]
+                if communication is not None:
+                    perceived = [
+                        p for j in range(n)
+                        if j != i
+                        and (p := surveil.perceived(comm_state, states[i].id, states[j].id, t))
+                        is not None
+                    ]
+                else:
+                    perceived = [
+                        tx for j in range(n) if j != i and (tx := last_tx[j]) is not None
+                    ]
                 cmds[i], mems[i] = separation.step(
                     selfs[i], perceived, nom, mems[i], rpz, t_lookahead,
                     detector, resolver, recovery, adapters[i],
                 )
-                # next gap: fixed by default, or dithered per transmission (ADS-B slot randomisation)
+                # next gap: fixed, or dithered per transmission (ADS-B slot randomisation)
                 step = broadcast_interval
                 if broadcast_jitter > 0.0:
                     assert broadcast_rng is not None  # guaranteed by validation above

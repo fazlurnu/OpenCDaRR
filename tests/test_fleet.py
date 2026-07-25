@@ -14,7 +14,7 @@ import math
 
 from opencdarr import geo
 from opencdarr.cd import StateBased
-from opencdarr.cns import GnssNavigation
+from opencdarr.cns import Comm, GnssNavigation, lognormal_latency
 from opencdarr.cr import MVP, VO
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr import PastCPA
@@ -65,6 +65,69 @@ def test_run_fleet_reduces_to_run_encounter_noisy() -> None:
         flt = run_fleet([Agent(own, M600), Agent(intr, M600)], rng=generator(seq_f), **kw)
         assert flt.min_sep == enc.min_sep
         assert (flt.conflict, flt.los) == (enc.conflict, enc.los)
+
+
+def _comm() -> Comm:
+    """A lossy link: 80% reception, lognormal latency — the same on every call."""
+    return Comm(reception_prob=0.8, latency=lognormal_latency(0.1, 0.25))
+
+
+def test_run_fleet_lossy_reduces_to_run_encounter() -> None:
+    """N=2 lossy gate: run_fleet == run_encounter under the *same* comm model + substream."""
+    own, intr = _pair()
+    kw = dict(rpz=_RPZ, t_lookahead=_LOOKAHEAD, dt=1.0, detector=StateBased(),
+              resolver=MVP(margin=1.1), recovery=PastCPA(bouncing_guard=True))
+    seq_e = spawn(root_seed_sequence(0), 1)[0]
+    enc = run_encounter(own, intr, perf=M600, communication=_comm(),
+                        comm_rng=generator(seq_e), **kw)
+    seq_f = spawn(root_seed_sequence(0), 1)[0]
+    flt = run_fleet([Agent(own, M600), Agent(intr, M600)],
+                    communication=_comm(), comm_rng=generator(seq_f), **kw)
+    assert (flt.conflict, flt.los, flt.min_sep) == (enc.conflict, enc.los, enc.min_sep)
+
+
+def test_run_fleet_lossy_reduces_to_run_encounter_noisy() -> None:
+    """N=2 lossy gate with GNSS noise too: nav and comm substreams both match run_encounter."""
+    own, intr = _noisy_pair()
+    kw = dict(rpz=_RPZ, t_lookahead=_LOOKAHEAD, dt=0.2, detector=StateBased(),
+              resolver=MVP(margin=1.05), recovery=PastCPA(bouncing_guard=True),
+              navigation=GnssNavigation())
+    nav_e, comm_e = spawn(root_seed_sequence(3), 2)
+    enc = run_encounter(own, intr, perf=M600, rng=generator(nav_e),
+                        communication=_comm(), comm_rng=generator(comm_e), **kw)
+    nav_f, comm_f = spawn(root_seed_sequence(3), 2)
+    flt = run_fleet([Agent(own, M600), Agent(intr, M600)], rng=generator(nav_f),
+                    communication=_comm(), comm_rng=generator(comm_f), **kw)
+    assert flt.min_sep == enc.min_sep
+    assert (flt.conflict, flt.los) == (enc.conflict, enc.los)
+
+
+def test_fleet_perception_gates_avoidance() -> None:
+    """Asymmetric perception is exercised, not bypassed: safety tracks who can hear whom.
+
+    A 3-aircraft ring (every pair a conflict) with MVP. Perfect perception clears; a total
+    blackout (nothing delivered) collapses to the unresolved collision; and a *mutually blind pair*
+    (A0<->A1 links down, A2 fully connected) loses separation on that pair — while A2, on a full
+    picture, keeps the fleet off a full collision. Three different perceived sets, three fates.
+    """
+    def ring() -> list[Agent]:
+        return _ring(3)
+
+    def run(comm: Comm) -> object:
+        seq = spawn(root_seed_sequence(1), 1)[0]
+        return run_fleet(ring(), rpz=_RPZ, t_lookahead=_LOOKAHEAD, dt=0.5, detector=StateBased(),
+                         resolver=MVP(margin=1.1), recovery=PastCPA(bouncing_guard=True),
+                         communication=comm, comm_rng=generator(seq))
+
+    perfect = run(Comm(reception_prob=1.0))
+    mutual = run(Comm(reception_prob={("A0", "A1"): 0.0, ("A1", "A0"): 0.0}))  # A0/A1 blind
+    blackout = run(Comm(reception_prob=0.0))  # nobody ever hears anybody
+
+    assert perfect.los is False and perfect.min_sep >= _RPZ          # full picture -> clears
+    assert blackout.los is True and blackout.min_sep < _RPZ          # no picture -> collides
+    assert mutual.los is True                                        # the blinded pair loses sep
+    # monotone in perception quality: perfect > one-pair-blind > total blackout
+    assert perfect.min_sep > mutual.min_sep > blackout.min_sep
 
 
 def _ring(n: int, radius: float = 1500.0, speed: float = 10.0) -> list[Agent]:
