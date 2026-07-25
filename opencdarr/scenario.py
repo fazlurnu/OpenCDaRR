@@ -110,3 +110,77 @@ def sample_pairwise(
         own, intr_id=intr_id, dpsi=dpsi, dcpa=dcpa, tlos=tlos, rpz=rpz, side=side
     )
     return own, intr
+
+
+# --- N-aircraft fleet scenarios (Phase 6d) --------------------------------------------------
+# Each builder returns a list of ``(AircraftState, goto_target)`` pairs — an aircraft heading at
+# its destination ``(lat, lon)``, the geometry the fleet loop needs. The caller wraps each in a
+# ``WaypointAutopilot`` mission + its airframe (an ``Agent``); the scenario stays airframe-neutral.
+
+FleetScenario = list[tuple[AircraftState, tuple[float, float]]]
+
+
+def _heading_to(lat: float, lon: float, target: tuple[float, float], speed: float,
+                ac_id: str) -> AircraftState:
+    """An aircraft at ``(lat, lon)`` flying at ``speed`` toward ``target`` (nose on the bearing)"""
+    trk, _ = geo.qdrdist(lat, lon, target[0], target[1])
+    return AircraftState(id=ac_id, lat=lat, lon=lon, trk=trk % 360.0, gs=speed)
+
+
+def swap_pair(
+    *, speed: float = 10.0, span: float = 3000.0, lat0: float = 52.0, lon0: float = 4.0
+) -> FleetScenario:
+    """Two aircraft ``span`` m apart, each flying to the *other's* start — a head-on swap
+    (Phase-6 scenario 1). Placed so the DAA clears with the waypoint still ahead.
+    """
+    a = geo.forward(lat0, lon0, 270.0, span / 2)  # west
+    b = geo.forward(lat0, lon0, 90.0, span / 2)  # east
+    return [
+        (_heading_to(a[0], a[1], (b[0], b[1]), speed, "A"), (b[0], b[1])),
+        (_heading_to(b[0], b[1], (a[0], a[1]), speed, "B"), (a[0], a[1])),
+    ]
+
+
+def swap_ring(
+    n: int = 8, *, speed: float = 10.0, radius: float = 1500.0,
+    lat0: float = 52.0, lon0: float = 4.0,
+) -> FleetScenario:
+    """``n`` aircraft uniformly on a ring, each flying to the **diametrically-opposite** start
+    (Phase-6 scenario 2) — ``n/2`` head-on pairs all crossing the centre.
+    """
+    starts = [geo.forward(lat0, lon0, 360.0 * k / n, radius) for k in range(n)]
+    out: FleetScenario = []
+    for k in range(n):
+        target = starts[(k + n // 2) % n]
+        out.append((_heading_to(starts[k][0], starts[k][1], target, speed, f"A{k}"), target))
+    return out
+
+
+def converging_ring(
+    n: int = 8, *, speed: float = 10.0, radius: float = 1500.0,
+    lat0: float = 52.0, lon0: float = 4.0,
+) -> FleetScenario:
+    """``n`` aircraft uniformly on a circle, all flying to the **same** waypoint — the ring centre
+    (Phase-6 scenario 3), the symmetric converging superconflict. They cannot all occupy the centre
+    (``rpz`` forbids it), so the DAA can only hold them apart as they converge.
+    """
+    centre = (lat0, lon0)
+    ring = [geo.forward(lat0, lon0, 360.0 * k / n, radius) for k in range(n)]
+    return [(_heading_to(s[0], s[1], centre, speed, f"A{k}"), centre) for k, s in enumerate(ring)]
+
+
+def near_parallel(
+    *, speed: float = 10.0, dpsi: float = 5.0, tlos: float = 90.0, rpz: float = 50.0,
+    reach: float = 3000.0, lat0: float = 52.0, lon0: float = 4.0
+) -> FleetScenario:
+    """Two aircraft crossing at a shallow ``dpsi`` (default 5°) — the near-parallel, slow-closing
+    hard case (Phase-6 scenario 4). The ownship heads north; the intruder is placed by
+    :func:`create_conflict`; each aircraft's waypoint is ``reach`` metres ahead along its track.
+    """
+    own = AircraftState(id="OWN", lat=lat0, lon=lon0, trk=0.0, gs=speed)
+    intr = create_conflict(own, intr_id="INT", dpsi=dpsi, dcpa=0.0, tlos=tlos, rpz=rpz, side=1)
+    out: FleetScenario = []
+    for ac in (own, intr):
+        target = geo.forward(ac.lat, ac.lon, ac.trk, reach)
+        out.append((ac, (target[0], target[1])))
+    return out

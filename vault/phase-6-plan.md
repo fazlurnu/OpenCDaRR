@@ -5,9 +5,10 @@ v0.3 of the roadmap, the multi-aircraft commitment [[0004-layered-directed-desig
 made the model shaped for. Everything through Phase 5 is pairwise: `run_encounter(own, intr)`, and
 `MVP.resolve(own, intr, rpz)` / `should_resume(own, intr, rpz)` take a *single* intruder. Phase 6
 turns the directed pairwise **primitive** into an N-aircraft **environment** without rewriting the
-core: detection iterates a conflict graph, resolution sums over an aircraft's conflicts, recovery
-waits until clear of *all* of them, and a **coordination model** (a genuine research choice) decides
-how the fleet's independent resolutions compose.
+core: detection iterates a conflict graph, resolution composes an aircraft's conflicts (MVP sums, VO
+unions), recovery waits until clear of *all* of them, and the fleet coordinates **implicitly and
+cooperatively** — every aircraft resolves against every other (an explicit coordination model and a
+priority policy are deferred, [[priority-coordination]]).
 
 This is **not** rare-event / IPS (that is Phase 8) and **not** the consolidated metrics/logging
 (Phase 9). Phase 6 is the fleet *environment* and the scenarios that exercise it.
@@ -26,12 +27,12 @@ preferred, so **both MVP and VO stay bit-for-bit** — see decision 4.)
 
 ## Settled up front (decided with the user, 2026-07-24)
 
-1. **Coordination: cooperative-symmetric first, priority/give-way as a follow-on.** The first model
-   (6c) is **cooperative-symmetric** — every aircraft independently resolves against *all* its
-   conflicts by summing the pairwise MVP/VO avoidance vectors, no negotiation. It is the direct N = 2
-   generalisation of today's behaviour (and the ASAS/BlueSky default), so N = 2 reduces exactly. A
-   **priority / give-way** model is a *second* model behind the same interface (6f), its own ADR, not
-   a rewrite. The perfectly-symmetric superconflict (scenario 3) is the stress test that motivates it.
+1. **Coordination is implicit cooperative-symmetric.** Every aircraft independently resolves against
+   *all* its conflicts (MVP sums / VO unions), no negotiation, both aircraft maneuvering — the direct
+   N = 2 generalisation of today's behaviour (the ASAS/BlueSky default), so N = 2 reduces exactly.
+   Making coordination an *explicit, swappable* model, and adding a **priority / give-way** model
+   (the natural fix for the superconflict's symmetric over-reaction), is deferred to
+   [[priority-coordination]] — a second policy has to exist before the abstraction earns its weight.
 2. **Deliverable includes a quantitative multi-aircraft IPR.** Beyond the qualitative scenario demos
    (6d), a **seeded multi-aircraft IPR sweep** (6e): LoS across *any* pair, over noise realisations —
    the N-aircraft analogue of the pairwise sweeps, with a reproducible seed.
@@ -77,7 +78,7 @@ is the *environment* that iterates them and the *memory* that rides along:
 | **Separation memory** | one `PairMemory` per directed pair | a per-aircraft **`FleetMemory`**: `resopairs` = a set/map of active directed pairs + each one's onset velocity |
 | **Environment** | `run_encounter(own, intr)` | `run_fleet([aircraft…])` — N states, each its own autopilot/dynamics/perf, all advance simultaneously |
 | **Metric** | pair separation | **min pairwise separation across all pairs**; LoS = any pair < rpz; conflict = any pair predicted |
-| **Coordination** | implicit (both cooperate) | an explicit **model** — cooperative-symmetric (6c), priority (6f) |
+| **Coordination** | implicit (both cooperate) | still implicit **cooperative-symmetric**; explicit model + priority deferred ([[priority-coordination]]) |
 
 The no-hidden-state invariant becomes **more** load-bearing (ADR 0004): with more aircraft there is
 more per-aircraft recovery memory, and a clone that lost any of it would diverge (KI-1 at scale). So
@@ -131,29 +132,27 @@ discipline, one level up.
   - *Check (the 6b gate):* `run_fleet` with **2** agents reproduces `run_encounter` **bit-for-bit**
     (noiseless and seeded-noisy), across the Phase-4/5 airframe and wind cases.
 
-### 6c — Coordination model: cooperative-symmetric (ADR)
+### 6c — (removed) Coordination stays implicit; explicit model + priority → future-features
 
-- [ ] **`opencdarr/coordination/` (new family) + ADR 001x** — the coordination model as a pluggable
-  contribution surface (mirrors `cd/`/`cr/`/`crr/`). `CooperativeSymmetric`: every aircraft resolves
-  against all its conflicts independently, MVP/VO-summed — the fleet behaviour is the emergent
-  composition, no negotiation. This is what 6b calls; making it explicit names the seam a priority
-  model (6f) slots into. The ADR records *why* coordination is a first-class model (ADR 0004's
-  forward-linked "coordination-model ADR").
-  - *Check:* cooperative-symmetric at N = 2 is the pairwise cooperative behaviour (the 6b gate covers
-    it); a 3-aircraft symmetric case resolves as the sum-of-pairs predicts.
+The coordination is the **implicit cooperative-symmetric** one already in `run_fleet` (every aircraft
+resolves against all the others; both maneuver). An *explicit, swappable* coordination model only
+earns its abstraction weight once a **second** policy exists to host — a **priority / give-way**
+model — and that is deferred to [[priority-coordination]] (a one-implementation abstraction now would
+break the `state.py` "no speculative structure" rule). So this rung is dropped; the cooperative
+baseline is enough for the environment, scenarios (6d), and IPR (6e).
 
-### 6d — Scenario builders + the scenarios (qualitative, min-pairwise-sep)
+### 6d — Scenario builders + the scenarios (qualitative, min-pairwise-sep) — IN PROGRESS
 
-- [ ] **`opencdarr/scenario.py`** — N-aircraft builders beside `create_conflict`: `swap_pair`
-  (scenario 1), `swap_ring` (scenario 2), `converging_ring` (scenario 3), `near_parallel`
-  (scenario 4). Each returns the fleet of `AircraftState` + each aircraft's `Mission`
-  (goto its target), placed far enough apart that after avoidance the waypoint is still **ahead**
-  (resume, don't double back).
-- [ ] **`scripts/` demos + `vault/observations/`** — run each through `run_fleet`, plot the ground
-  tracks + the min-pairwise-separation over time (rpz line), one observation per scenario (or one
-  combined), in the [[mixed-fleet-dubins-holonomic]] contrast lineage. The **converging-ring
-  superconflict** is the headline stress test: does cooperative-symmetric MVP resolve it, or does the
-  symmetry deadlock/oscillate? Either way is a finding.
+- [x] **`opencdarr/scenario.py`** — N-aircraft builders `swap_pair` (1), `swap_ring` (2),
+  `converging_ring` (3), `near_parallel` (4), each returning `list[(AircraftState, goto_target)]`
+  (airframe-neutral; caller wraps in a `WaypointAutopilot` mission + `Agent`). Tested in
+  `tests/test_fleet_scenarios.py`: **swap_pair (104 m), swap_ring (51 m), near_parallel (52 m) all
+  clear**; **converging_ring is *mitigated not resolved*** (41.6 m < rpz — 8 aircraft cannot occupy
+  one centre point, the goal itself conflicts with rpz; a documented limit, the superconflict finding).
+- [ ] **`scripts/` demo + `vault/observations/`** — a combined demo (one panel per scenario: ground
+  tracks + min-pairwise-sep, rpz line), one observation, in the [[mixed-fleet-dubins-holonomic]]
+  lineage. **← NEXT.** (The `three_aircraft_demo` / `fleet_cooperative_demo` capture-loop pattern is
+  reusable; converging_ring is the headline stress case.)
 
 ### 6e — Multi-aircraft IPR sweep (the quantitative payoff)
 
@@ -163,19 +162,12 @@ discipline, one level up.
   IPR degrades with fleet density — the "does DAA hold as traffic thickens?" question.
   - *Check:* at N = 2 the fleet IPR equals the pairwise IPR for the same geometry/seed.
 
-### 6f — Priority / give-way coordination (second model)
-
-- [ ] **`opencdarr/coordination/priority.py` + ADR** — a second coordination model (rules-of-the-air
-  give-way: lower-priority aircraft maneuvers, higher holds), behind the 6c interface. Motivated by
-  the superconflict (6d) if cooperative-symmetric struggles. Own ADR; **may slip** past Phase 6 if the
-  cooperative baseline is enough for the scenarios.
-
-### 6g — Communication & surveillance uncertainty at N (asymmetric perception)
+### 6f — Communication & surveillance uncertainty at N (asymmetric perception)
 
 Generalises the Phase-3b comm/surveillance model over the fleet, so perception becomes **asymmetric**:
 aircraft A may have heard from C while B has not, each acting on a *different, stale* picture of the
 same sky. This is where the multi-aircraft DAA gets genuinely hard — the symmetric-perception
-assumption 6b–6f rely on breaks, and the `FleetMemory` / coordination model must stay correct when no
+assumption 6b–6e rely on breaks, and the `FleetMemory` must stay correct when no
 two aircraft agree on the traffic.
 
 - [ ] **`opencdarr/cns/` at N** — each aircraft broadcasts once per tick; the
@@ -233,9 +225,10 @@ two aircraft agree on the traffic.
   fleet (ADR 0004: the estimator is a separate layer that only sees `advance/level/is_terminal`; N
   appears only inside `level`, added in Phase 8).
 - **Consolidated logging / P(dcpa < X) metrics** — Phase 9.
-- **The priority coordination model (6f)** and **comm/surveillance uncertainty (6g)** — in Phase 6's
-  arc but toward the end; each lands behind an existing interface, not a core change, and either may
-  slip if the earlier rungs fill the phase.
+- **An explicit coordination model + the priority / give-way policy** — deferred to
+  [[priority-coordination]]; the fleet stays implicit cooperative-symmetric this phase.
+- **Comm / surveillance uncertainty at N (6f)** — toward the end of Phase 6's arc; behind the
+  existing CNS interface, may slip if the earlier rungs fill the phase.
 - **Sector / constant-density flow scenario** — dropped for now (was scenario 5); a flow model
   (density-driven spawning) rather than a fixed fleet, to be reconsidered later with its own detail.
 
@@ -247,5 +240,5 @@ two aircraft agree on the traffic.
   (§7 / [[0015-velocity-to-fixedwing-projection]]).
 - Consumes the airframes (0012/0013), guidance (0014), and wind (0016) unchanged — the fleet is
   airframe- and wind-agnostic by construction.
-- Forward-links: the **coordination-model ADR** (6c) and the **priority model** (6f); Phase 8 (IPS),
-  Phase 9 (metrics).
+- Forward-links: the explicit **coordination model + priority policy** ([[priority-coordination]]);
+  Phase 8 (IPS), Phase 9 (metrics).
