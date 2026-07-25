@@ -141,7 +141,7 @@ model — and that is deferred to [[priority-coordination]] (a one-implementatio
 break the `state.py` "no speculative structure" rule). So this rung is dropped; the cooperative
 baseline is enough for the environment, scenarios (6d), and IPR (6e).
 
-### 6d — Scenario builders + the scenarios (qualitative, min-pairwise-sep) — IN PROGRESS
+### 6d — Scenario builders + the scenarios (qualitative, min-pairwise-sep) ✅
 
 - [x] **`opencdarr/scenario.py`** — N-aircraft builders `swap_pair` (1), `swap_ring` (2),
   `converging_ring` (3), `near_parallel` (4), each returning `list[(AircraftState, goto_target)]`
@@ -149,10 +149,11 @@ baseline is enough for the environment, scenarios (6d), and IPR (6e).
   `tests/test_fleet_scenarios.py`: **swap_pair (104 m), swap_ring (51 m), near_parallel (52 m) all
   clear**; **converging_ring is *mitigated not resolved*** (41.6 m < rpz — 8 aircraft cannot occupy
   one centre point, the goal itself conflicts with rpz; a documented limit, the superconflict finding).
-- [ ] **`scripts/` demo + `vault/observations/`** — a combined demo (one panel per scenario: ground
-  tracks + min-pairwise-sep, rpz line), one observation, in the [[mixed-fleet-dubins-holonomic]]
-  lineage. **← NEXT.** (The `three_aircraft_demo` / `fleet_cooperative_demo` capture-loop pattern is
-  reusable; converging_ring is the headline stress case.)
+- [x] **`scripts/` demo + `vault/observations/`** — [`fleet_scenarios_demo.py`] draws one combined
+  figure, one row per scenario (cooperative ground tracks + min-pairwise-sep vs unresolved, rpz line),
+  mirroring `run_fleet`'s loop/termination so the numbers match `test_fleet_scenarios.py` to the digit
+  (104.0 / 51.1 / **41.6** / 51.6 m). Observation [[fleet-scenarios]] in the
+  [[mixed-fleet-dubins-holonomic]] lineage; converging_ring is the headline (mitigated, not cleared).
 
 ### 6e — Multi-aircraft IPR sweep (the quantitative payoff)
 
