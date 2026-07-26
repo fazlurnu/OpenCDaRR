@@ -30,16 +30,14 @@ from dataclasses import dataclass, replace
 import numpy as np
 
 from opencdarr import geo
-from opencdarr.autopilot import Autopilot, CruiseAutopilot, GuidanceMemory
+from opencdarr.autopilot import Autopilot, CruiseAutopilot, GuidanceMemory, nominal_velocity
 from opencdarr.cd.base import ConflictDetector
 from opencdarr.cns.base import (
-    CommState,
     CommunicationModel,
-    Message,
     NavigationModel,
     SurveillanceModel,
 )
-from opencdarr.cns.surveillance import LastKnown
+from opencdarr.cns.stack import CNS, CnsState, CnsStreams
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr.base import RecoveryCriterion
 from opencdarr.dynamics import Dynamics, FixedWing, MotionCommand, Multirotor
@@ -199,9 +197,16 @@ def run_encounter(
     velocity perceived when the pair became active (:class:`PairMemory`) when intent wasn't
     shared.
     """
-    if communication is not None and comm_rng is None:
-        raise ValueError("communication requires comm_rng (its own RNG substream, ADR 0006 §6)")
-    surveil = surveillance or LastKnown()
+    # the datalink as one stack (N → C → S), shared with ``run_fleet``: CNS is the immutable
+    # config, its generators ride in a per-particle CnsStreams, its value state threads as a
+    # clonable CnsState. Same split and order as run_fleet — the two are provably equal at n = 2.
+    cns = CNS(
+        navigation=navigation,
+        communication=communication,
+        surveillance=surveillance,
+        share_intent=share_intent,
+    )
+    cns_streams = CnsStreams(nav=rng, comm=comm_rng)
     # per-aircraft bundle (ADR 0011 §7): each side falls back to the shared dynamics/perf, so the
     # single-airframe callers (and the bit-for-bit anchors) are unchanged; a mixed-fleet caller
     # overrides one or both sides. The setpoint adapter is airframe-derived (fixed-wing: project).
@@ -227,7 +232,7 @@ def run_encounter(
     mem_own = mem_intr = INACTIVE  # per-direction resopairs membership + inferred-intent memory
     cmd_own, gm_own = ap_own.step(own, gm_own, perf_own)
     cmd_intr, gm_intr = ap_intr.step(intr, gm_intr, perf_intr)
-    comm_state = CommState()
+    cns_state = CnsState.initial(2)
 
     conflict = los = False
     min_sep = float("inf")
@@ -248,49 +253,36 @@ def run_encounter(
 
         # CDR decisions on the broadcast cadence; the command is held between ticks
         if t + eps >= next_broadcast:
-            # each aircraft's fresh (noisy) self-fix; both endpoints carry noise
-            if navigation is not None and rng is not None:
-                fix_own = navigation.measure(own, t, rng).state
-                fix_intr = navigation.measure(intr, t, rng).state
-            else:
-                fix_own, fix_intr = own, intr
-
-            # an aircraft knows its own intent exactly, never through communication
-            self_own = replace(fix_own, desired=own.desired)
-            self_intr = replace(fix_intr, desired=intr.desired)
-            # what leaves the transmitter: intent stripped here (before comm), not at perceive
-            # time, so a dropped/held message never carries intent it was never sent with
-            tx_own = replace(fix_own, desired=own.desired if share_intent else None)
-            tx_intr = replace(fix_intr, desired=intr.desired if share_intent else None)
-
-            if communication is not None:
-                broadcasts = (
-                    Message(source=own.id, state=tx_own, t_meas=t),
-                    Message(source=intr.id, state=tx_intr, t_meas=t),
-                )
-                comm_state = communication.step(
-                    comm_state, broadcasts, (own.id, intr.id), t, comm_rng
-                )
-                perceived_intr = surveil.perceived(comm_state, own.id, intr.id, t)
-                perceived_own = surveil.perceived(comm_state, intr.id, own.id, t)
-            else:
-                perceived_intr, perceived_own = tx_intr, tx_own  # instant, perfect delivery
+            # the datalink, whole: both aircraft take their (noisy) self-fix and put it on the air
+            # (intent stripped at transmit time unless shared), then each is told what it now holds
+            # of the other — absent before first contact on a lossy link, which flies that pair
+            # nominal (ADR 0006 §5). Same stack, same order, as ``run_fleet``.
+            cns_state, perception = cns.sense((own, intr), (0, 1), t, cns_state, cns_streams)
+            see_own, see_intr = perception[0], perception[1]
 
             # guidance: each aircraft's nominal command + advanced guidance memory. A mission
             # autopilot navigates from the live self-fix (re-planned each tick, which is what makes
             # the resume-after-avoidance automatic); CruiseAutopilot ignores it and holds.
-            nom_own, gm_own = ap_own.step(self_own, gm_own, perf_own)
-            nom_intr, gm_intr = ap_intr.step(self_intr, gm_intr, perf_intr)
+            nom_own, gm_own = ap_own.step(see_own.own, gm_own, perf_own)
+            nom_intr, gm_intr = ap_intr.step(see_intr.own, gm_intr, perf_intr)
+            # intent as a velocity: what each aircraft would fly if it reverted to nominal *now*
+            # (the live mission command, not a value frozen at t=0), so intent-based recovery (FTR)
+            # tests the velocity the aircraft will actually resume. Byte-identical for a frozen
+            # CruiseAutopilot. Stamped on the self-fix for this decision and persisted on the true
+            # state so the next tick's transmit carries it under ``share_intent``.
+            self_own = replace(see_own.own, desired=nominal_velocity(nom_own, see_own.own))
+            self_intr = replace(see_intr.own, desired=nominal_velocity(nom_intr, see_intr.own))
+            own = replace(own, desired=self_own.desired)
+            intr = replace(intr, desired=self_intr.desired)
             # safety overlay: SeparationManager may override the nominal, releasing back on
-            # recovery. perceived_* is None before first contact on a lossy link -> fly nominal.
-            # adapter_* projects the final command onto each airframe's channels (fixed-wing: a
-            # velocity override -> course/airspeed; multirotor: None, velocity flown directly).
+            # recovery. adapter_* projects the final command onto each airframe's channels
+            # (fixed-wing: a velocity override -> course/airspeed; multirotor: None, flown direct).
             cmd_own, mem_own = separation.step(
-                self_own, [] if perceived_intr is None else [perceived_intr], nom_own, mem_own,
+                self_own, see_own.traffic, nom_own, mem_own,
                 rpz, t_lookahead, detector, resolver, recovery, adapter_own,
             )
             cmd_intr, mem_intr = separation.step(
-                self_intr, [] if perceived_own is None else [perceived_own], nom_intr, mem_intr,
+                self_intr, see_intr.traffic, nom_intr, mem_intr,
                 rpz, t_lookahead, detector, resolver, recovery, adapter_intr,
             )
             next_broadcast += broadcast_interval

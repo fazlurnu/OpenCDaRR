@@ -6,7 +6,7 @@ decision cadence, vehicle-aware. One implementation per file beside ``base.py`` 
 overlay in ``separation.py``.
 """
 
-from opencdarr.autopilot.base import Autopilot, GuidanceMemory
+from opencdarr.autopilot.base import Autopilot, GuidanceMemory, nominal_velocity
 from opencdarr.autopilot.cruise import CruiseAutopilot
 from opencdarr.autopilot.waypoint import WaypointAutopilot
 
@@ -15,4 +15,5 @@ __all__ = [
     "CruiseAutopilot",
     "GuidanceMemory",
     "WaypointAutopilot",
+    "nominal_velocity",
 ]

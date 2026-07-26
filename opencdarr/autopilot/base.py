@@ -26,9 +26,10 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
+from opencdarr import geo
 from opencdarr.dynamics import MotionCommand
 from opencdarr.performance import Performance
-from opencdarr.state import AircraftState
+from opencdarr.state import AircraftState, DesiredVelocity
 
 
 @dataclass(frozen=True)
@@ -67,3 +68,27 @@ class Autopilot(ABC):
         through this call stays independent of its source. The returned memory carries any guidance
         progress (e.g. an advanced leg index) forward to the next tick and into a clone.
         """
+
+
+def nominal_velocity(command: MotionCommand, state: AircraftState) -> DesiredVelocity:
+    """The velocity the aircraft *intends* to fly — its current nominal command read as a ground
+    velocity, for intent-based recovery (:class:`~opencdarr.crr.FTR`) to test reverting to.
+
+    This is what makes FTR's revert-check track a *mission*: ``desired`` is the velocity the loop
+    stamps on the state each tick from the live nominal, not a value frozen at ``t = 0``. A
+    velocity command (:class:`~opencdarr.autopilot.CruiseAutopilot`) is returned unchanged, so a
+    frozen-cruise run is byte-identical to before this existed. A position command
+    (:class:`~opencdarr.autopilot.WaypointAutopilot`) becomes *head at the active waypoint, at the
+    cruise airspeed*: exact for a ``goto`` / pure-pursuit leg, and a goal-direction approximation
+    for an L1 leg (the return-to-the-leg-line component is deferred — the same spirit as the
+    fixed-wing course projection, ADR 0013 §4). With no channel it holds the current velocity.
+    """
+    if command.target_velocity is not None:
+        ve, vn = command.target_velocity
+        return DesiredVelocity(v_east=ve, v_north=vn)
+    if command.target_position is not None:
+        qdr, _ = geo.qdrdist(state.lat, state.lon,
+                             command.target_position[0], command.target_position[1])
+        speed = state.gs if command.target_airspeed is None else command.target_airspeed
+        return DesiredVelocity.from_track_speed(qdr, speed)
+    return DesiredVelocity.from_track_speed(state.trk, state.gs)

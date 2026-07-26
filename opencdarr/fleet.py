@@ -29,17 +29,15 @@ from dataclasses import dataclass, replace
 import numpy as np
 
 from opencdarr import geo
-from opencdarr.autopilot import Autopilot, CruiseAutopilot, GuidanceMemory
+from opencdarr.autopilot import Autopilot, CruiseAutopilot, GuidanceMemory, nominal_velocity
 from opencdarr.cd.base import ConflictDetector
 from opencdarr.cns.base import (
-    CommState,
     CommunicationModel,
-    Message,
     NavigationModel,
     SurveillanceModel,
 )
 from opencdarr.cns.broadcast import BroadcastSchedule
-from opencdarr.cns.surveillance import LastKnown
+from opencdarr.cns.stack import CNS, CnsState, CnsStreams
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr.base import RecoveryCriterion
 from opencdarr.dynamics import Dynamics, MotionCommand
@@ -86,6 +84,19 @@ def _pairwise_min_sep(states: list[AircraftState]) -> float:
             _, dist = geo.qdrdist(states[i].lat, states[i].lon, states[j].lat, states[j].lon)
             smallest = min(smallest, dist)
     return smallest
+
+
+def _all_clear(states: list[AircraftState], mems: list[FleetMemory], rpz: float) -> bool:
+    """Is the whole fleet done — every pair past CPA and separated, and nobody still resolving?"""
+    if any(m.resolving for m in mems):
+        return False
+    for i in range(len(states)):
+        for j in range(i + 1, len(states)):
+            rel = relative_enu(states[i], states[j])
+            diverging = rel.rx * rel.vx + rel.ry * rel.vy > 0.0
+            if not (diverging and rel.dist >= rpz):
+                return False
+    return True
 
 
 def run_fleet(
@@ -159,11 +170,16 @@ def run_fleet(
     next_bc = schedule.initial(n)
     if schedule.jitter > 0.0 and broadcast_rng is None:
         raise ValueError("broadcast jitter requires broadcast_rng (a substream, ADR 0006 §6)")
-    if communication is not None and comm_rng is None:
-        raise ValueError("communication requires comm_rng (its own RNG substream, ADR 0006 §6)")
-    surveil = surveillance or LastKnown()
-    comm_state = CommState()  # clonable value state, threaded (as run_encounter); ids stable
-    last_tx: list[AircraftState | None] = [None] * n  # each aircraft's last transmitted self-fix
+    # the datalink as one stack (N → C → S): CNS is the shared, immutable config; its generators
+    # ride in a per-particle CnsStreams and its value state threads as a clonable CnsState
+    cns = CNS(
+        navigation=navigation,
+        communication=communication,
+        surveillance=surveillance,
+        share_intent=share_intent,
+    )
+    cns_streams = CnsStreams(nav=rng, comm=comm_rng)
+    cns_state = CnsState.initial(n)
     eps = 1e-9  # float guard so a tick lands on a broadcast time reached by dt steps
 
     while t < t_max:
@@ -181,48 +197,19 @@ def run_fleet(
         # default, a per-aircraft subset once phases are offset
         firing = schedule.due(next_bc, t, eps)
         if firing:
-            # pass 1 — each firing aircraft takes its (noisy) self-fix and latches its transmit,
-            # in agent order, BEFORE any decision. Aligned phases fire all n in order, so the draws
-            # and the transmit snapshot are bit-for-bit with the old aligned path. An aircraft
-            # keeps its own intent; the broadcast strips it unless shared.
-            selfs: dict[int, AircraftState] = {}
+            # the datalink runs first and whole (fix → transmit → hear), so every firing aircraft
+            # transmits a pre-decision snapshot and nobody reacts to an unbroadcast manoeuvre
+            cns_state, perception = cns.sense(states, firing, t, cns_state, cns_streams)
             for i in firing:
-                if navigation is not None and rng is not None:
-                    fix = navigation.measure(states[i], t, rng).state
-                else:
-                    fix = states[i]
-                selfs[i] = replace(fix, desired=states[i].desired)
-                last_tx[i] = replace(fix, desired=states[i].desired if share_intent else None)
-            # push this tick's broadcasts through the (lossy) comm layer, if present: each firing
-            # aircraft's transmit is offered to every receiver over its own directed link (per-link
-            # reception + latency from comm_rng, ADR 0006 §6). Broadcasts and receivers stay in
-            # agent order so the draw sequence matches run_encounter's at n = 2 (the lossy gate).
-            if communication is not None:
-                broadcasts = [
-                    Message(source=states[i].id, state=tx, t_meas=t)
-                    for i in firing
-                    if (tx := last_tx[i]) is not None  # always true for a firing aircraft
-                ]
-                receivers = [states[k].id for k in range(n)]
-                comm_state = communication.step(comm_state, broadcasts, receivers, t, comm_rng)
-            # pass 2 — each firing aircraft decides against what it currently holds of every other
-            # aircraft: with comm, the last message each link delivered (None ⇒ never heard,
-            # so dropped from the set); without comm, the last_tx latch (None before first tx).
-            for i in firing:
-                nom, gms[i] = aps[i].step(selfs[i], gms[i], perfs[i])
-                if communication is not None:
-                    perceived = [
-                        p for j in range(n)
-                        if j != i
-                        and (p := surveil.perceived(comm_state, states[i].id, states[j].id, t))
-                        is not None
-                    ]
-                else:
-                    perceived = [
-                        tx for j in range(n) if j != i and (tx := last_tx[j]) is not None
-                    ]
+                see = perception[i]
+                nom, gms[i] = aps[i].step(see.own, gms[i], perfs[i])
+                # intent as a velocity: what this aircraft would fly if it reverted to nominal now
+                # (the live mission command), stamped for the decision and persisted on the true
+                # state for the next transmit. Byte-identical for a frozen CruiseAutopilot.
+                self_i = replace(see.own, desired=nominal_velocity(nom, see.own))
+                states[i] = replace(states[i], desired=self_i.desired)
                 cmds[i], mems[i] = separation.step(
-                    selfs[i], perceived, nom, mems[i], rpz, t_lookahead,
+                    self_i, see.traffic, nom, mems[i], rpz, t_lookahead,
                     detector, resolver, recovery, adapters[i],
                 )
                 # next broadcast time: a fixed interval, or dithered per transmission by the
@@ -233,16 +220,7 @@ def run_fleet(
         states = [dyns[i].step(states[i], cmds[i], perfs[i], dt, wind) for i in range(n)]
         t += dt
 
-        # done when every pair is past CPA and separated and no aircraft is resolving
-        resolving = any(m.resolving for m in mems)
-        all_clear = not resolving
-        for i in range(n):
-            for j in range(i + 1, n):
-                rel = relative_enu(states[i], states[j])
-                diverging = rel.rx * rel.vx + rel.ry * rel.vy > 0.0
-                if not (diverging and rel.dist >= rpz):
-                    all_clear = False
-        done_timer = done_timer + dt if all_clear else 0.0
+        done_timer = done_timer + dt if _all_clear(states, mems, rpz) else 0.0
         if done_timer >= done_timeout:
             break
 
