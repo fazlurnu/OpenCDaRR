@@ -4,11 +4,51 @@
 Hunt) and *Clean Code* (Martin), tuned for research code that must be **reproducible and
 defensible to reviewers**, in Python, with BlueSky used as a *library*. Go through it and
 **accept / reject / reword each principle until it's yours** — a principle you didn't
-choose is one you won't follow. Keep it to a page; if it grows, cut.
+choose is one you won't follow.
 
 *How to use it:* when you or an agent are unsure how to write something, this is the
 tiebreaker. When two principles conflict — they will — the "Tensions" note at the bottom
 says which wins here.
+
+## The two books, in a paragraph each
+
+*The Pragmatic Programmer* is about **the economics of change**. Its claim is that no
+design survives contact with new requirements, so the real skill is keeping the cost of
+changing your mind low: orthogonal pieces that don't drag each other along, decisions
+made reversible, one authoritative source for every fact (DRY), a thin end-to-end tracer
+bullet before any general machinery, and small rot fixed before it becomes the house
+style. It is deliberately unfussy about beauty — "good enough" is an engineering target,
+not an excuse.
+
+*Clean Code* is about **the economics of reading**. Its claim is that you read code far
+more than you write it, so every line should be optimised for the next person to
+understand: names that say what the thing is, functions small enough to hold in your head
+and doing exactly one thing, few arguments, no hidden side effects, third-party libraries
+kept behind a boundary you own, and comments treated as an admission that the code failed
+to explain itself. It is dogmatic where Pragmatic is pragmatic, and that's the useful
+tension between them.
+
+## The adjustment: written by AI, read and tested by human
+
+Both books assume one person both writes and reads. Here the machine writes and **you
+read, test, and defend** — which flips their cost model. Writing is nearly free;
+*reading and verifying* is now the entire budget, and it is yours alone to spend. That
+changes three things:
+
+- **Clean Code gets stricter, and for a blunter reason.** Legibility is no longer a
+  courtesy to your future self — it is the only channel through which you can check work
+  you didn't do. Code you can't follow at reading speed is a defect even when it's
+  correct.
+- **Pragmatic's DRY loses its keystroke argument.** "Don't type it twice" is worthless
+  when typing is free. What survives is "don't have two truths." An abstraction that only
+  saves the machine effort but costs you a read is a net loss (this is principle 11,
+  sharpened).
+- **Broken windows are replaced by surplus.** The failure mode of an AI-written codebase
+  isn't neglect, it's *volume* — more plausible code than a human can hold. Restraint,
+  not tidiness, is the new discipline.
+
+The principles below are unchanged where the books still apply; the **Authorship**
+section is what this project adds.
 
 ## Core — purity & reproducibility (load-bearing; hardest to add later)
 
@@ -52,11 +92,44 @@ says which wins here.
     but a known issue you've quantified and written down (KI-1 style) is a decision, not
     neglect. *(Pragmatic: broken windows, tuned by experience.)*
 
+## Authorship — written by AI, read and tested by human
+
+14. **You sign it.** "The model wrote it" is not a defence to a reviewer, and it isn't
+    one to yourself. If you can't explain a line, either learn it or delete it — those
+    are the only two options.
+15. **The test is the human's half of the contract.** The AI writing both the code and
+    the test that passes it proves self-consistency, nothing more. You own the expected
+    values, and the best ones come from *outside* the code: a closed-form solution, a
+    number from a paper, a hand calculation, a conservation law.
+16. **Diff budget, not line budget.** A change too large to read in one sitting is too
+    large to accept, no matter how fast it was produced. Split it until it fits your
+    attention, not the model's.
+17. **No unrequested generality.** Config flags, defensive branches, and "we might need
+    this" abstractions are cheap to generate and expensive to verify. Every one is
+    something you must now read forever. YAGNI, hardened.
+18. **Boring Python beats fluent Python.** The model is fluent in every construct; that
+    is not a reason to use them. Write in the subset *you* read fastest.
+19. **Docstrings carry the provenance the author can't remember.** The AI has no memory
+    of why it chose a branch or a form of an equation, and you can't interview it later.
+    So record the source in place — the paper, the equation number, the ADR — at the
+    moment it's written. This is the one place Clean Code's "comments are a failure"
+    rule is overridden.
+20. **Attack the frame before building inside it.** Ask for the three biggest risks and
+    an argument *against* the plan first. A model will build a cathedral inside whatever
+    blueprint it's handed. *(Straight from `lesson-learnt.md`.)*
+21. **Understanding beats throughput on anything you must defend.** Full autonomy is for
+    throwaway and exploratory work; the core gets smaller batches and diffs you actually
+    read.
+
 ## Tensions we accept (when principles fight, this wins)
 
 - Purity (1) vs. performance → **purity wins** until a *measured* bottleneck says otherwise.
 - DRY vs. legibility (11) → in the **core math, legibility wins**; in plumbing, DRY wins.
 - Clean Code rigor vs. speed (12) → **core = rigor, scripts = speed.**
+- Generation speed vs. understanding (21) → **understanding wins** on anything that
+  reaches a paper; speed wins on scripts you'd throw away without regret.
+- Clean Code's "no comments" vs. provenance (19) → **provenance wins** in the core math;
+  elsewhere let the code speak.
 
 ---
 *Companion docs:* `design_brief.md` (what to build) · `how-to-step-by-step.md` (the
