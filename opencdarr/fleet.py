@@ -1,4 +1,4 @@
-"""The N-aircraft encounter runner — the fleet environment (Phase 6b).
+"""The N-aircraft encounter runner — the fleet environment (Phase 6b), over a stepwise interface.
 
 :func:`run_fleet` is the multi-aircraft generalisation of
 :func:`~opencdarr.loop.run_encounter`: a **list of aircraft**, each with its own
@@ -10,6 +10,24 @@ pairwise-primitive design (ADR 0004) makes this a change of *environment*, not o
 detection iterates the conflict graph, resolution composes the set (MVP sums, VO unions, Phase 6a),
 and recovery waits until an aircraft is clear of **all** its conflicts.
 
+**The estimator interface (Phase 8 / ADR 0004).** The environment is split into the three pieces a
+rare-event estimator needs, so Monte Carlo *and* the future IPS see only these:
+
+- :class:`FleetEnv` — the **fixed rules** (dynamics, CDR methods, geometry, timing). Immutable and
+  shared unchanged across every IPS particle.
+- :class:`FleetState` — the **particle**: the whole mutable world (every aircraft's state, guidance
+  and recovery memory, held command, broadcast clock, the datalink value state, the clock and the
+  measured accumulators). Deeply immutable — :meth:`FleetEnv.advance` returns a *new* state and
+  never mutates the old — so an IPS clone is reference-sharing, not a deep copy, and can never
+  write through to its parent (the no-hidden-state invariant, the KI-1 fix at scale).
+- :class:`FleetStreams` — the **per-particle RNG** (nav + comm + broadcast), re-spawned on clone,
+  never copied (ADR 0001).
+
+:meth:`FleetEnv.advance` is one ``dt`` step ``state → state``; :func:`level` is the importance
+function (minimum pairwise separation — ADR 0004's starting point, a Phase-8 ADR may refine it);
+:meth:`FleetEnv.is_terminal` is the stop test. :func:`run_fleet` is the plain-Monte-Carlo driver
+over exactly these — the loop that IPS replaces with resample-and-split.
+
 **Perception**: by default each aircraft sees the others' broadcasts directly (instant, perfect
 delivery), with optional GNSS self-noise (``navigation`` + ``rng``). Passing ``communication`` /
 ``surveillance`` / ``comm_rng`` (6f) makes perception **lossy and asymmetric** over the n(n−1)
@@ -18,8 +36,7 @@ delivered (or ``None`` before first contact ⇒ fly nominal) — mirroring :func
 
 **Reduces to the pairwise runner** at n = 2: ``run_fleet`` with two agents reproduces
 :func:`~opencdarr.loop.run_encounter` (no-communication path) bit-for-bit — the free multi-aircraft
-regression (ADR 0004). Pure given its inputs; no globals. The fleet of states migrates into the IPS
-particle when Phase 8 lands.
+regression (ADR 0004). Pure given its inputs; no globals.
 """
 
 from __future__ import annotations
@@ -44,11 +61,12 @@ from opencdarr.dynamics import Dynamics, MotionCommand
 from opencdarr.kinematics import relative_enu
 from opencdarr.loop import _DEFAULT_DYNAMICS, _setpoint_adapter
 from opencdarr.performance import Performance
-from opencdarr.separation import INACTIVE, FleetMemory, SeparationManager
+from opencdarr.separation import INACTIVE, FleetMemory, SeparationManager, SetpointAdapter
 from opencdarr.state import AircraftState, DesiredVelocity
 from opencdarr.wind import NO_WIND, WindField
 
 _DEFAULT_SCHEDULE = BroadcastSchedule()  # interval 1 s, aligned, no jitter (default singleton)
+_BROADCAST_EPS = 1e-9  # float guard so a tick lands on a broadcast time reached by dt steps
 
 
 @dataclass(frozen=True)
@@ -76,7 +94,43 @@ class FleetOutcome:
     min_sep: float  # minimum pairwise separation reached across all pairs [m]
 
 
-def _pairwise_min_sep(states: list[AircraftState]) -> float:
+@dataclass(frozen=True)
+class FleetState:
+    """The particle: the entire mutable world of one fleet encounter, as a deeply immutable value.
+
+    Everything an encounter's future depends on lives here and nowhere else (ADR 0004): the true
+    ``states``; each aircraft's guidance memory (``gms``), recovery memory (``mems``), held command
+    (``cmds``) and broadcast clock (``next_bc``); the datalink value state (``cns_state``); the
+    clock (``t``, ``done_timer``); and the outcome accumulators (``conflict`` / ``los`` /
+    ``min_sep``) measured on the true states so far. Every field is itself immutable, so the whole
+    value is — :meth:`FleetEnv.advance` builds a *new* ``FleetState`` and never touches the old.
+    That is what makes an IPS clone free and safe: share the reference, re-spawn the streams.
+    """
+
+    states: tuple[AircraftState, ...]
+    gms: tuple[GuidanceMemory, ...]
+    mems: tuple[FleetMemory, ...]
+    cmds: tuple[MotionCommand, ...]
+    next_bc: tuple[float, ...]
+    cns_state: CnsState
+    t: float
+    done_timer: float
+    conflict: bool
+    los: bool
+    min_sep: float
+
+
+@dataclass(frozen=True)
+class FleetStreams:
+    """The per-particle RNG substreams the environment draws from — datalink (nav + comm) and
+    broadcast jitter. Kept out of :class:`FleetState` and re-spawned (never copied) on an IPS
+    clone, so a cloned future draws independent randomness (ADR 0001), as :class:`CnsStreams`."""
+
+    cns: CnsStreams = CnsStreams()
+    broadcast: np.random.Generator | None = None
+
+
+def _pairwise_min_sep(states: tuple[AircraftState, ...] | list[AircraftState]) -> float:
     """Smallest separation over all unordered pairs [m]."""
     smallest = float("inf")
     for i in range(len(states)):
@@ -86,7 +140,14 @@ def _pairwise_min_sep(states: list[AircraftState]) -> float:
     return smallest
 
 
-def _all_clear(states: list[AircraftState], mems: list[FleetMemory], rpz: float) -> bool:
+def level(state: FleetState) -> float:
+    """The importance function IPS splits on: the fleet's **current** minimum pairwise separation
+    [m], smaller = closer to the rare event (ADR 0004's starting point; a Phase-8 ADR may refine
+    it for simultaneous multi-aircraft conflict). A pure read of ``state``, independent of N."""
+    return _pairwise_min_sep(state.states)
+
+
+def _all_clear(states: list[AircraftState], mems: tuple[FleetMemory, ...], rpz: float) -> bool:
     """Is the whole fleet done — every pair past CPA and separated, and nobody still resolving?"""
     if any(m.resolving for m in mems):
         return False
@@ -97,6 +158,138 @@ def _all_clear(states: list[AircraftState], mems: list[FleetMemory], rpz: float)
             if not (diverging and rel.dist >= rpz):
                 return False
     return True
+
+
+@dataclass(frozen=True)
+class FleetEnv:
+    """The fixed rules of a fleet encounter — everything a particle's future depends on that is
+    *not* the particle (ADR 0004). Immutable and shared unchanged across every IPS clone; only the
+    state and the streams differ between particles. Built by :func:`run_fleet` from its arguments
+    and the fleet's :class:`Agent` bundles; exposes the estimator interface :meth:`advance` /
+    :meth:`is_terminal` (with the free function :func:`level`).
+    """
+
+    dyns: tuple[Dynamics, ...]
+    perfs: tuple[Performance, ...]
+    adapters: tuple[SetpointAdapter | None, ...]
+    aps: tuple[Autopilot, ...]
+    separation: SeparationManager
+    detector: ConflictDetector
+    resolver: ConflictResolver | None
+    recovery: RecoveryCriterion | None
+    cns: CNS
+    schedule: BroadcastSchedule
+    wind: WindField
+    rpz: float
+    t_lookahead: float
+    dt: float
+    t_max: float
+    done_timeout: float
+
+    def initial_state(self, agents: list[Agent]) -> FleetState:
+        """The particle at ``t = 0``: each aircraft's intent stamped on its true state, its first
+        nominal command computed, memories empty, broadcast clocks per the schedule."""
+        n = len(agents)
+        states = [
+            replace(a.state, desired=DesiredVelocity.from_track_speed(a.state.trk, a.state.gs))
+            for a in agents
+        ]
+        gms: list[GuidanceMemory] = []
+        cmds: list[MotionCommand] = []
+        for i in range(n):
+            cmd, gm = self.aps[i].step(states[i], GuidanceMemory(), self.perfs[i])
+            cmds.append(cmd)
+            gms.append(gm)
+        return FleetState(
+            states=tuple(states),
+            gms=tuple(gms),
+            mems=tuple(INACTIVE for _ in range(n)),
+            cmds=tuple(cmds),
+            next_bc=tuple(self.schedule.initial(n)),
+            cns_state=CnsState.initial(n),
+            t=0.0,
+            done_timer=0.0,
+            conflict=False,
+            los=False,
+            min_sep=float("inf"),
+        )
+
+    def is_terminal(self, state: FleetState) -> bool:
+        """Whether the encounter is over: the fleet has been clear for ``done_timeout`` (every pair
+        past CPA and separated, nobody resolving) or the ``t_max`` cap is reached. The plain MC /
+        v0.3 stop test; a Phase-8 ADR adds the absorbing rare-event stop for IPS on top."""
+        return state.t >= self.t_max or state.done_timer >= self.done_timeout
+
+    def advance(self, state: FleetState, streams: FleetStreams) -> FleetState:
+        """One ``dt`` step of the whole fleet, ``state → state`` (pure; the old ``while`` body).
+
+        Measures the true states (conflict / LoS / running min-sep), lets every aircraft whose
+        broadcast clock is due sense-and-decide on the datalink, holds each command while the
+        dynamics integrate one ``dt``, and updates the done-timer. Draws only from ``streams``; the
+        returned :class:`FleetState` is new and the input is untouched.
+        """
+        n = len(state.states)
+        states = list(state.states)
+        gms = list(state.gms)
+        mems = list(state.mems)
+        cmds = list(state.cmds)
+        next_bc = list(state.next_bc)
+        cns_state = state.cns_state
+        t = state.t
+
+        # measure on the true states, before any decision or step (top of the old loop)
+        cur = _pairwise_min_sep(states)
+        min_sep = min(state.min_sep, cur)
+        los = state.los or cur < self.rpz
+        conflict = state.conflict or any(
+            i != j and self.detector.detect(states[i], states[j], self.rpz, self.t_lookahead)
+            for i in range(n)
+            for j in range(n)
+        )
+
+        # aircraft whose own broadcast clock is due this tick: all of them together in the aligned
+        # default, a per-aircraft subset once phases are offset
+        firing = self.schedule.due(next_bc, t, _BROADCAST_EPS)
+        if firing:
+            # the datalink runs first and whole (fix → transmit → hear), so every firing aircraft
+            # transmits a pre-decision snapshot and nobody reacts to an unbroadcast manoeuvre
+            cns_state, perception = self.cns.sense(states, firing, t, cns_state, streams.cns)
+            for i in firing:
+                see = perception[i]
+                nom, gms[i] = self.aps[i].step(see.own, gms[i], self.perfs[i])
+                # intent as a velocity: what this aircraft would fly if it reverted to nominal now
+                # (the live mission command), stamped for the decision and persisted on the true
+                # state for the next transmit. Byte-identical for a frozen CruiseAutopilot.
+                self_i = replace(see.own, desired=nominal_velocity(nom, see.own))
+                states[i] = replace(states[i], desired=self_i.desired)
+                cmds[i], mems[i] = self.separation.step(
+                    self_i, see.traffic, nom, mems[i], self.rpz, self.t_lookahead,
+                    self.detector, self.resolver, self.recovery, self.adapters[i],
+                )
+                # next broadcast time: a fixed interval, or dithered per transmission by the
+                # schedule's jitter (ADS-B slot randomisation), drawn in agent order
+                next_bc[i] = self.schedule.advance(next_bc[i], streams.broadcast)
+
+        # advance all aircraft from their pre-step states (explicitly simultaneous)
+        states = [self.dyns[i].step(states[i], cmds[i], self.perfs[i], self.dt, self.wind)
+                  for i in range(n)]
+        t += self.dt
+        clear = _all_clear(states, tuple(mems), self.rpz)
+        done_timer = state.done_timer + self.dt if clear else 0.0
+
+        return FleetState(
+            states=tuple(states),
+            gms=tuple(gms),
+            mems=tuple(mems),
+            cmds=tuple(cmds),
+            next_bc=tuple(next_bc),
+            cns_state=cns_state,
+            t=t,
+            done_timer=done_timer,
+            conflict=conflict,
+            los=los,
+            min_sep=min_sep,
+        )
 
 
 def run_fleet(
@@ -122,6 +315,12 @@ def run_fleet(
 ) -> FleetOutcome:
     """Advance the fleet to termination and report its outcome (see the module docstring).
 
+    The plain-Monte-Carlo driver over the estimator interface: build the :class:`FleetEnv` (the
+    fixed rules) and the initial :class:`FleetState` (the particle), then step ``advance`` until
+    ``is_terminal``. IPS (Phase 8) replaces this loop with resample-and-split over the *same*
+    ``advance`` / :func:`level` / ``is_terminal`` — this function is the reference it is validated
+    against.
+
     Each aircraft decides on the broadcast cadence from its (optionally noisy) self-fix against its
     perceived traffic. Without ``communication`` this is every *other* aircraft's current broadcast
     (perfect delivery); with it, each aircraft reads :class:`SurveillanceModel`'s ``perceived`` per
@@ -140,88 +339,39 @@ def run_fleet(
     its own clock, reading each other aircraft's **last** transmitted state rather than a
     synchronous snapshot.
     """
-    n = len(agents)
-    dyns: list[Dynamics] = [a.dynamics or _DEFAULT_DYNAMICS for a in agents]
-    perfs: list[Performance] = [a.perf for a in agents]
-    adapters = [_setpoint_adapter(dyns[i], perfs[i]) for i in range(n)]
-    aps: list[Autopilot] = [
-        a.autopilot or CruiseAutopilot(a.state.trk, a.state.gs) for a in agents
-    ]
-    # intent (nominal velocity) on each true state, private unless share_intent (as run_encounter)
-    states = [
-        replace(a.state, desired=DesiredVelocity.from_track_speed(a.state.trk, a.state.gs))
-        for a in agents
-    ]
-    gms = [GuidanceMemory() for _ in range(n)]
-    mems: list[FleetMemory] = [INACTIVE for _ in range(n)]
-    separation = SeparationManager()  # stateless; memory rides in mems (ADR 0011 §5 / 0004)
-    cmds: list[MotionCommand] = []
-    for i in range(n):
-        cmd, gms[i] = aps[i].step(states[i], gms[i], perfs[i])
-        cmds.append(cmd)
-
-    conflict = los = False
-    min_sep = float("inf")
-    done_timer = 0.0
-    t = 0.0
-    # each aircraft's own broadcast clock, owned by the schedule: aligned at t = 0 by default (one
-    # shared cadence, the pessimally-correlated case), or offset per aircraft for unsynchronised
-    # transmitters (BroadcastSchedule.phase / vault/observations/broadcast-phase-offset.md)
-    next_bc = schedule.initial(n)
     if schedule.jitter > 0.0 and broadcast_rng is None:
         raise ValueError("broadcast jitter requires broadcast_rng (a substream, ADR 0006 §6)")
-    # the datalink as one stack (N → C → S): CNS is the shared, immutable config; its generators
-    # ride in a per-particle CnsStreams and its value state threads as a clonable CnsState
-    cns = CNS(
-        navigation=navigation,
-        communication=communication,
-        surveillance=surveillance,
-        share_intent=share_intent,
+    n = len(agents)
+    dyns = tuple(a.dynamics or _DEFAULT_DYNAMICS for a in agents)
+    perfs = tuple(a.perf for a in agents)
+    env = FleetEnv(
+        dyns=dyns,
+        perfs=perfs,
+        adapters=tuple(_setpoint_adapter(dyns[i], perfs[i]) for i in range(n)),
+        aps=tuple(a.autopilot or CruiseAutopilot(a.state.trk, a.state.gs) for a in agents),
+        separation=SeparationManager(),  # stateless; memory rides in state.mems (ADR 0011 §5)
+        detector=detector,
+        resolver=resolver,
+        recovery=recovery,
+        # the datalink as one stack (N → C → S): CNS is the shared, immutable config; its streams
+        # ride in the per-particle FleetStreams and its value state threads inside FleetState
+        cns=CNS(
+            navigation=navigation,
+            communication=communication,
+            surveillance=surveillance,
+            share_intent=share_intent,
+        ),
+        schedule=schedule,
+        wind=wind,
+        rpz=rpz,
+        t_lookahead=t_lookahead,
+        dt=dt,
+        t_max=t_max,
+        done_timeout=done_timeout,
     )
-    cns_streams = CnsStreams(nav=rng, comm=comm_rng)
-    cns_state = CnsState.initial(n)
-    eps = 1e-9  # float guard so a tick lands on a broadcast time reached by dt steps
+    streams = FleetStreams(cns=CnsStreams(nav=rng, comm=comm_rng), broadcast=broadcast_rng)
 
-    while t < t_max:
-        min_sep = min(min_sep, _pairwise_min_sep(states))
-        if min_sep < rpz:
-            los = True
-        if any(
-            i != j and detector.detect(states[i], states[j], rpz, t_lookahead)
-            for i in range(n)
-            for j in range(n)
-        ):
-            conflict = True
-
-        # aircraft whose own broadcast clock is due this tick: all of them together in the aligned
-        # default, a per-aircraft subset once phases are offset
-        firing = schedule.due(next_bc, t, eps)
-        if firing:
-            # the datalink runs first and whole (fix → transmit → hear), so every firing aircraft
-            # transmits a pre-decision snapshot and nobody reacts to an unbroadcast manoeuvre
-            cns_state, perception = cns.sense(states, firing, t, cns_state, cns_streams)
-            for i in firing:
-                see = perception[i]
-                nom, gms[i] = aps[i].step(see.own, gms[i], perfs[i])
-                # intent as a velocity: what this aircraft would fly if it reverted to nominal now
-                # (the live mission command), stamped for the decision and persisted on the true
-                # state for the next transmit. Byte-identical for a frozen CruiseAutopilot.
-                self_i = replace(see.own, desired=nominal_velocity(nom, see.own))
-                states[i] = replace(states[i], desired=self_i.desired)
-                cmds[i], mems[i] = separation.step(
-                    self_i, see.traffic, nom, mems[i], rpz, t_lookahead,
-                    detector, resolver, recovery, adapters[i],
-                )
-                # next broadcast time: a fixed interval, or dithered per transmission by the
-                # schedule's jitter (ADS-B slot randomisation), drawn in agent order
-                next_bc[i] = schedule.advance(next_bc[i], broadcast_rng)
-
-        # advance all aircraft from their pre-step states (explicitly simultaneous)
-        states = [dyns[i].step(states[i], cmds[i], perfs[i], dt, wind) for i in range(n)]
-        t += dt
-
-        done_timer = done_timer + dt if _all_clear(states, mems, rpz) else 0.0
-        if done_timer >= done_timeout:
-            break
-
-    return FleetOutcome(conflict=conflict, los=los, min_sep=min_sep)
+    state = env.initial_state(agents)
+    while not env.is_terminal(state):
+        state = env.advance(state, streams)
+    return FleetOutcome(conflict=state.conflict, los=state.los, min_sep=state.min_sep)
