@@ -292,6 +292,63 @@ class FleetEnv:
         )
 
 
+def build_env(
+    agents: list[Agent],
+    *,
+    rpz: float,
+    t_lookahead: float,
+    dt: float,
+    detector: ConflictDetector,
+    resolver: ConflictResolver | None = None,
+    recovery: RecoveryCriterion | None = None,
+    wind: WindField = NO_WIND,
+    navigation: NavigationModel | None = None,
+    communication: CommunicationModel | None = None,
+    surveillance: SurveillanceModel | None = None,
+    t_max: float = 600.0,
+    done_timeout: float = 10.0,
+    schedule: BroadcastSchedule = _DEFAULT_SCHEDULE,
+    share_intent: bool = False,
+) -> FleetEnv:
+    """Assemble the fixed rules of a fleet encounter into a :class:`FleetEnv` (the shared,
+    immutable half of the estimator interface). This is the composition root :func:`run_fleet`
+    drives and IPS (Phase 8) reuses per particle — everything here is per-run configuration, *not*
+    per-particle RNG (that is :class:`FleetStreams`) or world state (that is :class:`FleetState`).
+    The per-aircraft tuples default off the ``agents`` bundle: shared
+    :class:`~opencdarr.dynamics.Multirotor`, a velocity→course adapter only for a fixed-wing, and a
+    frozen :class:`CruiseAutopilot` at each aircraft's initial cruise unless it carries its own
+    mission autopilot.
+    """
+    n = len(agents)
+    dyns = tuple(a.dynamics or _DEFAULT_DYNAMICS for a in agents)
+    perfs = tuple(a.perf for a in agents)
+    return FleetEnv(
+        dyns=dyns,
+        perfs=perfs,
+        adapters=tuple(_setpoint_adapter(dyns[i], perfs[i]) for i in range(n)),
+        aps=tuple(a.autopilot or CruiseAutopilot(a.state.trk, a.state.gs) for a in agents),
+        separation=SeparationManager(),  # stateless; memory rides in state.mems (ADR 0011 §5)
+        detector=detector,
+        resolver=resolver,
+        recovery=recovery,
+        # the datalink as one stack (N → C → S): CNS is the shared, immutable config; its streams
+        # ride in the per-particle FleetStreams and its value state threads inside FleetState
+        cns=CNS(
+            navigation=navigation,
+            communication=communication,
+            surveillance=surveillance,
+            share_intent=share_intent,
+        ),
+        schedule=schedule,
+        wind=wind,
+        rpz=rpz,
+        t_lookahead=t_lookahead,
+        dt=dt,
+        t_max=t_max,
+        done_timeout=done_timeout,
+    )
+
+
 def run_fleet(
     agents: list[Agent],
     *,
@@ -341,33 +398,11 @@ def run_fleet(
     """
     if schedule.jitter > 0.0 and broadcast_rng is None:
         raise ValueError("broadcast jitter requires broadcast_rng (a substream, ADR 0006 §6)")
-    n = len(agents)
-    dyns = tuple(a.dynamics or _DEFAULT_DYNAMICS for a in agents)
-    perfs = tuple(a.perf for a in agents)
-    env = FleetEnv(
-        dyns=dyns,
-        perfs=perfs,
-        adapters=tuple(_setpoint_adapter(dyns[i], perfs[i]) for i in range(n)),
-        aps=tuple(a.autopilot or CruiseAutopilot(a.state.trk, a.state.gs) for a in agents),
-        separation=SeparationManager(),  # stateless; memory rides in state.mems (ADR 0011 §5)
-        detector=detector,
-        resolver=resolver,
-        recovery=recovery,
-        # the datalink as one stack (N → C → S): CNS is the shared, immutable config; its streams
-        # ride in the per-particle FleetStreams and its value state threads inside FleetState
-        cns=CNS(
-            navigation=navigation,
-            communication=communication,
-            surveillance=surveillance,
-            share_intent=share_intent,
-        ),
-        schedule=schedule,
-        wind=wind,
-        rpz=rpz,
-        t_lookahead=t_lookahead,
-        dt=dt,
-        t_max=t_max,
-        done_timeout=done_timeout,
+    env = build_env(
+        agents, rpz=rpz, t_lookahead=t_lookahead, dt=dt, detector=detector, resolver=resolver,
+        recovery=recovery, wind=wind, navigation=navigation, communication=communication,
+        surveillance=surveillance, t_max=t_max, done_timeout=done_timeout, schedule=schedule,
+        share_intent=share_intent,
     )
     streams = FleetStreams(cns=CnsStreams(nav=rng, comm=comm_rng), broadcast=broadcast_rng)
 
