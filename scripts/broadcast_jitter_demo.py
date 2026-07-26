@@ -10,7 +10,8 @@ transmit schedules and compares the **inter-arrival gap of received messages** �
 * **Fixed** (old): gaps land at exactly ``k·interval`` — sharp humps, ``k−1`` = run of drops.
 * **Jittered** (new): each hump smears (and widens with ``k``, ~√k·jitter), the regular comb gone.
 
-Mirrors ``run_fleet(..., broadcast_jitter=…)`` — the same ``U(-j, +j)`` gap draw. Reproduce::
+Mirrors ``run_fleet(schedule=BroadcastSchedule(jitter=…))`` — the same ``U(-j, +j)`` gap draw.
+Reproduce::
 
     PYTHONPATH=. python scripts/broadcast_jitter_demo.py
 
