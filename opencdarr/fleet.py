@@ -24,7 +24,6 @@ particle when Phase 8 lands.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass, replace
 
 import numpy as np
@@ -39,6 +38,7 @@ from opencdarr.cns.base import (
     NavigationModel,
     SurveillanceModel,
 )
+from opencdarr.cns.broadcast import BroadcastSchedule
 from opencdarr.cns.surveillance import LastKnown
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr.base import RecoveryCriterion
@@ -49,6 +49,8 @@ from opencdarr.performance import Performance
 from opencdarr.separation import INACTIVE, FleetMemory, SeparationManager
 from opencdarr.state import AircraftState, DesiredVelocity
 from opencdarr.wind import NO_WIND, WindField
+
+_DEFAULT_SCHEDULE = BroadcastSchedule()  # interval 1 s, aligned, no jitter (default singleton)
 
 
 @dataclass(frozen=True)
@@ -86,21 +88,6 @@ def _pairwise_min_sep(states: list[AircraftState]) -> float:
     return smallest
 
 
-def random_broadcast_phase(
-    n: int, broadcast_interval: float, rng: np.random.Generator
-) -> list[float]:
-    """Draw an independent initial broadcast offset in ``[0, broadcast_interval)`` per aircraft.
-
-    The realistic unsynchronised-transmitter model: aircraft spawn at different times, so each runs
-    the *same* interval at a *random phase*, not a shared ``t=0`` tick — the aligned default is the
-    pessimally-correlated case where every aircraft's staleness peaks together (real ADS-B dithers
-    its slot to avoid exactly that). Seed-reproducible and clone-safe when ``rng`` is a spawned
-    substream (ADR 0001). Pass the result as ``run_fleet(..., broadcast_phase=...)``. See
-    ``vault/observations/broadcast-phase-offset.md``.
-    """
-    return [float(x) for x in rng.uniform(0.0, broadcast_interval, n)]
-
-
 def run_fleet(
     agents: list[Agent],
     *,
@@ -118,9 +105,7 @@ def run_fleet(
     comm_rng: np.random.Generator | None = None,
     t_max: float = 600.0,
     done_timeout: float = 10.0,
-    broadcast_interval: float = 1.0,
-    broadcast_phase: Sequence[float] | None = None,
-    broadcast_jitter: float = 0.0,
+    schedule: BroadcastSchedule = _DEFAULT_SCHEDULE,
     broadcast_rng: np.random.Generator | None = None,
     share_intent: bool = False,
 ) -> FleetOutcome:
@@ -136,18 +121,13 @@ def run_fleet(
     pair is diverging and separated and no aircraft is resolving for ``done_timeout``, or at
     ``t_max``.
 
-    ``broadcast_phase`` offsets each aircraft's broadcast clock: ``None`` (default) aligns all of
-    them at ``t = 0`` (one shared cadence — today's behaviour, and the reduction to
-    :func:`~opencdarr.loop.run_encounter` at n = 2). Pass one offset per aircraft (e.g. from
-    :func:`random_broadcast_phase`) to model unsynchronised transmitters spawned at offset times;
-    aircraft ``i`` then broadcasts *and* decides at ``phase[i] + k*broadcast_interval``, reading
-    each other aircraft's **last** transmitted state rather than a synchronous snapshot.
-
-    ``broadcast_jitter`` (seconds, 0 = fixed interval) dithers *each* gap: the next broadcast
-    lands ``broadcast_interval + U(-jitter, +jitter)`` later, per-transmission slot randomisation
-    real ADS-B uses to avoid systematic co-channel collisions (a fixed offset only shifts the comb;
-    jitter breaks its regularity). Requires ``broadcast_rng`` (its own substream, ADR 0006 §6) and
-    must be ``< broadcast_interval`` so gaps stay positive.
+    ``schedule`` (a :class:`~opencdarr.cns.broadcast.BroadcastSchedule`) owns the transmit timing —
+    the interval, an optional per-aircraft phase offset, and optional per-transmission jitter. The
+    default (interval 1 s, aligned phase, no jitter) is today's behaviour and the reduction to
+    :func:`~opencdarr.loop.run_encounter` at n = 2. A non-zero ``schedule.jitter`` requires
+    ``broadcast_rng`` (its own substream, ADR 0006 §6); aircraft ``i`` broadcasts *and* decides on
+    its own clock, reading each other aircraft's **last** transmitted state rather than a
+    synchronous snapshot.
     """
     n = len(agents)
     dyns: list[Dynamics] = [a.dynamics or _DEFAULT_DYNAMICS for a in agents]
@@ -173,35 +153,18 @@ def run_fleet(
     min_sep = float("inf")
     done_timer = 0.0
     t = 0.0
-    # each aircraft's own broadcast clock: aligned at t = 0 by default (one shared cadence, the
-    # pessimally-correlated case), or offset per aircraft for unsynchronised transmitters
-    # (random_broadcast_phase / vault/observations/broadcast-phase-offset.md)
-    if broadcast_phase is None:
-        phases = [0.0] * n
-    else:
-        if len(broadcast_phase) != n:
-            raise ValueError(
-                f"broadcast_phase needs n={n} entries, got {len(broadcast_phase)}"
-            )
-        if any(p < 0.0 for p in broadcast_phase):
-            raise ValueError(f"broadcast_phase entries must be >= 0, got {list(broadcast_phase)}")
-        phases = [float(p) for p in broadcast_phase]
-    if broadcast_jitter < 0.0:
-        raise ValueError(f"broadcast_jitter must be >= 0, got {broadcast_jitter}")
-    if broadcast_jitter >= broadcast_interval:
-        raise ValueError(
-            f"broadcast_jitter must be < broadcast_interval ({broadcast_interval}), "
-            f"got {broadcast_jitter}"
-        )
-    if broadcast_jitter > 0.0 and broadcast_rng is None:
-        raise ValueError("broadcast_jitter requires broadcast_rng (a substream, ADR 0006 §6)")
+    # each aircraft's own broadcast clock, owned by the schedule: aligned at t = 0 by default (one
+    # shared cadence, the pessimally-correlated case), or offset per aircraft for unsynchronised
+    # transmitters (BroadcastSchedule.phase / vault/observations/broadcast-phase-offset.md)
+    next_bc = schedule.initial(n)
+    if schedule.jitter > 0.0 and broadcast_rng is None:
+        raise ValueError("broadcast jitter requires broadcast_rng (a substream, ADR 0006 §6)")
     if communication is not None and comm_rng is None:
         raise ValueError("communication requires comm_rng (its own RNG substream, ADR 0006 §6)")
     surveil = surveillance or LastKnown()
     comm_state = CommState()  # clonable value state, threaded (as run_encounter); ids stable
-    next_bc = list(phases)
     last_tx: list[AircraftState | None] = [None] * n  # each aircraft's last transmitted self-fix
-    eps = 1e-9  # float guard so a tick lands on t = k*broadcast_interval reached by dt steps
+    eps = 1e-9  # float guard so a tick lands on a broadcast time reached by dt steps
 
     while t < t_max:
         min_sep = min(min_sep, _pairwise_min_sep(states))
@@ -216,7 +179,7 @@ def run_fleet(
 
         # aircraft whose own broadcast clock is due this tick: all of them together in the aligned
         # default, a per-aircraft subset once phases are offset
-        firing = [i for i in range(n) if t + eps >= next_bc[i]]
+        firing = schedule.due(next_bc, t, eps)
         if firing:
             # pass 1 — each firing aircraft takes its (noisy) self-fix and latches its transmit,
             # in agent order, BEFORE any decision. Aligned phases fire all n in order, so the draws
@@ -262,12 +225,9 @@ def run_fleet(
                     selfs[i], perceived, nom, mems[i], rpz, t_lookahead,
                     detector, resolver, recovery, adapters[i],
                 )
-                # next gap: fixed, or dithered per transmission (ADS-B slot randomisation)
-                step = broadcast_interval
-                if broadcast_jitter > 0.0:
-                    assert broadcast_rng is not None  # guaranteed by validation above
-                    step += float(broadcast_rng.uniform(-broadcast_jitter, broadcast_jitter))
-                next_bc[i] += step
+                # next broadcast time: a fixed interval, or dithered per transmission by the
+                # schedule's jitter (ADS-B slot randomisation), drawn in agent order
+                next_bc[i] = schedule.advance(next_bc[i], broadcast_rng)
 
         # advance all aircraft from their pre-step states (explicitly simultaneous)
         states = [dyns[i].step(states[i], cmds[i], perfs[i], dt, wind) for i in range(n)]

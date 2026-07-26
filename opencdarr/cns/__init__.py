@@ -10,6 +10,7 @@ from opencdarr.cns.base import (
     NoiseDistribution,
     SurveillanceModel,
 )
+from opencdarr.cns.broadcast import BroadcastSchedule, random_broadcast_phase
 from opencdarr.cns.communication import (
     Comm,
     constant_latency,
@@ -26,6 +27,7 @@ from opencdarr.cns.noise_distributions import (
 from opencdarr.cns.surveillance import LastKnown, age
 
 __all__ = [
+    "BroadcastSchedule",
     "Comm",
     "CommState",
     "CommunicationModel",
@@ -44,5 +46,6 @@ __all__ = [
     "make_anisotropic_gaussian",
     "make_anisotropic_mixture_gaussian",
     "make_mixture_gaussian",
+    "random_broadcast_phase",
     "uniform_latency",
 ]

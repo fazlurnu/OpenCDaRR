@@ -38,7 +38,10 @@ from joblib import Parallel, delayed  # noqa: E402
 
 from opencdarr import scenario as sc  # noqa: E402
 from opencdarr.cd import StateBased  # noqa: E402
-from opencdarr.cns import GnssNavigation  # noqa: E402
+from opencdarr.cns import (
+    BroadcastSchedule,  # noqa: E402
+    GnssNavigation,  # noqa: E402
+)
 from opencdarr.cr import MVP, VO  # noqa: E402
 from opencdarr.cr.base import ConflictResolver  # noqa: E402
 from opencdarr.crr import PastCPA  # noqa: E402
@@ -67,7 +70,8 @@ def _kwargs(cfg: argparse.Namespace, resolver_name: str) -> dict[str, object]:
     return dict(
         rpz=cfg.rpz, t_lookahead=cfg.lookahead, dt=cfg.dt, detector=StateBased(),
         resolver=_resolver(resolver_name, cfg.margin), recovery=PastCPA(bouncing_guard=True),
-        t_max=cfg.t_max, done_timeout=cfg.done_timeout, broadcast_interval=cfg.broadcast_interval,
+        t_max=cfg.t_max, done_timeout=cfg.done_timeout,
+        schedule=BroadcastSchedule(interval=cfg.broadcast_interval),
     )
 
 
@@ -91,11 +95,14 @@ def _verify_n2(seqs: list[np.random.SeedSequence], cfg: argparse.Namespace) -> N
     fleet = sc.swap_ring(2, speed=cfg.speed, radius=cfg.radius)
     own = replace(fleet[0][0], pos_ci95=cfg.pos_ci95, vel_ci95=cfg.vel_ci95)
     intr = replace(fleet[1][0], pos_ci95=cfg.pos_ci95, vel_ci95=cfg.vel_ci95)
-    kw = _kwargs(cfg, "mvp")
+    kw = _kwargs(cfg, "mvp")  # run_fleet kwargs (carry a BroadcastSchedule)
+    # run_encounter is the interval-only pairwise primitive: swap the schedule for its interval
+    enc_kw = {k: v for k, v in kw.items() if k != "schedule"}
+    enc_kw["broadcast_interval"] = cfg.broadcast_interval
     mismatches = 0
     for seq in seqs:
         enc = run_encounter(own, intr, perf=M600, navigation=GnssNavigation(),
-                            rng=generator(seq), **kw)
+                            rng=generator(seq), **enc_kw)
         flt = run_fleet([Agent(own, M600), Agent(intr, M600)], navigation=GnssNavigation(),
                         rng=generator(seq), **kw)
         if (enc.los, enc.min_sep) != (flt.los, flt.min_sep):

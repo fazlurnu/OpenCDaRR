@@ -40,10 +40,16 @@ from joblib import Parallel, delayed  # noqa: E402
 
 from opencdarr import scenario as sc  # noqa: E402
 from opencdarr.cd import StateBased  # noqa: E402
-from opencdarr.cns import Comm, GnssNavigation, lognormal_latency  # noqa: E402
+from opencdarr.cns import (  # noqa: E402
+    BroadcastSchedule,
+    Comm,
+    GnssNavigation,
+    lognormal_latency,
+    random_broadcast_phase,
+)
 from opencdarr.cr import MVP  # noqa: E402
 from opencdarr.crr import PastCPA  # noqa: E402
-from opencdarr.fleet import Agent, random_broadcast_phase, run_fleet  # noqa: E402
+from opencdarr.fleet import Agent, run_fleet  # noqa: E402
 from opencdarr.performance import M600  # noqa: E402
 from opencdarr.rng import generator, root_seed_sequence, spawn  # noqa: E402
 
@@ -58,7 +64,7 @@ def _kwargs(cfg: argparse.Namespace) -> dict[str, object]:
     return dict(
         rpz=cfg.rpz, t_lookahead=cfg.lookahead, dt=cfg.dt, detector=StateBased(),
         resolver=MVP(margin=cfg.margin), recovery=PastCPA(bouncing_guard=True),
-        t_max=cfg.t_max, done_timeout=cfg.done_timeout, broadcast_interval=cfg.broadcast_interval,
+        t_max=cfg.t_max, done_timeout=cfg.done_timeout,
     )
 
 
@@ -95,16 +101,19 @@ def _one(
     kw = _kwargs(cfg)
     agents = _ring_agents(n, cfg)
     ids = [a.state.id for a in agents]
-    perfect = run_fleet(agents, navigation=GnssNavigation(), rng=generator(nav_seq), **kw)
+    aligned = BroadcastSchedule(interval=cfg.broadcast_interval)  # 6e baseline: aligned, no jitter
+    perfect = run_fleet(agents, navigation=GnssNavigation(), rng=generator(nav_seq),
+                        schedule=aligned, **kw)
     phase = (random_broadcast_phase(n, cfg.broadcast_interval, generator(phase_seq))
              if cfg.random_phase else None)
+    lossy_schedule = BroadcastSchedule(interval=cfg.broadcast_interval, phase=phase,
+                                       jitter=cfg.broadcast_jitter)
     lossy_kw = dict(kw)
     if cfg.broadcast_jitter > 0.0:
-        lossy_kw["broadcast_jitter"] = cfg.broadcast_jitter
         lossy_kw["broadcast_rng"] = generator(jit_seq)
     lossy = run_fleet(agents, navigation=GnssNavigation(), rng=generator(nav_seq),
                       communication=_lossy_comm(cfg, ids), comm_rng=generator(comm_seq),
-                      broadcast_phase=phase, **lossy_kw)
+                      schedule=lossy_schedule, **lossy_kw)
     return perfect.los, lossy.los, perfect.min_sep, lossy.min_sep
 
 
