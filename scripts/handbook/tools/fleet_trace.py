@@ -21,11 +21,11 @@ from opencdarr import geo
 from opencdarr.autopilot import CruiseAutopilot, GuidanceMemory
 from opencdarr.cd.base import ConflictDetector
 from opencdarr.cns.base import NavigationModel
+from opencdarr.cns.stack import CNS, CnsState, CnsStreams
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr.base import RecoveryCriterion
 from opencdarr.dynamics import Dynamics, Multirotor
-from opencdarr.fleet import Agent
-from opencdarr.kinematics import relative_enu
+from opencdarr.fleet import Agent, _all_clear, _pairwise_min_sep
 from opencdarr.loop import _setpoint_adapter
 from opencdarr.separation import INACTIVE, FleetMemory, SeparationManager
 from opencdarr.state import AircraftState, DesiredVelocity
@@ -62,27 +62,6 @@ class FleetTrace:
         return next((t for t, r in zip(self.t, self.resolving, strict=True) if r), None)
 
 
-def _pairwise_min_sep(states: list[AircraftState]) -> float:
-    return min(
-        geo.qdrdist(states[i].lat, states[i].lon, states[j].lat, states[j].lon)[1]
-        for i in range(len(states)) for j in range(i + 1, len(states))
-    )
-
-
-def _all_clear(states: list[AircraftState], mems: list[FleetMemory], rpz: float) -> bool:
-    """The ``run_fleet`` termination test: no one resolving, every pair past-CPA and separated."""
-    if any(m.resolving for m in mems):
-        return False
-    n = len(states)
-    for i in range(n):
-        for j in range(i + 1, n):
-            rel = relative_enu(states[i], states[j])
-            diverging = rel.rx * rel.vx + rel.ry * rel.vy > 0.0
-            if not (diverging and rel.dist >= rpz):
-                return False
-    return True
-
-
 def run_fleet_traced(
     agents: list[Agent],
     *,
@@ -101,9 +80,9 @@ def run_fleet_traced(
 ) -> FleetTrace:
     """Run a fleet to termination like :func:`~opencdarr.fleet.run_fleet`, recording every tick.
 
-    A faithful mirror of the fleet loop's two passes — each aircraft takes its (optionally noisy)
-    self-fix and latches its broadcast, then everyone decides against what they last heard — for
-    the aligned, perfect-delivery case (no per-link comm loss or broadcast phase offsets).
+    Runs the fleet loop's own datalink stack (:class:`~opencdarr.cns.stack.CNS`) and its own
+    termination test, so the only thing this adds is the recording — for the aligned,
+    perfect-delivery case (no per-link comm loss or broadcast phase offsets).
     ``tracks`` are ENU metres from ``origin`` (the first aircraft's start if omitted). The recorded
     ``worst_sep`` equals the ``run_fleet`` outcome for the same inputs (asserted in ``__main__``).
     """
@@ -118,7 +97,9 @@ def run_fleet_traced(
     gms = [GuidanceMemory() for _ in range(n)]
     mems: list[FleetMemory] = [INACTIVE for _ in range(n)]
     sep = SeparationManager()
-    last_tx: list[AircraftState | None] = [None] * n
+    cns = CNS(navigation=navigation)  # perfect delivery, intent private
+    cns_streams = CnsStreams(nav=rng)
+    cns_state = CnsState.initial(n)
     cmds = [aps[i].step(states[i], gms[i], perfs[i])[0] for i in range(n)]
 
     tr = FleetTrace(tracks=[[] for _ in range(n)])
@@ -131,16 +112,11 @@ def run_fleet_traced(
         tr.resolving.append(any(m.resolving for m in mems))
 
         if t + 1e-9 >= next_bcast:
-            selfs: list[AircraftState] = []
-            for i in range(n):  # pass 1: (noisy) self-fix, latch the transmit
-                fix = navigation.measure(states[i], t, rng).state if navigation is not None \
-                    else states[i]
-                selfs.append(replace(fix, desired=states[i].desired))
-                last_tx[i] = replace(fix, desired=None)
-            for i in range(n):  # pass 2: decide against the others' last transmit
-                nom, gms[i] = aps[i].step(selfs[i], gms[i], perfs[i])
-                perceived = [tx for j in range(n) if j != i and (tx := last_tx[j]) is not None]
-                cmds[i], mems[i] = sep.step(selfs[i], perceived, nom, mems[i], rpz, t_lookahead,
+            cns_state, perception = cns.sense(states, range(n), t, cns_state, cns_streams)
+            for i in range(n):
+                see = perception[i]
+                nom, gms[i] = aps[i].step(see.own, gms[i], perfs[i])
+                cmds[i], mems[i] = sep.step(see.own, see.traffic, nom, mems[i], rpz, t_lookahead,
                                             detector, resolver, recovery, adapters[i])
             next_bcast += broadcast_interval
 

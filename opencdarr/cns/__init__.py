@@ -24,10 +24,14 @@ from opencdarr.cns.noise_distributions import (
     make_anisotropic_mixture_gaussian,
     make_mixture_gaussian,
 )
+from opencdarr.cns.stack import CNS, CnsState, CnsStreams, Perception
 from opencdarr.cns.surveillance import LastKnown, age
 
 __all__ = [
+    "CNS",
     "BroadcastSchedule",
+    "CnsState",
+    "CnsStreams",
     "Comm",
     "CommState",
     "CommunicationModel",
@@ -38,6 +42,7 @@ __all__ = [
     "Message",
     "NavigationModel",
     "NoiseDistribution",
+    "Perception",
     "SurveillanceModel",
     "age",
     "constant_latency",
