@@ -31,3 +31,6 @@ vault/.obsidian/cache
 
 # Reference papers — possibly confidential, kept out of git
 vault/papers/
+
+# handbook Monte-Carlo result cache (regenerated, not committed)
+scripts/handbook/.mc_cache/
