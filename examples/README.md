@@ -27,6 +27,10 @@ notebooks import it from any directory. Then open a notebook and run it top to b
   every simulation parameter (geometry, protected zone, lookahead, resolver/margin, recovery, CNS
   noise, wind, timestep, termination): each is changed one at a time from a baseline, with a plot
   of the effect.
+- [`02_build_your_own_separation_manager.ipynb`](02_build_your_own_separation_manager.ipynb) — write
+  your own conflict **detection**, **resolution**, and **recovery** by subclassing one base class
+  each, and swap them into `run_fleet` one at a time (defaults `StateBased` / `MVP` / `PastCPA`);
+  ends by combining resolution + recovery into a single object.
 
 ## How the figures are made
 
