@@ -6,16 +6,24 @@ via :func:`opencdarr.estimator.estimate_ipr`, IPS via :func:`opencdarr.ips.ips_o
 their wall-cost, and a verdict (do the intervals agree?).
 
 Geometry is sampled crossing angles by default; ``--dpsi`` pins one fixed crossing (noise the only
-variation), which both estimators then use identically.
+variation), which both estimators then use identically. ``--reception``/``--latency`` add
+communication uncertainty (dropped/late broadcasts) to *both* estimators through the one ``Comm``
+model — so IPS's splitting acts on comms noise exactly as MC samples it.
 
 - **Correctness** — ``--pos 40`` (P≈0.028): the IPS CI must overlap the MC CI. Proves unbiasedness.
 - **Efficiency** — ``--pos 10`` (P≈5e-4): IPS returns a tight CI where MC's explodes / reads 0.
+- **CNS-only** — ``--pos 0 --reception 0.7``: perfect nav, so message drops are the *sole* driver
+  of loss of separation. This is the discrete-jump regime of ``important-ips-gap`` — the test of
+  whether ``min_sep``-based splitting still tracks MC when the rare event is Bernoulli-caused.
 
     python scripts/ips_validate.py --pos 40 --mc-n 4000 --particles 300 --reps 8 --jobs 8
     python scripts/ips_validate.py --pos 10 --mc-n 30000 --particles 400 --reps 8 \
         --levels 90 75 65 58 54 52 51 50 --jobs 8
     # fixed 90° crossing, lookahead 60 (MC reads 0 at 30k; IPS estimates ~1e-4):
     python scripts/ips_validate.py --pos 10 --dpsi 90 --lookahead 60 --mc-n 30000 \
+        --particles 2000 --reps 8 --levels 150 100 75 66 61 58 56 54 52 51 50 --jobs 8
+    # CNS-only rung: perfect nav, drops drive LoS (reception/levels need tuning to the drop regime):
+    python scripts/ips_validate.py --pos 0 --dpsi 90 --reception 0.7 --lookahead 60 --mc-n 30000 \
         --particles 2000 --reps 8 --levels 150 100 75 66 61 58 56 54 52 51 50 --jobs 8
 """
 
@@ -29,7 +37,8 @@ import numpy as np
 from joblib import Parallel, delayed
 
 from opencdarr.cd import StateBased
-from opencdarr.cns import GnssNavigation
+from opencdarr.cns import Comm, GnssNavigation
+from opencdarr.cns.base import CommunicationModel
 from opencdarr.config import (
     Config,
     ConflictConfig,
@@ -70,12 +79,23 @@ class Scenario:
     dt: float = 0.5
     t_max: float = 250.0
     done_timeout: float = 10.0
+    reception_prob: float = 1.0  # P(a broadcast reaches a receiver); < 1 => drops drive staleness
+    latency: float = 0.0  # constant link delay [s]; a delivered message is this many seconds stale
+
+    def comm(self) -> CommunicationModel | None:
+        """The communication model shared by both estimators, or ``None`` when there is no CNS
+        uncertainty (``reception_prob == 1`` and ``latency == 0``) — then the comm substream is
+        reserved but never drawn, so the nav-noise gates behave exactly as before."""
+        if self.reception_prob >= 1.0 and self.latency == 0.0:
+            return None
+        return Comm(reception_prob=self.reception_prob, latency=self.latency)
 
     def _env(self, agents: list[Agent]) -> object:
         return build_env(
             agents, rpz=self.rpz, t_lookahead=self.lookahead, dt=self.dt, detector=StateBased(),
             resolver=MVP(margin=self.margin), recovery=PastCPA(bouncing_guard=True),
-            navigation=GnssNavigation(), t_max=self.t_max, done_timeout=self.done_timeout,
+            navigation=GnssNavigation(), communication=self.comm(),
+            t_max=self.t_max, done_timeout=self.done_timeout,
         )
 
     def fixed_pair(self) -> tuple[AircraftState, AircraftState]:
@@ -132,19 +152,25 @@ def _mc_chunk(scn: Scenario, n: int, seed: int) -> tuple[int, int]:
         # That coincides with the unconditional P(LoS) only when lookahead >= tlos (detection at
         # t=0), which the default satisfies; IPS's denominator is all N particles either way.
         r = estimate_ipr(scn.mc_config(n, seed), M600, StateBased(), MVP(margin=scn.margin),
-                         PastCPA(bouncing_guard=True), navigation=GnssNavigation())
+                         PastCPA(bouncing_guard=True), navigation=GnssNavigation(),
+                         communication=scn.comm())
         return r.n_conflict, r.n_los
     # fixed geometry: P(LoS) is unconditional over all n encounters (denominator n, not
     # n_conflict), to match IPS's "reachers / N". With lookahead < tlos, noise can let the resolver
     # deflect early so a true conflict never registers (n_conflict < n) — conditioning would drift.
     own, intr = scn.fixed_pair()
+    comm = scn.comm()
     n_los = 0
     for s in spawn(root_seed_sequence(seed), n):
+        # nav + comm substreams per encounter, mirroring estimate_ipr / the IPS particle layout, so
+        # the stream tree stays config-invariant whether or not comms uncertainty is switched on.
+        nav_seq, comm_seq = spawn(s, 2)
         out = run_encounter(
             own, intr, perf=M600, rpz=scn.rpz, t_lookahead=scn.lookahead, dt=scn.dt,
             detector=StateBased(), resolver=MVP(margin=scn.margin),
             recovery=PastCPA(bouncing_guard=True), navigation=GnssNavigation(),
-            rng=generator(s), t_max=scn.t_max, done_timeout=scn.done_timeout,
+            rng=generator(nav_seq), communication=comm, comm_rng=generator(comm_seq),
+            t_max=scn.t_max, done_timeout=scn.done_timeout,
         )
         n_los += int(out.los)
     return n, n_los
@@ -177,15 +203,23 @@ def main() -> None:
                    "geometry (default: sample angles); noise is then the only variation")
     p.add_argument("--lookahead", type=float, default=120.0, help="detection lookahead [s]")
     p.add_argument("--tlos", type=float, default=90.0, help="time to loss of separation [s]")
+    p.add_argument("--reception", type=float, default=1.0, help="P(broadcast received) per link; "
+                   "< 1 makes dropped/stale messages a driver of LoS (default: 1.0, perfect comms)")
+    p.add_argument("--latency", type=float, default=0.0, help="constant link delay [s] (default: 0)")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--jobs", type=int, default=1)
     a = p.parse_args()
     scn = Scenario(pos_ci95=a.pos, vel_ci95=a.pos * a.vel_ratio, dpsi=a.dpsi, dt=a.dt,
-                   lookahead=a.lookahead, tlos=a.tlos)
+                   lookahead=a.lookahead, tlos=a.tlos,
+                   reception_prob=a.reception, latency=a.latency)
 
     geom = "sampled angles" if a.dpsi is None else f"fixed {a.dpsi:.0f}deg crossing"
+    cns = "GNSS" if scn.comm() is None else f"GNSS+comms(rx={a.reception}, lat={a.latency}s)"
     print(f"scenario: {geom}, pos_ci95={a.pos} vel_ci95={a.pos * a.vel_ratio} rpz={scn.rpz} "
-          f"lookahead={scn.lookahead} margin={scn.margin} dt={scn.dt}  (MVP + Past-CPA, GNSS)")
+          f"lookahead={scn.lookahead} margin={scn.margin} dt={scn.dt}  (MVP + Past-CPA, {cns})")
+    if a.pos == 0.0 and a.dpsi is not None and scn.comm() is None:
+        print("  WARNING: pos_ci95=0 on a fixed geometry with perfect comms -> no stochasticity; "
+              "the estimate is degenerate. Set --reception < 1 or --latency > 0 (the CNS-only rung).")
     if a.dpsi is None and scn.lookahead < scn.tlos:
         print("  WARNING: lookahead < tlos in sampled mode -> MC conditions on n_conflict, which "
               "drifts below IPS's all-N denominator. Prefer --dpsi, or set lookahead >= tlos.")
