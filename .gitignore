@@ -34,3 +34,9 @@ vault/papers/
 
 # handbook Monte-Carlo result cache (regenerated, not committed)
 scripts/handbook/.mc_cache/
+
+# opencdarr.cache disk store — pickled recorded runs, regenerated from config + seed + code-hash
+.opencdarr_cache/
+
+# Jupyter checkpoint snapshots (auto-created when a notebook runs)
+.ipynb_checkpoints/
