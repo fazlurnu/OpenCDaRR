@@ -1,26 +1,33 @@
-"""Unified-coordinate IPS on the real fleet sim: one importance function for nav AND comms rare events.
+"""Rare-event IPS for the fleet sim, on the **look-ahead conflict coordinate** (Blom eq. 10.7).
 
-Implements the ``phi = max(nav_progress, cap * comm_progress)`` coordinate from
-[[important-unified-coordinate]] against the *actual* ``opencdarr`` encounter (``FleetEnv.advance``,
-GNSS nav noise, ``Comm`` drops), and validates it against brute-force MC in three regimes:
+This is the default rare-event simulator for our free-flight collision case. The importance function
+is the *predicted-conflict distance* (dcpa) nested on a **shrinking look-ahead horizon** — Blom,
+Krystul & Bakker, *Free Flight Collision Risk Estimation by Sequential Monte Carlo* (NLR-TP-2006-288),
+§10.2.2, horizontal part of eq. 10.7:
 
-- **nav**   — nav noise only (``pos_ci95 > 0``, perfect comms): the continuous-drift pathway.
-- **comms** — drops only (``pos_ci95 = 0``, ``reception_prob < 1``): the discrete-blackout pathway.
-- **both**  — nav noise + drops.
+    predicted separation at look-ahead tau:  s(tau) = |r + tau*v|   (r, v = relative pos/vel)
+    smin_k = min over tau in [0, tau_k] of s(tau)          (closest predicted approach in the window)
+    level D_k = { smin_k <= d_k },   k = 1..m
+      d_1 >= ... >= d_m = rpz     (miss threshold shrinks to the protected zone)
+      tau_1 >= ... >= tau_m = 0   (look-ahead shrinks to "now")
+    phi = (deepest level reached) / m,   phi = 1  <=>  loss of separation
 
-`min_sep` (the current estimator's coordinate, ``opencdarr.ips.ips_once``) ladders nav but collapses
-on the comms pathway ([[important-ips-gap]]); staleness is the mirror. The unified coordinate ladders
-whichever pathway a particle is advancing along, so one estimator covers all three regimes.
+Because a smaller window *and* a tighter miss give a subset, D_1 ⊃ ... ⊃ D_m, so a particle crosses
+the levels in order. Escaping a level means the resolver grew the predicted miss — which costs a
+received message — so the per-level survival silently prices in the drop probability. That is why one
+geometric ladder handles both nav drift and the comms blackout, where the earlier
+``max(nav_progress, cap*comm_progress)`` collapsed 5/6 on comms. Validated 3/3 against MC on the real
+``FleetEnv`` sim (nav 3.1e-4 vs 2.7e-4, comms 1.23e-3 vs 1.21e-3, both 2.64e-2 vs 2.68e-2). See
+``vault/observations/lookahead-conflict-coordinate.md``.
 
-**No core-sim change.** Staleness is read off ``state.cns_state.comm.held`` (via ``cns.surveillance.
-age``) into a running-max the particle carries — parallel to ``FleetState.min_sep`` — so a clone keeps
-its accumulated staleness. Both MC and IPS run the same ``FleetEnv.advance`` for an apples-to-apples
-comparison (unlike ``ips_validate.py``, whose MC uses the pairwise ``run_encounter``).
+Both MC and IPS run the same ``FleetEnv.advance`` for an apples-to-apples comparison; no core-sim
+change (the coordinate is a read-only function of the true relative geometry).
 
-    # smoke test at a non-rare setting (fast; IPS must match MC):
-    python scripts/ips_unified_validate.py --preset smoke
-    # the definitive rare-event benchmark (~1e-5; slow MC — run ONCE):
-    python scripts/ips_unified_validate.py --preset rare --jobs 8
+    python scripts/ips_unified_validate.py --preset smoke --jobs -1   # quick machinery check
+    python scripts/ips_unified_validate.py --preset rare  --jobs -1   # rare-event benchmark
+    # crank on a many-core box (reps >= jobs saturates IPS); push toward 1e-6:
+    python scripts/ips_unified_validate.py --preset rare --jobs -1 --reps 120 \
+        --pos 14 --rx 0.10 --particles 4000 --mc-n 30000000
 """
 
 from __future__ import annotations
@@ -38,6 +45,7 @@ from opencdarr.cns import Comm, GnssNavigation
 from opencdarr.cr import MVP
 from opencdarr.crr import PastCPA
 from opencdarr.fleet import Agent, CnsStreams, FleetEnv, FleetState, FleetStreams, build_env
+from opencdarr.kinematics import relative_enu
 from opencdarr.performance import M600
 from opencdarr.rng import generator, root_seed_sequence, spawn
 from opencdarr.scenario import create_conflict
@@ -87,11 +95,6 @@ class Scenario:
             return None
         return Comm(reception_prob=self.reception_prob, latency=self.latency)
 
-    @property
-    def comms_on(self) -> bool:
-        """Whether drops are possible (a real ``Comm`` model), so staleness is meaningful."""
-        return self._comm() is not None
-
     def env(self) -> tuple[FleetEnv, list[Agent]]:
         own = AircraftState(id="OWN", lat=52.0, lon=4.0, trk=0.0, gs=self.speed,
                             pos_ci95=self.pos_ci95, vel_ci95=self.pos_ci95 * 0.1)
@@ -106,64 +109,51 @@ class Scenario:
         return env, agents
 
 
-def _staleness(state: FleetState) -> float:
-    """The **both-blind** duration [s]: time since *any* directed link last delivered a message.
-
-    Comms-only LoS on a cooperative collision course needs *both* aircraft blind — one reception lets
-    that aircraft resolve and the pair misses (probed: one-blind never breaches). So the quantity
-    that ladders toward the rare event is the time since the most recent reception on *any* link
-    (it resets whenever anyone hears), not the worst single-link age. No belief ever ⇒ blind since
-    ``t = 0`` (returns ``t``)."""
-    held = state.cns_state.comm.held
-    latest = None
-    for msg in held.values():
-        latest = msg.t_meas if latest is None else max(latest, msg.t_meas)
-    return state.t if latest is None else state.t - latest
-
-
 @dataclass(frozen=True)
 class Particle:
-    """A fleet particle plus its running-max staleness (the parallel to ``state.min_sep``).
-
-    ``comms_on`` gates staleness: under perfect comms ``build_env`` uses the perfect-delivery path,
-    which never populates ``held`` (it threads ``last_tx``), so ``age`` is ``None`` everywhere and
-    the belief is in fact always fresh — staleness must read 0, not ``t``. Only when drops are
-    possible does the held-message age become a real blind-run measure."""
+    """A fleet particle: its fixed rules (``env``) and current world (``state``). The look-ahead
+    coordinate is a pure function of ``state``, so nothing else needs to ride along."""
 
     env: FleetEnv
     state: FleetState
-    max_stale: float
-    comms_on: bool
 
     def advanced(self, streams: FleetStreams) -> Particle:
-        s = self.env.advance(self.state, streams)
-        stale = _staleness(s) if self.comms_on else 0.0
-        return Particle(self.env, s, max(self.max_stale, stale), self.comms_on)
+        return Particle(self.env, self.env.advance(self.state, streams))
+
+
+def predicted_sep(state: FleetState, tau: float) -> float:
+    """Closest predicted horizontal separation over the look-ahead window [0, tau] (Blom eq. 10.7):
+    ``min_{0<=t<=tau} |r + t*v|`` for the pair's relative position/velocity. Straight-line
+    extrapolation; the minimiser is clamped into the window."""
+    own, intr = state.states[0], state.states[1]
+    rel = relative_enu(own, intr)
+    vsq = rel.vx * rel.vx + rel.vy * rel.vy
+    if vsq < 1e-9:
+        return math.hypot(rel.rx, rel.ry)  # not closing — window minimum is now
+    t = min(max(-(rel.rx * rel.vx + rel.ry * rel.vy) / vsq, 0.0), tau)
+    return math.hypot(rel.rx + t * rel.vx, rel.ry + t * rel.vy)
 
 
 @dataclass(frozen=True)
-class Coord:
-    """The unified importance function ``phi = max(nav_progress, cap * comm_progress)`` in [0, 1].
-
-    ``d_nominal`` is the miss distance the resolver achieves under perfect CNS (measured once), so
-    ``nav_progress`` is the shortfall from that safe miss toward ``rpz`` (0 nominal, 1 at LoS).
-    ``L_crit`` is the staleness at which a blackout is on the brink of breaching. ``cap < 1`` reserves
-    ``phi = 1`` for a real geometric LoS, so the deepest shell is the true rare set (no terminal
-    factor needed)."""
+class LookaheadCoord:
+    """Nested conflict levels D_k, k=1..m: predicted sep within horizon ``tau_k`` <= ``d_k``, with
+    both the horizon and the miss shrinking to ``(0, rpz)`` at the deepest level (= actual LoS).
+    ``phi = (deepest level reached)/m``; the driver only ever needs the single ``in_level`` test."""
 
     rpz: float
-    d_nominal: float
-    l_crit: float
-    cap: float = 0.9
+    d_max: float
+    tau_max: float
+    m: int
 
-    def nav_progress(self, min_sep: float) -> float:
-        return min(1.0, max(0.0, (self.d_nominal - min_sep) / (self.d_nominal - self.rpz)))
+    def d(self, k: int) -> float:
+        return self.d_max - (self.d_max - self.rpz) * (k / self.m)
 
-    def comm_progress(self, max_stale: float) -> float:
-        return min(1.0, max(0.0, max_stale / self.l_crit))
+    def tau(self, k: int) -> float:
+        return self.tau_max * (1.0 - k / self.m)
 
-    def phi(self, p: Particle) -> float:
-        return max(self.nav_progress(p.state.min_sep), self.cap * self.comm_progress(p.max_stale))
+    def in_level(self, state: FleetState, k: int) -> bool:
+        """Is the pair inside conflict level D_k (1..m)? D_m (tau=0, d=rpz) is an actual LoS."""
+        return predicted_sep(state, self.tau(k)) <= self.d(k)
 
 
 def run_to_terminal(p: Particle, streams: FleetStreams) -> Particle:
@@ -172,22 +162,13 @@ def run_to_terminal(p: Particle, streams: FleetStreams) -> Particle:
     return p
 
 
-def d_nominal(scn: Scenario) -> float:
-    """The perfect-CNS closest approach [m]: run the deterministic (no noise, no drops) encounter."""
-    env, agents = replace(scn, pos_ci95=0.0, reception_prob=1.0, latency=0.0).env()
-    p = run_to_terminal(Particle(env, env.initial_state(agents), 0.0, comms_on=False),
-                        _streams(root_seed_sequence(0)))
-    return p.state.min_sep
-
-
 # --- estimators ------------------------------------------------------------------------------------
 def _mc_chunk(scn: Scenario, n: int, seed: int) -> tuple[int, int]:
     """Brute-force: run ``n`` encounters, return (n_los, n)."""
     env, agents = scn.env()
-    comms_on = scn.comms_on
     n_los = 0
     for s in spawn(root_seed_sequence(seed), n):
-        p = run_to_terminal(Particle(env, env.initial_state(agents), 0.0, comms_on), _streams(s))
+        p = run_to_terminal(Particle(env, env.initial_state(agents)), _streams(s))
         n_los += int(p.state.los)
     return n_los, n
 
@@ -210,31 +191,29 @@ def _wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float, float]:
     return (ph, max(0.0, centre - half), min(1.0, centre + half))
 
 
-def _evolve_to_shell(p: Particle, coord: Coord, target: float, streams: FleetStreams) -> Particle:
-    while coord.phi(p) < target and not p.env.is_terminal(p.state):
+def _evolve_to_level(p: Particle, coord: LookaheadCoord, k: int, streams: FleetStreams) -> Particle:
+    """Advance until the pair enters conflict level D_k (survivor) or the encounter ends (dropped)."""
+    while not coord.in_level(p.state, k) and not p.env.is_terminal(p.state):
         p = p.advanced(streams)
     return p
 
 
-def ips_once(scn: Scenario, coord: Coord, shells: list[float], n_particles: int,
+def ips_once(scn: Scenario, coord: LookaheadCoord, n_particles: int,
              seq: np.random.SeedSequence) -> float:
-    """One fixed-effort splitting run on the unified coordinate. ``P̂ = Π S_k/N`` (0 if a shell empties).
-
-    Mirrors :func:`opencdarr.ips.ips_once`: fixed geometry initial cloud, fresh per-particle streams
-    per shell, resample survivors to N. Shells rise to 1.0 (= LoS, since ``phi = 1 ⇔ min_sep ≤ rpz``).
-    """
+    """One fixed-effort splitting run on the look-ahead coordinate: ``P̂ = Π_k S_k/N`` (0 if a level
+    empties). Fixed geometry initial cloud, fresh per-particle streams per level, resample survivors
+    to N. The deepest level D_m *is* an actual LoS, so no separate terminal factor is needed."""
     env, agents = scn.env()
-    comms_on = scn.comms_on
     init_seq, evolve_seq = seq.spawn(2)
-    particles = [Particle(env, env.initial_state(agents), 0.0, comms_on)
+    particles = [Particle(env, env.initial_state(agents))
                  for _ in range(n_particles)]  # fixed geometry: identical start, forward noise splits
-    level_seqs = evolve_seq.spawn(len(shells))
+    level_seqs = evolve_seq.spawn(coord.m)
     prob = 1.0
-    for k, target in enumerate(shells):
-        sub = level_seqs[k].spawn(n_particles + 1)
-        evolved = [_evolve_to_shell(p, coord, target, _streams(s))
+    for k in range(1, coord.m + 1):
+        sub = level_seqs[k - 1].spawn(n_particles + 1)
+        evolved = [_evolve_to_level(p, coord, k, _streams(s))
                    for p, s in zip(particles, sub[:n_particles], strict=True)]
-        survivors = [p for p in evolved if coord.phi(p) >= target]
+        survivors = [p for p in evolved if coord.in_level(p.state, k)]
         prob *= len(survivors) / n_particles
         if not survivors:
             return 0.0
@@ -243,11 +222,12 @@ def ips_once(scn: Scenario, coord: Coord, shells: list[float], n_particles: int,
     return prob
 
 
-def ips_estimate(scn: Scenario, coord: Coord, shells: list[float], n_particles: int, reps: int,
-                 seed: int, jobs: int) -> tuple[float, tuple[float, float], int]:
+def ips_estimate(scn: Scenario, coord: LookaheadCoord, n_particles: int, reps: int, seed: int,
+                 jobs: int) -> tuple[float, tuple[float, float], int]:
+    """Mean ``P̂`` with a log-space 95% CI over ``reps`` independent replications."""
     seeds = spawn(root_seed_sequence(seed), reps)
     probs = Parallel(n_jobs=jobs)(
-        delayed(ips_once)(scn, coord, shells, n_particles, s) for s in seeds)
+        delayed(ips_once)(scn, coord, n_particles, s) for s in seeds)
     return float(np.mean(probs)), _log_ci(probs), sum(x == 0.0 for x in probs)
 
 
@@ -261,58 +241,48 @@ def _log_ci(probs: list[float], z: float = 1.96) -> tuple[float, float]:
     return (math.exp(c - z * se), math.exp(c + z * se))
 
 
-def make_shells(m: int) -> list[float]:
-    xs = np.linspace(0.0, 1.0, m + 1)[1:]
-    return [float(x) for x in (1.0 - (1.0 - xs) ** 1.7)]
-
-
 PRESETS = {
-    # non-rare: fast, IPS must match MC — proves the machinery on the real sim
-    "smoke": dict(pos_ci95=18.0, reception_prob=0.55, l_crit=25.0, mc_n=20000, particles=400,
-                  reps=8, shells=10),
-    # rare: the definitive benchmark — MC is expensive, run ONCE. Rarest point where all three
-    # regimes stay robust (comms both-blind collapses if pushed rarer, since staleness ladders the
-    # blind *duration* but not its *timing at CPA*). Probes: nav pos=20 -> ~2.5e-4, comms rx=0.06 ->
-    # ~1.3e-3 (both-blind), staleness@LoS min ~24s -> L_crit=18. Deeper (1e-5/1e-6) is compute-bound
-    # (IPS ~30min/regime, MC 1e-6 ~days) and needs a CPA-timed comm coordinate — see writeup.
-    "rare": dict(pos_ci95=20.0, reception_prob=0.06, l_crit=18.0, mc_n=500_000, particles=1600,
-                 reps=12, shells=14),
+    # quick machinery check: rare-ish so all three regimes have signal, but small budget.
+    "smoke": dict(pos_ci95=20.0, reception_prob=0.06, d_max=95.0, tau_max=55.0, levels=14,
+                  mc_n=30000, particles=400, reps=6),
+    # rare-event benchmark: the validated operating point (nav ~2.7e-4, comms ~1.2e-3, both ~2.7e-2).
+    "rare": dict(pos_ci95=20.0, reception_prob=0.06, d_max=95.0, tau_max=55.0, levels=14,
+                 mc_n=500_000, particles=1500, reps=12),
 }
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__)
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--preset", choices=list(PRESETS), default="smoke")
     ap.add_argument("--mc-only", action="store_true")
     ap.add_argument("--ips-only", action="store_true", help="skip MC; just run/ladder-check IPS")
     ap.add_argument("--jobs", type=int, default=8, help="parallel workers; -1 = all cores")
     ap.add_argument("--seed", type=int, default=0)
-    # per-run overrides of the preset — crank these on a many-core box (reps>=jobs saturates IPS)
+    # per-run overrides — crank these on a many-core box (reps >= jobs saturates IPS)
     ap.add_argument("--mc-n", type=int, help="override MC encounters/regime")
-    ap.add_argument("--particles", type=int, help="override IPS particles/shell")
+    ap.add_argument("--particles", type=int, help="override IPS particles/level")
     ap.add_argument("--reps", type=int, help="override IPS replications (raise to >= --jobs)")
-    ap.add_argument("--shells", type=int, help="override IPS shell count")
+    ap.add_argument("--levels", type=int, help="override m (number of nested conflict levels)")
     ap.add_argument("--pos", type=float, help="override GNSS pos_ci95 [m] (nav rarity)")
     ap.add_argument("--rx", type=float, help="override reception_prob (comms rarity)")
-    ap.add_argument("--l-crit", type=float, help="override staleness scale L_crit [s]")
+    ap.add_argument("--d-max", type=float, help="override d_1 miss threshold [m] (outer level)")
+    ap.add_argument("--tau-max", type=float, help="override tau_1 look-ahead [s] (outer level)")
     a = ap.parse_args()
     cfg = dict(PRESETS[a.preset])  # copy so overrides don't mutate the shared preset
     for key, val in [("mc_n", a.mc_n), ("particles", a.particles), ("reps", a.reps),
-                     ("shells", a.shells), ("pos_ci95", a.pos), ("reception_prob", a.rx),
-                     ("l_crit", a.l_crit)]:
+                     ("levels", a.levels), ("pos_ci95", a.pos), ("reception_prob", a.rx),
+                     ("d_max", a.d_max), ("tau_max", a.tau_max)]:
         if val is not None:
             cfg[key] = val
 
     scn0 = Scenario()
-    dnom = d_nominal(scn0)
+    coord = LookaheadCoord(rpz=scn0.rpz, d_max=cfg["d_max"], tau_max=cfg["tau_max"], m=cfg["levels"])
     print(f"scenario: {scn0.dpsi:.0f}deg crossing, rpz={scn0.rpz}, lookahead={scn0.lookahead}, "
-          f"margin={scn0.margin}; perfect-CNS miss d_nominal={dnom:.1f} m")
-    print(f"preset={a.preset}: pos_ci95={cfg['pos_ci95']} reception={cfg['reception_prob']} "
-          f"L_crit={cfg['l_crit']}s; MC n={cfg['mc_n']:,}, IPS {cfg['reps']}x{cfg['particles']}p "
-          f"x{cfg['shells']} shells\n")
-
-    coord = Coord(rpz=scn0.rpz, d_nominal=dnom, l_crit=cfg["l_crit"])
-    shells = make_shells(cfg["shells"])
+          f"margin={scn0.margin}")
+    print(f"preset={a.preset}: pos_ci95={cfg['pos_ci95']} reception={cfg['reception_prob']}; "
+          f"look-ahead levels m={cfg['levels']} (d_max={cfg['d_max']}, tau_max={cfg['tau_max']}s); "
+          f"MC n={cfg['mc_n']:,}, IPS {cfg['reps']}x{cfg['particles']}p\n")
 
     truth: dict[Regime, tuple[float, float, float, int]] = {}
     if not a.ips_only:
@@ -330,8 +300,8 @@ def main() -> None:
     for regime in REGIMES:
         scn = scn0.for_regime(regime, cfg["pos_ci95"], cfg["reception_prob"])
         t0 = time.perf_counter()
-        mean, (lo, hi), n_coll = ips_estimate(scn, coord, shells, cfg["particles"], cfg["reps"],
-                                              a.seed, a.jobs)
+        mean, (lo, hi), n_coll = ips_estimate(scn, coord, cfg["particles"], cfg["reps"], a.seed,
+                                              a.jobs)
         if regime in truth:
             _, mlo, mhi, _ = truth[regime]
             verdict = "COLLAPSE" if n_coll == cfg["reps"] else (
