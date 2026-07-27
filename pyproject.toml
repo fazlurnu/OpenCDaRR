@@ -30,6 +30,13 @@ dev = [
     "mypy>=1.10",
     "ruff>=0.5",
 ]
+# Everything the example notebooks need: the plotter (opencdarr/viz.py) imports matplotlib
+# lazily, and a Jupyter kernel to run the notebooks. Kept out of the core install so a plain
+# `pip install opencdarr` stays numpy-only (design-philosophy #10).
+examples = [
+    "matplotlib>=3.7",
+    "ipykernel>=6",
+]
 
 [tool.setuptools.packages.find]
 include = ["opencdarr*"]
@@ -58,6 +65,12 @@ ignore_missing_imports = true
 # yaml stubs (types-PyYAML) aren't a runtime dep; treat the import as untyped at config.py.
 [[tool.mypy.overrides]]
 module = ["yaml"]
+ignore_missing_imports = true
+
+# matplotlib is an optional (examples) dependency, imported lazily by opencdarr/viz.py and not
+# always installed; treat it as untyped at that boundary rather than requiring the stubs.
+[[tool.mypy.overrides]]
+module = ["matplotlib.*"]
 ignore_missing_imports = true
 
 # --- Lint / format -----------------------------------------------------------
