@@ -88,16 +88,47 @@ MC everywhere.
    `cap=1.0` also passes here; the 15× overcount was the earlier toy where the deepest shell was
    staleness. The real sim (a blind run only *sometimes* breaches) is the one that will punish cap=1.
 
-## Porting to the real sim (next)
+## Real-sim validation (done 2026-07-27) — passes all three regimes
 
-1. **Expose staleness on `FleetState`** — a per-receiver time-since-last-update / consecutive-drop
-   count (the [[communication-reception-latency]] layer already drops per directed link, so the count
-   is there to accumulate). `L_crit` = the staleness at which LoS becomes *likely but not certain*.
-2. **Swap the `ips_once` level function** from `min_sep <= target` to `phi >= target` with `phi =
-   max(nav_progress, cap*comm_progress)` — everything else (fresh per-particle streams per shell,
-   resample survivors to N) is unchanged, so the Bernoulli-correct divergence still holds.
-3. **Validate against MC** on the three regimes with `P(LoS) ≈ 1e-5 … 1e-6` (rare enough to be a
-   faithful test), MC run **once** (it is expensive). Accept = IPS CI overlaps MC CI in all three.
+Implemented as `scripts/ips_unified_validate.py`: the unified coordinate over the actual
+`FleetEnv.advance` encounter (GNSS nav noise, `Comm` drops), MC and IPS on the *same* dynamics.
+**No core-sim change** — staleness is read read-only off `state.cns_state.comm.held` into a
+running-max the particle carries (parallel to `min_sep`), so a clone keeps its accrued staleness.
+Fixed 90° crossing, `rpz=50`, perfect-CNS miss `d_nominal=104.2 m`. Benchmark run **once**
+(`--preset rare`, N=5e5/regime MC, IPS 12×1600 particles ×14 shells, ~2.5 h on 8 threads):
+
+| regime | MC P(LoS) | IPS P(LoS) | IPS 95% CI | verdict |
+|---|---|---|---|---|
+| nav (pos_ci95=20) | 2.66e-4 | 2.09e-4 | [1.08e-4, 2.64e-4] | PASS |
+| comms (rx=0.06)   | 1.21e-3 | 1.39e-3 | [0, 2.89e-3]       | PASS |
+| both              | 2.68e-2 | 2.63e-2 | [2.29e-2, 2.90e-2] | PASS |
+
+Findings from the port (all consequential):
+
+1. **Comms drops barely cause LoS in a cooperative straight-line encounter** — a blind aircraft
+   holding a constant-velocity intruder's last position still resolves ([[important-ips-gap]] said
+   exactly this). LoS needs *both* aircraft blind through the approach (one reception → that aircraft
+   avoids → miss), so the comms-aligned coordinate is **time since *any* link last delivered**, not
+   worst-link age. `_staleness` was rewritten to that.
+2. **Strong compounding.** `both` (2.68e-2) is ~18× the sum of the single pathways (nav 2.7e-4 +
+   comms 1.2e-3). Nav noise and a stale picture reinforce hard — so the three regimes cannot all be
+   tuned to one rarity, and `both` is not itself a rare event here.
+3. **The comms cell passes but is high-variance** (CI lower bound 0 ⇒ some replications collapsed).
+   Root cause: `comm_progress` ladders the blind *duration* but not its *timing at CPA* — a both-blind
+   run only breaches if it lands at closest approach, so the final collision-certification shells thin
+   out. This is why the comms cell would collapse if pushed to ~1e-5, and it is a *coordinate* limit,
+   not a compute one.
+4. **Staleness bug caught:** the perfect-comms path leaves `held` empty (uses `last_tx`), so `age`
+   is `None` and mapping that to `t` gave a fake ~91 s staleness polluting the nav regime — gated to
+   0 when drops are impossible.
+
+## Next: a CPA-timed comm coordinate (to reach 1e-5/1e-6)
+
+The robustness fix is to make `comm_progress` reward blind runs *that matter*: accrue staleness only
+while the pair is in the close-approach window (gate on `t_to_cpa` / small separation), running-max.
+That aligns the ladder with the collision-certification, which should keep the comms cell from
+collapsing at ~1e-5. Compute is no longer the blocker — on a 100-core box the MC ground truth at
+~1e-6 is ~a couple of hours/regime (`--jobs -1 --reps>=jobs`, `scripts/ips_unified_validate.py`).
 
 ## Related
 
