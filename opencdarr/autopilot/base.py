@@ -69,6 +69,17 @@ class Autopilot(ABC):
         progress (e.g. an advanced leg index) forward to the next tick and into a clone.
         """
 
+    def goal(self) -> tuple[float, float] | None:
+        """The aircraft's final destination as ``(lat, lon)``, or ``None`` if it has no fixed goal.
+
+        Read by :meth:`~opencdarr.fleet.FleetEnv.is_terminal` for the optional stop-at-waypoint
+        condition (``run_fleet(..., stop_within=...)``). A guidance strategy with a destination
+        (:class:`~opencdarr.autopilot.WaypointAutopilot`) overrides this; a heading/velocity holder
+        (:class:`~opencdarr.autopilot.CruiseAutopilot`) leaves it ``None`` and never triggers the
+        stop. Default ``None`` keeps every existing autopilot unchanged.
+        """
+        return None
+
 
 def nominal_velocity(command: MotionCommand, state: AircraftState) -> DesiredVelocity:
     """The velocity the aircraft *intends* to fly — its current nominal command read as a ground

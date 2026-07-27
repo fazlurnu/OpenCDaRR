@@ -70,3 +70,15 @@ class WaypointAutopilot(Autopilot):
             target_loiter_radius=self._loiter_radius if final else None,
         )
         return command, memory
+
+    def goal(self) -> tuple[float, float] | None:
+        """The mission's final waypoint as ``(lat, lon)`` — where the aircraft loiters once there.
+
+        This is what ``run_fleet(..., stop_within=r)`` measures against. Note a fixed-wing *orbits*
+        the final waypoint at its loiter radius, so its distance never falls much below that radius
+        — pick ``stop_within`` at least as large as the loiter radius for a fixed-wing to register.
+        """
+        if not self._waypoints:
+            return None
+        final = self._waypoints[-1]
+        return (final.lat, final.lon)

@@ -41,6 +41,7 @@ regression (ADR 0004). Pure given its inputs; no globals.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, replace
 
 import numpy as np
@@ -87,11 +88,22 @@ class Agent:
 
 @dataclass(frozen=True)
 class FleetOutcome:
-    """What one fleet encounter produced (measured on the true states, every step)."""
+    """What one fleet encounter produced (measured on the true states, every step).
+
+    ``frames`` is the run's **states log** — a :class:`StatesLog` wrapping every
+    :class:`FleetState` the encounter went through (``frames[0]`` the initial state, each later
+    frame one ``dt`` step of :meth:`FleetEnv.advance`, ``frames[-1]`` the terminal state the
+    scalars are read from). It is populated only by ``run_fleet(..., record=True)`` and is ``None``
+    otherwise, so a plain run stays a cheap scalar. :class:`StatesLog` indexes and iterates like a
+    tuple of frames but prints as a one-liner, so ``repr`` of the outcome stays readable. Because a
+    :class:`FleetState` already holds the true ``states``, clock, memory and min-sep as an
+    immutable value, this log *is* the run — nothing is recomputed. The log is raw data; plotting
+    it is a separate tool (:mod:`opencdarr.viz`)."""
 
     conflict: bool  # was any directed pair predicted in conflict at any step?
     los: bool  # was any pair ever in loss of separation?
     min_sep: float  # minimum pairwise separation reached across all pairs [m]
+    frames: StatesLog | None = None  # states log, only when record=True
 
 
 @dataclass(frozen=True)
@@ -118,6 +130,34 @@ class FleetState:
     conflict: bool
     los: bool
     min_sep: float
+
+
+@dataclass(frozen=True, repr=False)
+class StatesLog:
+    """A recorded run's states log, wrapped as one tidy object instead of a bare tuple of frames.
+
+    Holds every :class:`FleetState` the run passed through and behaves like an immutable sequence
+    of them — index it (``log[0]``, ``log[-1]``), iterate it, take its ``len`` — but **prints as a
+    one-line summary** so ``repr(FleetOutcome)`` stays readable rather than dumping the whole
+    trajectory. ``run_fleet(..., record=True)`` puts one of these on :attr:`FleetOutcome.frames`.
+    """
+
+    frames: tuple[FleetState, ...]
+
+    def __len__(self) -> int:
+        return len(self.frames)
+
+    def __iter__(self) -> Iterator[FleetState]:
+        return iter(self.frames)
+
+    def __getitem__(self, index: int) -> FleetState:
+        return self.frames[index]
+
+    def __repr__(self) -> str:
+        if not self.frames:
+            return "StatesLog(empty)"
+        return (f"StatesLog({len(self.frames)} frames, "
+                f"t={self.frames[0].t:.1f}→{self.frames[-1].t:.1f}s)")
 
 
 @dataclass(frozen=True)
@@ -185,6 +225,8 @@ class FleetEnv:
     dt: float
     t_max: float
     done_timeout: float
+    # if set, also stop once every goal-carrying aircraft is within this many metres of its goal
+    stop_within: float | None = None
 
     def initial_state(self, agents: list[Agent]) -> FleetState:
         """The particle at ``t = 0``: each aircraft's intent stamped on its true state, its first
@@ -217,8 +259,32 @@ class FleetEnv:
     def is_terminal(self, state: FleetState) -> bool:
         """Whether the encounter is over: the fleet has been clear for ``done_timeout`` (every pair
         past CPA and separated, nobody resolving) or the ``t_max`` cap is reached. The plain MC /
-        v0.3 stop test; a Phase-8 ADR adds the absorbing rare-event stop for IPS on top."""
-        return state.t >= self.t_max or state.done_timer >= self.done_timeout
+        v0.3 stop test; a Phase-8 ADR adds the absorbing rare-event stop for IPS on top.
+
+        With ``stop_within`` set, the run *also* ends once every goal-carrying aircraft is within
+        that many metres of its final waypoint — a mission-completion stop, independent of the
+        conflict clearing (see :meth:`Autopilot.goal`)."""
+        if state.t >= self.t_max or state.done_timer >= self.done_timeout:
+            return True
+        return self.stop_within is not None and self._at_goals(state, self.stop_within)
+
+    def _at_goals(self, state: FleetState, radius: float) -> bool:
+        """Whether every aircraft that has a goal is within ``radius`` m of its final waypoint.
+
+        Goal-less aircraft (a :class:`~opencdarr.autopilot.CruiseAutopilot`) are skipped; returns
+        ``False`` when *no* aircraft has a goal, so the stop-at-waypoint condition never fires for
+        a fleet that has nowhere to arrive.
+        """
+        any_goal = False
+        for ac, ap in zip(state.states, self.aps, strict=True):
+            goal = ap.goal()
+            if goal is None:
+                continue
+            any_goal = True
+            _, dist = geo.qdrdist(ac.lat, ac.lon, goal[0], goal[1])
+            if dist > radius:
+                return False
+        return any_goal
 
     def advance(self, state: FleetState, streams: FleetStreams) -> FleetState:
         """One ``dt`` step of the whole fleet, ``state → state`` (pure; the old ``while`` body).
@@ -309,6 +375,7 @@ def build_env(
     done_timeout: float = 10.0,
     schedule: BroadcastSchedule = _DEFAULT_SCHEDULE,
     share_intent: bool = False,
+    stop_within: float | None = None,
 ) -> FleetEnv:
     """Assemble the fixed rules of a fleet encounter into a :class:`FleetEnv` (the shared,
     immutable half of the estimator interface). This is the composition root :func:`run_fleet`
@@ -346,6 +413,7 @@ def build_env(
         dt=dt,
         t_max=t_max,
         done_timeout=done_timeout,
+        stop_within=stop_within,
     )
 
 
@@ -369,6 +437,8 @@ def run_fleet(
     schedule: BroadcastSchedule = _DEFAULT_SCHEDULE,
     broadcast_rng: np.random.Generator | None = None,
     share_intent: bool = False,
+    stop_within: float | None = None,
+    record: bool = False,
 ) -> FleetOutcome:
     """Advance the fleet to termination and report its outcome (see the module docstring).
 
@@ -395,6 +465,19 @@ def run_fleet(
     ``broadcast_rng`` (its own substream, ADR 0006 §6); aircraft ``i`` broadcasts *and* decides on
     its own clock, reading each other aircraft's **last** transmitted state rather than a
     synchronous snapshot.
+
+    By default the run ends once the fleet has been clear for ``done_timeout`` (conflict resolved,
+    every pair past CPA and separated) or at the ``t_max`` cap. Pass ``stop_within`` (metres) to
+    add a **mission-completion** stop: the run also ends once every aircraft with a waypoint goal
+    is within that distance of its final waypoint, whichever comes first. A goal-less aircraft (a
+    plain cruise) is ignored; a fixed-wing *orbits* its final waypoint at its loiter radius, so
+    give ``stop_within`` at least that radius (default 80 m) for a fixed-wing to register.
+
+    With ``record=True`` the returned :class:`FleetOutcome` also carries ``frames`` — the full
+    states log (every :class:`FleetState`, ``frames[0]`` initial through the terminal frame).
+    Recording only appends the states the loop already produces, so the trajectory is identical to
+    ``record=False``; it is opt-in because the log grows with the fleet size and run length.
+    Plotting that log is a separate tool (:mod:`opencdarr.viz`).
     """
     if schedule.jitter > 0.0 and broadcast_rng is None:
         raise ValueError("broadcast jitter requires broadcast_rng (a substream, ADR 0006 §6)")
@@ -402,11 +485,17 @@ def run_fleet(
         agents, rpz=rpz, t_lookahead=t_lookahead, dt=dt, detector=detector, resolver=resolver,
         recovery=recovery, wind=wind, navigation=navigation, communication=communication,
         surveillance=surveillance, t_max=t_max, done_timeout=done_timeout, schedule=schedule,
-        share_intent=share_intent,
+        share_intent=share_intent, stop_within=stop_within,
     )
     streams = FleetStreams(cns=CnsStreams(nav=rng, comm=comm_rng), broadcast=broadcast_rng)
 
     state = env.initial_state(agents)
+    frames: list[FleetState] | None = [state] if record else None
     while not env.is_terminal(state):
         state = env.advance(state, streams)
-    return FleetOutcome(conflict=state.conflict, los=state.los, min_sep=state.min_sep)
+        if frames is not None:
+            frames.append(state)
+    return FleetOutcome(
+        conflict=state.conflict, los=state.los, min_sep=state.min_sep,
+        frames=StatesLog(tuple(frames)) if frames is not None else None,
+    )
