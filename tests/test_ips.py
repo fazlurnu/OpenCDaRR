@@ -90,6 +90,18 @@ def test_unreachable_shell_collapses() -> None:
     assert r.prob == 0.0
 
 
+def test_reusing_a_seed_object_is_rejected() -> None:
+    """``seq`` is consumed: a second run on the same object would walk a different stream tree.
+
+    Left unguarded this is silent — same call, same seed, different answer — so it is refused with
+    a message pointing at ``replication_seeds``. Re-running a replication means a *fresh* sequence.
+    """
+    seq = root_seed_sequence(4)
+    ips_once(_build_initial, [60.0, 55.0], 20, seq)
+    with pytest.raises(ValueError, match="not been spawned from"):
+        ips_once(_build_initial, [60.0, 55.0], 20, seq)
+
+
 def test_deterministic_from_seed() -> None:
     """Same seed -> identical estimate and survival vector (reproducibility, ADR 0001)."""
     a = _one([60.0, 55.0, 50.0], n=40, seed=7)

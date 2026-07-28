@@ -35,7 +35,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from opencdarr.fleet import CnsStreams, FleetEnv, FleetState, FleetStreams
-from opencdarr.rng import generator, root_seed_sequence, spawn
+from opencdarr.rng import generator, require_fresh, root_seed_sequence, spawn
 
 # A particle's initial-state factory: sample one geometry from a seed → its env + world state.
 # (The forward-evolution RNG is NOT drawn here; it is spawned per level inside :func:`ips_once`.)
@@ -103,6 +103,45 @@ def _evolve_to_shell(particle: Particle, target: float, streams: FleetStreams) -
     return state
 
 
+def evolve_shard(
+    particles: Sequence[Particle],
+    target: float,
+    seeds: Sequence[np.random.SeedSequence],
+) -> list[Particle]:
+    """Evolve each particle to ``target`` on its own freshly spawned stream — one level's *map*.
+
+    Factored out of :func:`ips_once` so a parallel driver can run **contiguous slices** of the same
+    map in worker processes (:mod:`opencdarr.parallel`). Particle ``i`` reads only its own
+    ``particles[i]`` and ``seeds[i]``, so any partition of the range recomposes to the identical
+    list — which is what makes the parallel estimate bit-identical rather than merely equivalent.
+    """
+    return [
+        Particle(env=p.env, state=_evolve_to_shell(p, target, _streams(s)))
+        for p, s in zip(particles, seeds, strict=True)
+    ]
+
+
+def resample_level(
+    evolved: Sequence[Particle],
+    target: float,
+    n_particles: int,
+    seq: np.random.SeedSequence,
+) -> tuple[float, list[Particle]]:
+    """One level's *barrier*: the survival fraction and the resampled cloud.
+
+    Survivors are those that reached the shell; they are drawn with replacement back up to
+    ``n_particles``. An empty returned cloud means the level collapsed (ADR 0017 §2) — the caller
+    decides what to record. Independence between clones comes from the next level's fresh
+    per-particle streams, not from this draw.
+    """
+    survivors = [p for p in evolved if p.state.min_sep <= target]
+    fraction = len(survivors) / n_particles
+    if not survivors:
+        return fraction, []
+    idx = generator(seq).integers(0, len(survivors), size=n_particles)
+    return fraction, [survivors[i] for i in idx]
+
+
 def ips_once(
     build_initial: BuildInitial,
     levels: Sequence[float],
@@ -116,7 +155,15 @@ def ips_once(
     geometry is sampled there, forward noise is spawned here per particle per level (so resampled
     clones of one survivor diverge). Returns ``prob = 0`` with ``collapsed_at`` set if some level
     has no survivors — a signal the shells are spaced too aggressively (ADR 0017 §2), not a real 0.
+
+    .. warning::
+       ``seq`` is **consumed**: this function spawns the whole run's stream tree from it, which
+       advances the sequence. Passing the same object twice would walk a *different* tree the
+       second time and quietly return a different answer, so re-running a replication means
+       building a fresh sequence — re-call :func:`replication_seeds` rather than keeping its
+       result around. Reuse is rejected outright (:func:`opencdarr.rng.require_fresh`).
     """
+    require_fresh(seq, "ips_once")
     init_seq, evolve_seq = seq.spawn(2)
     particles = [build_initial(s) for s in init_seq.spawn(n_particles)]
     level_seqs = evolve_seq.spawn(len(levels))
@@ -125,19 +172,12 @@ def ips_once(
     for k, target in enumerate(levels):
         # fresh forward streams per particle this level (+ one resampling stream)
         sub = level_seqs[k].spawn(n_particles + 1)
-        evolved = [
-            Particle(env=p.env, state=_evolve_to_shell(p, target, _streams(s)))
-            for p, s in zip(particles, sub[:n_particles], strict=True)
-        ]
-        survivors = [p for p in evolved if p.state.min_sep <= target]
-        survival.append(len(survivors) / n_particles)
-        if not survivors:
+        evolved = evolve_shard(particles, target, sub[:n_particles])
+        fraction, particles = resample_level(evolved, target, n_particles, sub[n_particles])
+        survival.append(fraction)
+        if not particles:
             return IPSResult(prob=0.0, levels=tuple(levels), survival=tuple(survival),
                              n_particles=n_particles, collapsed_at=k)
-        # resample with replacement back to N: pick which survivor each slot carries forward;
-        # independence comes from the next level's fresh per-particle streams, not from here
-        idx = generator(sub[n_particles]).integers(0, len(survivors), size=n_particles)
-        particles = [survivors[i] for i in idx]
 
     return IPSResult(prob=float(np.prod(survival)), levels=tuple(levels),
                      survival=tuple(survival), n_particles=n_particles, collapsed_at=None)

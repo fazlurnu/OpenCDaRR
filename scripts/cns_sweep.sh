@@ -20,9 +20,12 @@ DPSI=90 ; TLOS=70 ; LOOKAHEAD=60 ; DT=0.2
 # `collapsed` column in summary.tsv — any nonzero means that cell needs more --particles or a ladder
 # with more shells (re-run it alone). Easy (high-P) cells will over-survive the deep shells; harmless.
 LEVELS="150 135 122 112 104 97 90 82 74 68 63 59 56 54 52 51 50"
-# REPS == JOBS so all replications run in a single parallel wave (reps > jobs would spill into a
-# second wave and roughly double the IPS wall-time per cell).
-PARTICLES=10000 ; REPS=96 ; MCN=2000000 ; JOBS=96
+# REPS and JOBS are now independent knobs. opencdarr/parallel.py shards particles *within* a
+# replication, so JOBS fills the machine whatever REPS is; REPS only buys precision (the width of
+# the IPS confidence interval, ADR 0017 section 5) and costs proportional compute. So: set JOBS to
+# the core count, and REPS to the CI you need. REPS=10 is the latency-optimal setting for a fixed
+# budget; REPS=JOBS is the precision-optimal one at roughly the same wall clock on an idle box.
+PARTICLES=10000 ; REPS=10 ; MCN=2000000 ; JOBS=96
 
 # ------------------------------------------------------------------ sweep grids (edit here)
 NAV_POS=(2 6 10) ; NAV_VEL=(0.5 1.0 2.0)          # family 1 grid

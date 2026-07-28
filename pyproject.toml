@@ -30,13 +30,17 @@ dev = [
     "mypy>=1.10",
     "ruff>=0.5",
 ]
+# Spreading an estimator over CPU cores (opencdarr/parallel.py), which imports joblib lazily so
+# the core install stays numpy-only and the serial estimators keep working without it.
+# >=1.2 is the floor actually exercised; nothing here uses a 1.3-only feature.
+parallel = ["joblib>=1.2"]
 # Everything the example notebooks need: the plotter (opencdarr/viz.py) imports matplotlib
 # lazily, and a Jupyter kernel to run the notebooks. Kept out of the core install so a plain
 # `pip install opencdarr` stays numpy-only (design-philosophy #10).
 examples = [
     "matplotlib>=3.7",
     "ipykernel>=6",
-    "joblib>=1.3",   # the rare-event notebook runs IPS replications in parallel
+    "opencdarr[parallel]",   # the rare-event notebook fills the machine with opencdarr.parallel
 ]
 
 [tool.setuptools.packages.find]
@@ -72,6 +76,12 @@ ignore_missing_imports = true
 # always installed; treat it as untyped at that boundary rather than requiring the stubs.
 [[tool.mypy.overrides]]
 module = ["matplotlib.*"]
+ignore_missing_imports = true
+
+# joblib ships no py.typed marker and is an optional (parallel) dependency, imported lazily by
+# opencdarr/parallel.py; same treatment as matplotlib — untyped at the one boundary that uses it.
+[[tool.mypy.overrides]]
+module = ["joblib.*"]
 ignore_missing_imports = true
 
 # --- Lint / format -----------------------------------------------------------

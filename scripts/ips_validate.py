@@ -49,11 +49,12 @@ from opencdarr.config import (
 from opencdarr.cr import MVP
 from opencdarr.crr import PastCPA
 from opencdarr.estimator import estimate_ipr
-from opencdarr.fleet import Agent, build_env
-from opencdarr.ips import Particle, combine_replications, ips_once, replication_seeds
+from opencdarr.fleet import Agent, FleetEnv, build_env
+from opencdarr.ips import Particle
 from opencdarr.loop import run_encounter
+from opencdarr.parallel import describe_schedule, estimate_rare_prob
 from opencdarr.performance import M600
-from opencdarr.rng import generator, root_seed_sequence, spawn
+from opencdarr.rng import children, generator, root_seed_sequence, spawn
 from opencdarr.scenario import create_conflict, sample_pairwise
 from opencdarr.state import AircraftState
 
@@ -90,7 +91,7 @@ class Scenario:
             return None
         return Comm(reception_prob=self.reception_prob, latency=self.latency)
 
-    def _env(self, agents: list[Agent]) -> object:
+    def _env(self, agents: list[Agent]) -> FleetEnv:
         return build_env(
             agents, rpz=self.rpz, t_lookahead=self.lookahead, dt=self.dt, detector=StateBased(),
             resolver=MVP(margin=self.margin), recovery=PastCPA(bouncing_guard=True),
@@ -120,15 +121,42 @@ class Scenario:
                                         done_timeout=self.done_timeout),
         )
 
+    def _pinned(self) -> Particle:
+        """The one starting particle for a pinned geometry — built once per process, then shared.
+
+        A fixed ``dpsi`` means every particle starts from the same geometry under the same rules,
+        so rebuilding per particle was pure waste: 10 000 particles meant 10 000 ``build_env``
+        calls producing 10 000 equal objects. Sharing one is safe because ``FleetEnv`` and
+        ``FleetState`` are deeply immutable — the same property that lets IPS clone a survivor by
+        sharing it rather than copying (``opencdarr/ips.py``).
+
+        Identity, not just the saved CPU, is the point: pickle collapses repeated references to
+        *one* object within a payload, so a shared start costs a few bytes per particle where
+        distinct-but-equal ones cost ~2x the bytes and ~4x the time to serialise — a toll paid on
+        every level of a parallel run.
+
+        Memoised by hand into ``__dict__`` rather than with ``functools``: a ``cached_property``
+        descriptor holds an ``RLock`` on Python 3.11, and an ``lru_cache`` wrapper is a C object
+        that pickles by *reference* — either one breaks when cloudpickle ships this ``__main__``
+        class to a worker. A plain dict entry travels with the instance and needs neither.
+        """
+        cached: Particle | None = self.__dict__.get("_pinned_cache")
+        if cached is None:
+            own, intr = self.fixed_pair()
+            agents = [Agent(own, M600), Agent(intr, M600)]
+            env = self._env(agents)
+            cached = Particle(env=env, state=env.initial_state(agents))
+            object.__setattr__(self, "_pinned_cache", cached)  # frozen-dataclass escape hatch
+        return cached
+
     def build_initial(self, seq: np.random.SeedSequence) -> Particle:
         """One IPS particle: the same geometry the MC path uses — sampled, or the fixed pair."""
-        if self.dpsi is None:
-            own, intr = sample_pairwise(
-                generator(seq), speed=self.speed, dcpa_max=self.dcpa_max, tlos=self.tlos,
-                rpz=self.rpz, pos_ci95=self.pos_ci95, vel_ci95=self.vel_ci95,
-            )
-        else:
-            own, intr = self.fixed_pair()  # geometry fixed; the seed feeds forward noise, not it
+        if self.dpsi is not None:
+            return self._pinned()  # geometry fixed; the seed feeds forward noise, not the start
+        own, intr = sample_pairwise(
+            generator(seq), speed=self.speed, dcpa_max=self.dcpa_max, tlos=self.tlos,
+            rpz=self.rpz, pos_ci95=self.pos_ci95, vel_ci95=self.vel_ci95,
+        )
         agents = [Agent(own, M600), Agent(intr, M600)]
         env = self._env(agents)
         return Particle(env=env, state=env.initial_state(agents))
@@ -144,16 +172,22 @@ def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float, float]:
     return (p, max(0.0, centre - half), min(1.0, centre + half))
 
 
-def _mc_chunk(scn: Scenario, n: int, seed: int) -> tuple[int, int]:
-    """One MC chunk -> (n_conflict, n_los). Sampled geometry goes through ``estimate_ipr``; a fixed
-    ``dpsi`` runs ``n`` encounters over the one pair, varying only the GNSS noise stream."""
+def _mc_chunk(scn: Scenario, n: int, seed: int, lo: int, hi: int) -> tuple[int, int]:
+    """Encounters ``lo``…``hi-1`` of the run's fan-out -> (n_conflict, n_los).
+
+    The chunk addresses a *slice of the one seed tree* the serial run would use
+    (:func:`~opencdarr.rng.children`), so the chunks pool back to exactly the serial estimate.
+    Sampled geometry goes through ``estimate_ipr``; a fixed ``dpsi`` runs the encounters over the
+    one pair, varying only the noise streams.
+    """
+    seqs = children(root_seed_sequence(seed), lo, hi)
     if scn.dpsi is None:
         # sampled geometry: estimate_ipr conditions on a detected conflict (its IPR denominator).
         # That coincides with the unconditional P(LoS) only when lookahead >= tlos (detection at
         # t=0), which the default satisfies; IPS's denominator is all N particles either way.
         r = estimate_ipr(scn.mc_config(n, seed), M600, StateBased(), MVP(margin=scn.margin),
                          PastCPA(bouncing_guard=True), navigation=GnssNavigation(),
-                         communication=scn.comm())
+                         communication=scn.comm(), seqs=seqs)
         return r.n_conflict, r.n_los
     # fixed geometry: P(LoS) is unconditional over all n encounters (denominator n, not
     # n_conflict), to match IPS's "reachers / N". With lookahead < tlos, noise can let the resolver
@@ -161,7 +195,7 @@ def _mc_chunk(scn: Scenario, n: int, seed: int) -> tuple[int, int]:
     own, intr = scn.fixed_pair()
     comm = scn.comm()
     n_los = 0
-    for s in spawn(root_seed_sequence(seed), n):
+    for s in seqs:
         # nav + comm substreams per encounter, mirroring estimate_ipr / the IPS particle layout, so
         # the stream tree stays config-invariant whether or not comms uncertainty is switched on.
         nav_seq, comm_seq = spawn(s, 2)
@@ -173,14 +207,20 @@ def _mc_chunk(scn: Scenario, n: int, seed: int) -> tuple[int, int]:
             t_max=scn.t_max, done_timeout=scn.done_timeout,
         )
         n_los += int(out.los)
-    return n, n_los
+    return hi - lo, n_los
 
 
 def mc_estimate(scn: Scenario, n: int, seed: int, jobs: int) -> tuple[float, float, float, int]:
-    """Pooled plain-MC P(LoS) over ``n`` encounters, split into ``jobs`` independent chunks."""
-    chunks = [n // jobs + (1 if i < n % jobs else 0) for i in range(jobs)]
+    """Pooled plain-MC P(LoS) over ``n`` encounters, split into ``jobs`` contiguous chunks.
+
+    The chunks partition one seed tree rather than each rooting its own at ``seed + i``: offset
+    seeds can correlate (``opencdarr/rng.py``) and their union is not the tree a serial run of the
+    same ``n`` would have walked, so the chunked estimate was never reproducible against it. Now it
+    is, exactly.
+    """
+    bounds = [(n * i // jobs, n * (i + 1) // jobs) for i in range(jobs)]
     out = Parallel(n_jobs=jobs)(
-        delayed(_mc_chunk)(scn, c, seed + i) for i, c in enumerate(chunks) if c > 0
+        delayed(_mc_chunk)(scn, n, seed, lo, hi) for lo, hi in bounds if hi > lo
     )
     n_conf = sum(a for a, _ in out)
     n_los = sum(b for _, b in out)
@@ -233,16 +273,17 @@ def main() -> None:
     print(f"\nMC   n={mc_n:>7}  P(LoS)={mc_p:.5f}  95%CI[{mc_lo:.5f}, {mc_hi:.5f}]  ({t_mc:.0f}s)")
 
     t0 = time.perf_counter()
-    seeds = replication_seeds(a.seed, a.reps)
-    results = Parallel(n_jobs=a.jobs)(
-        delayed(ips_once)(scn.build_initial, a.levels, a.particles, s) for s in seeds
-    )
-    est = combine_replications(results)
+    # the driver spreads work across particles as well as replications, so --jobs is no longer
+    # capped at --reps: pick reps for the CI you want, jobs for the machine you have
+    est = estimate_rare_prob(scn.build_initial, a.levels, n_particles=a.particles,
+                             reps=a.reps, seed=a.seed, n_jobs=a.jobs)
     t_ips = time.perf_counter() - t0
     budget = a.particles * len(a.levels) * a.reps
     print(f"IPS  {a.reps}x{a.particles}p x{len(a.levels)} shells (~{budget} seg)  "
           f"P={est.prob:.6f}  95%CI[{est.ci[0]:.6f}, {est.ci[1]:.6f}]  "
           f"collapsed={est.n_collapsed}/{a.reps}  ({t_ips:.0f}s)")
+    # record HOW the run was scheduled, so an under-filled box is visible in the log itself
+    print(f"  schedule: {describe_schedule(a.reps, a.particles, a.jobs)}")
     # mean survival per shell over non-collapsed reps — to tune shell spacing toward equal drops
     good = [r for r in est.reps if r.collapsed_at is None]
     if good:

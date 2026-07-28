@@ -22,6 +22,10 @@ Keeping the two roles separate makes the assignment of streams to components an
 explicit, documented tree — which is what lets an experiment's provenance record
 *exactly* how its randomness was wired.
 
+:func:`child` / :func:`children` address that same tree by index: a child is fixed by
+its parent and its position, so a parallel worker can rebuild only the slice it needs
+rather than receiving the whole fan-out. They produce exactly what :func:`spawn` would.
+
 Every function that needs randomness should take a ``numpy.random.Generator`` as an
 explicit argument; this module is the only place a generator is created.
 """
@@ -52,6 +56,70 @@ def spawn(parent: np.random.SeedSequence, n: int) -> list[np.random.SeedSequence
     if n < 0:
         raise ValueError(f"n must be non-negative, got {n}")
     return list(parent.spawn(n))
+
+
+def require_fresh(seq: np.random.SeedSequence, what: str) -> None:
+    """Raise unless ``seq`` has never been fanned out — i.e. it is still an unused internal node.
+
+    :func:`spawn` is **stateful**: it hands out children starting from ``n_children_spawned``, so a
+    second fan-out from the same object continues the numbering rather than repeating it. A routine
+    that spawns from its seed argument therefore *consumes* it, and re-running that routine on the
+    same object silently walks a different stream tree — same call, same seed, different answer,
+    with nothing to show for it. That is the worst shape of bug: plausible wrong numbers.
+
+    So the module contract ("an internal node is fanned out **once**") gets a check at the doors
+    that matter. Callers pass a freshly built sequence — :func:`root_seed_sequence`,
+    :func:`spawn`, :func:`child`, or :func:`~opencdarr.ips.replication_seeds` — every time.
+    """
+    spawned = seq.n_children_spawned
+    if spawned:
+        raise ValueError(
+            f"{what} needs a SeedSequence that has not been spawned from, but this one has "
+            f"already handed out {spawned} children. Spawning again continues from there, so the "
+            f"run would silently use a different stream tree than the first one did. Build a "
+            f"fresh sequence (re-call replication_seeds / root_seed_sequence) instead of reusing "
+            f"the object."
+        )
+
+
+def child(parent: np.random.SeedSequence, i: int) -> np.random.SeedSequence:
+    """Return the child of ``parent`` at absolute index ``i``.
+
+    A child is fully determined by its parent and its position, so reconstructing one directly
+    lets a worker regenerate just the slice of a fan-out it was handed, instead of the caller
+    materialising all ``n`` children and shipping them across a process boundary — which matters
+    when ``n`` is a two-million-encounter Monte Carlo. Same tree, same numbers: a cheaper spelling
+    of :func:`spawn`, not a second stream layout (ADR 0001).
+
+    .. warning::
+       ``SeedSequence.spawn`` is **stateful** — it hands out children starting from the parent's
+       ``n_children_spawned``, so spawning twice from one sequence continues rather than restarts.
+       ``child`` indexes *absolutely*. The two therefore agree — ``child(p, i) == spawn(p, n)[i]``
+       for every ``n > i`` — exactly when ``p`` has not been spawned from yet, which the module
+       contract above already requires: a sequence is an internal node fanned out **once**, or a
+       leaf. Mixing :func:`spawn` and :func:`child` on one parent re-uses indices, so pick one.
+    """
+    if i < 0:
+        raise ValueError(f"i must be non-negative, got {i}")
+    return np.random.SeedSequence(
+        entropy=parent.entropy,
+        spawn_key=tuple(parent.spawn_key) + (i,),
+        pool_size=parent.pool_size,
+    )
+
+
+def children(
+    parent: np.random.SeedSequence, start: int, stop: int
+) -> list[np.random.SeedSequence]:
+    """The children of ``parent`` with indices ``start`` … ``stop - 1`` — one chunk's worth.
+
+    ``children(parent, 0, n)`` equals ``spawn(parent, n)``; a half-open slice of it is the
+    substream set for one chunk of a parallel run. Building the slice directly is what keeps a
+    worker from re-spawning all ``n`` siblings just to reach its own few.
+    """
+    if start < 0 or stop < start:
+        raise ValueError(f"require 0 <= start <= stop, got {start=}, {stop=}")
+    return [child(parent, i) for i in range(start, stop)]
 
 
 def generator(seq: np.random.SeedSequence) -> np.random.Generator:
