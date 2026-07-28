@@ -192,6 +192,8 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--pos", type=float, default=40.0, help="pos_ci95 [m] (vel_ci95 = pos*ratio)")
     p.add_argument("--vel-ratio", dest="vel_ratio", type=float, default=0.1)
+    p.add_argument("--vel", type=float, default=None, help="vel_ci95 [m/s]; overrides --vel-ratio "
+                   "when set (velocity noise independent of --pos, incl. pos=0)")
     p.add_argument("--mc-n", dest="mc_n", type=int, default=4000, help="MC encounters")
     p.add_argument("--particles", type=int, default=300, help="IPS particles per level")
     p.add_argument("--reps", type=int, default=8, help="IPS independent replications")
@@ -209,17 +211,18 @@ def main() -> None:
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--jobs", type=int, default=1)
     a = p.parse_args()
-    scn = Scenario(pos_ci95=a.pos, vel_ci95=a.pos * a.vel_ratio, dpsi=a.dpsi, dt=a.dt,
+    vel_ci95 = a.vel if a.vel is not None else a.pos * a.vel_ratio
+    scn = Scenario(pos_ci95=a.pos, vel_ci95=vel_ci95, dpsi=a.dpsi, dt=a.dt,
                    lookahead=a.lookahead, tlos=a.tlos,
                    reception_prob=a.reception, latency=a.latency)
 
     geom = "sampled angles" if a.dpsi is None else f"fixed {a.dpsi:.0f}deg crossing"
     cns = "GNSS" if scn.comm() is None else f"GNSS+comms(rx={a.reception}, lat={a.latency}s)"
-    print(f"scenario: {geom}, pos_ci95={a.pos} vel_ci95={a.pos * a.vel_ratio} rpz={scn.rpz} "
+    print(f"scenario: {geom}, pos_ci95={a.pos} vel_ci95={vel_ci95} rpz={scn.rpz} "
           f"lookahead={scn.lookahead} margin={scn.margin} dt={scn.dt}  (MVP + Past-CPA, {cns})")
-    if a.pos == 0.0 and a.dpsi is not None and scn.comm() is None:
-        print("  WARNING: pos_ci95=0 on a fixed geometry with perfect comms -> no stochasticity; "
-              "the estimate is degenerate. Set --reception < 1 or --latency > 0 (the CNS-only rung).")
+    if a.pos == 0.0 and vel_ci95 == 0.0 and a.dpsi is not None and scn.comm() is None:
+        print("  WARNING: no nav noise (pos & vel = 0) on a fixed geometry with perfect comms -> "
+              "degenerate estimate. Set --pos/--vel > 0, or --reception < 1.")
     if a.dpsi is None and scn.lookahead < scn.tlos:
         print("  WARNING: lookahead < tlos in sampled mode -> MC conditions on n_conflict, which "
               "drifts below IPS's all-N denominator. Prefer --dpsi, or set lookahead >= tlos.")
