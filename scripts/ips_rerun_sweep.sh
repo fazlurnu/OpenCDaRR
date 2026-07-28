@@ -32,7 +32,8 @@ PARTICLES=${PARTICLES:-10000} ; REPS=${REPS:-10} ; JOBS=${JOBS:-96}
 OUT="ips_rerun_$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$OUT"
 SUMMARY="$OUT/summary.tsv"
-printf 'family\tpos\tvel\trx\tP_mc_old\tP_ips_old\tP_ips_new\tmatch\tcollapsed\tsecs\tlog\n' > "$SUMMARY"
+printf 'family\tpos\tvel\trx\tP_mc_old\tP_ips_old\tP_ips_new\tmatch\tcollapsed\tsecs_old\tsecs_new\tlog\n' \
+    > "$SUMMARY"
 
 echo "=== IPS-only replay of $SRC -> $OUT  (jobs=$JOBS, reps=$REPS, particles=$PARTICLES) ==="
 N=0 ; MISMATCH=0
@@ -48,6 +49,7 @@ for log in "$SRC"/*.log; do
   # the anchor to carry over, plus the previous IPS result to compare against
   read -r mc_p mc_lo mc_hi < <(sed -n 's/^MC .*P(LoS)=\([0-9.]*\) *95%CI\[\([0-9.]*\), *\([0-9.]*\)\].*/\1 \2 \3/p' "$log" | head -1)
   ips_old=$(sed -n 's/^IPS .* P=\([0-9.]*\) .*/\1/p' "$log" | head -1)
+  secs_old=$(sed -n 's/^IPS .*(\([0-9]*\)s).*/\1/p' "$log" | head -1)   # the IPS half's old wall
   if [ -z "${mc_p:-}" ]; then
     echo "  skip $base — no MC line to carry over (interrupted cell?)"
     continue
@@ -67,9 +69,9 @@ for log in "$SRC"/*.log; do
   coll=$(sed -n 's/^IPS .*collapsed=\([0-9]*\/[0-9]*\).*/\1/p' "$OUT/${base}.log" | head -1)
   if [ "${ips_new:-x}" = "${ips_old:-y}" ]; then match=same; else match=DIFFERS; MISMATCH=$((MISMATCH + 1)); fi
 
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "$family" "$pos" "$vel" "$rx" "$mc_p" "${ips_old:-NA}" "${ips_new:-NA}" \
-      "$match" "${coll:-NA}" "$((t1 - t0))" "$OUT/${base}.log" >> "$SUMMARY"
+      "$match" "${coll:-NA}" "${secs_old:-NA}" "$((t1 - t0))" "$OUT/${base}.log" >> "$SUMMARY"
 done
 
 echo "[$(date +%H:%M:%S)] done. $N cells -> $SUMMARY"
