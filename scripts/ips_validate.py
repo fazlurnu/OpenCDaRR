@@ -250,7 +250,17 @@ def main() -> None:
     p.add_argument("--latency", type=float, default=0.0, help="constant link delay [s] (default: 0)")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--jobs", type=int, default=1)
+    p.add_argument("--skip-mc", dest="skip_mc", action="store_true",
+                   help="do not run the Monte-Carlo anchor (IPS only, no verdict). The MC half is "
+                        "the expensive one and is unaffected by IPS scheduling, so there is no "
+                        "reason to re-measure it when only the IPS side has changed")
+    p.add_argument("--mc-ref", dest="mc_ref", type=float, nargs=3, metavar=("P", "LO", "HI"),
+                   help="MC anchor carried over from an earlier run (its P and 95%% CI, e.g. "
+                        "scraped from a previous .log) instead of measuring it again; implies "
+                        "--skip-mc and still prints the verdict")
     a = p.parse_args()
+    if a.mc_ref is not None:
+        a.skip_mc = True
     vel_ci95 = a.vel if a.vel is not None else a.pos * a.vel_ratio
     scn = Scenario(pos_ci95=a.pos, vel_ci95=vel_ci95, dpsi=a.dpsi, dt=a.dt,
                    lookahead=a.lookahead, tlos=a.tlos,
@@ -267,10 +277,23 @@ def main() -> None:
         print("  WARNING: lookahead < tlos in sampled mode -> MC conditions on n_conflict, which "
               "drifts below IPS's all-N denominator. Prefer --dpsi, or set lookahead >= tlos.")
 
-    t0 = time.perf_counter()
-    mc_p, mc_lo, mc_hi, mc_n = mc_estimate(scn, a.mc_n, a.seed, a.jobs)
-    t_mc = time.perf_counter() - t0
-    print(f"\nMC   n={mc_n:>7}  P(LoS)={mc_p:.5f}  95%CI[{mc_lo:.5f}, {mc_hi:.5f}]  ({t_mc:.0f}s)")
+    if a.mc_ref is not None:
+        # anchor carried over from an earlier run: the MC half is the expensive one and does not
+        # change when only the IPS scheduling does, so re-measuring it buys nothing
+        mc_p, mc_lo, mc_hi = a.mc_ref
+        mc_n = a.mc_n
+        print(f"\nMC   n={mc_n:>7}  P(LoS)={mc_p:.5f}  95%CI[{mc_lo:.5f}, {mc_hi:.5f}]  "
+              f"(not run: --mc-ref)")
+    elif a.skip_mc:
+        mc_p = mc_lo = mc_hi = float("nan")
+        mc_n = 0
+        print("\nMC   skipped (--skip-mc) — no anchor, so no verdict below")
+    else:
+        t0 = time.perf_counter()
+        mc_p, mc_lo, mc_hi, mc_n = mc_estimate(scn, a.mc_n, a.seed, a.jobs)
+        t_mc = time.perf_counter() - t0
+        print(f"\nMC   n={mc_n:>7}  P(LoS)={mc_p:.5f}  95%CI[{mc_lo:.5f}, {mc_hi:.5f}]  "
+              f"({t_mc:.0f}s)")
 
     t0 = time.perf_counter()
     # the driver spreads work across particles as well as replications, so --jobs is no longer
@@ -291,7 +314,9 @@ def main() -> None:
         cells = "  ".join(f"{d:.0f}:{s:.3f}" for d, s in zip(a.levels, per, strict=True))
         print("  survival/shell: " + cells)
 
-    # verdict: do the intervals overlap?
+    # verdict: do the intervals overlap?  (needs an anchor -- measured now or carried in)
+    if a.skip_mc and a.mc_ref is None:
+        return
     agree = est.ci[0] <= mc_hi and mc_lo <= est.ci[1]
     within = mc_lo <= est.prob <= mc_hi
     print(f"\nverdict: CIs {'OVERLAP' if agree else 'DISJOINT'}; "

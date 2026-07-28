@@ -25,7 +25,14 @@ LEVELS="150 135 122 112 104 97 90 82 74 68 63 59 56 54 52 51 50"
 # the IPS confidence interval, ADR 0017 section 5) and costs proportional compute. So: set JOBS to
 # the core count, and REPS to the CI you need. REPS=10 is the latency-optimal setting for a fixed
 # budget; REPS=JOBS is the precision-optimal one at roughly the same wall clock on an idle box.
-PARTICLES=10000 ; REPS=10 ; MCN=2000000 ; JOBS=96
+#
+# Overridable from the environment so a shared machine needs no edit here, e.g.
+#   JOBS=50 bash scripts/cns_sweep.sh              # leave half the box for someone else
+#   JOBS=50 MCN=200000 bash scripts/cns_sweep.sh   # ... and a cheaper MC anchor
+# Note MCN dominates the wall time (the MC half already used every core before this change), so it
+# is the knob to turn when the sweep is too slow -- not PARTICLES or REPS.
+PARTICLES=${PARTICLES:-10000} ; REPS=${REPS:-10}
+MCN=${MCN:-2000000} ; JOBS=${JOBS:-96}
 
 # ------------------------------------------------------------------ sweep grids (edit here)
 NAV_POS=(2 6 10) ; NAV_VEL=(0.5 1.0 2.0)          # family 1 grid
