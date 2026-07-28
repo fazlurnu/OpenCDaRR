@@ -36,6 +36,7 @@ dev = [
 examples = [
     "matplotlib>=3.7",
     "ipykernel>=6",
+    "joblib>=1.3",   # the rare-event notebook runs IPS replications in parallel
 ]
 
 [tool.setuptools.packages.find]
