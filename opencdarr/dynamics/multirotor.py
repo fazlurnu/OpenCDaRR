@@ -127,6 +127,23 @@ class Multirotor(Dynamics):
     from the airspeed-vector direction, not as a forced nose heading.
     """
 
+    def validate_performance(self, perf: Performance) -> None:
+        """Reject an envelope built for a banking airframe (see the base method).
+
+        A multirotor does not bank, so it never reads ``phi_max`` / ``roll_rate_max``; a positive
+        value for either is the signature of a fixed-wing envelope (e.g.
+        :data:`~opencdarr.performance.SMALL_FIXEDWING`) passed by mistake. The translation channel
+        would still fly, but the bank authority is silently discarded and the fixed-wing's ``v_min``
+        stall floor would be misread — so fail loud rather than fly a misapplied envelope.
+        """
+        if perf.phi_max > 0.0 or perf.roll_rate_max > 0.0:
+            raise ValueError(
+                "Multirotor was given an envelope built for a banking airframe "
+                f"(phi_max={perf.phi_max}, roll_rate_max={perf.roll_rate_max}); a multirotor does "
+                "not bank. This looks like a fixed-wing envelope (e.g. SMALL_FIXEDWING); pass a "
+                "multirotor Performance such as M600."
+            )
+
     def step(
         self,
         state: AircraftState,

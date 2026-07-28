@@ -11,3 +11,5 @@
 	2. People can do like v1.0, but on a multi-agent env, default has 3 env: the ring encounter, the waypoint in DH-ORCA, the circular airspace sector
 7. V1.2 release:
 	1. People can create their own environment using a GUI. Scaling will be an issue (think of aircraft vs drone, there should be a guard on flight time that drone can't fly too long)
+8. V2 release:
+	1. Split `Performance` into airframe-typed subtypes (`MultirotorPerformance` / `FixedWingPerformance`) so a mismatched envelope is unrepresentable, not just caught at runtime. Removes the "not-applicable field defaulted to 0.0" smell (M600 carrying phi_max=0, SMALL_FIXEDWING carrying yaw_rate_max=0). To keep `Dynamics.step(perf)` from an LSP-violating narrowed override, make `Dynamics` generic over its performance type (`Dynamics[P]`) and thread the type param through `Agent`. Supersedes the runtime `validate_performance` guard added in v1 (keep it as the non-typed-caller backstop).

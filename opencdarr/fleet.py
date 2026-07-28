@@ -85,6 +85,13 @@ class Agent:
     dynamics: Dynamics | None = None
     autopilot: Autopilot | None = None
 
+    def __post_init__(self) -> None:
+        # Fail at the line the mismatch is written, not deep inside the first step. Only the
+        # explicit case can be checked here; when ``dynamics`` is left to its default the effective
+        # model is not known until the composition root, which re-validates there (see ``build``).
+        if self.dynamics is not None:
+            self.dynamics.validate_performance(self.perf)
+
 
 @dataclass(frozen=True)
 class FleetOutcome:
@@ -389,6 +396,11 @@ def build_env(
     n = len(agents)
     dyns = tuple(a.dynamics or _DEFAULT_DYNAMICS for a in agents)
     perfs = tuple(a.perf for a in agents)
+    # Backstop for the default-dynamics case: an Agent that left ``dynamics=None`` was validated
+    # against nothing at construction, so check the resolved model here (explicit agents re-validate
+    # harmlessly — the check is cheap and idempotent).
+    for i in range(n):
+        dyns[i].validate_performance(perfs[i])
     return FleetEnv(
         dyns=dyns,
         perfs=perfs,

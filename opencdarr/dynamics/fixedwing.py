@@ -144,6 +144,29 @@ class FixedWing(Dynamics):
     projection for resolver output is a separate concern, Phase 4e).
     """
 
+    def validate_performance(self, perf: Performance) -> None:
+        """Reject an envelope with no fixed-wing turn authority (see the base method).
+
+        A fixed-wing turns by banking, so ``phi_max`` and ``roll_rate_max`` must be positive, and
+        ``v_min`` is a **stall** speed rather than a hover/reverse floor, so it must be positive too.
+        A multirotor envelope (e.g. :data:`~opencdarr.performance.M600`) leaves all three at ``0``
+        or negative, which would fly this model straight forever without ever turning.
+        """
+        bad: list[str] = []
+        if perf.phi_max <= 0.0:
+            bad.append("phi_max must be > 0 (a fixed-wing turns by banking)")
+        if perf.roll_rate_max <= 0.0:
+            bad.append("roll_rate_max must be > 0 (bank could never change)")
+        if perf.v_min <= 0.0:
+            bad.append("v_min is the stall speed and must be > 0")
+        if bad:
+            raise ValueError(
+                "FixedWing was given an envelope it cannot fly: "
+                + "; ".join(bad)
+                + ". This looks like a multirotor envelope (e.g. M600); pass a fixed-wing "
+                "Performance such as SMALL_FIXEDWING."
+            )
+
     def step(
         self,
         state: AircraftState,

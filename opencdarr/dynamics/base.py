@@ -235,3 +235,19 @@ class Dynamics(ABC):
         written, so a clone (IPS particle) evolved through this call stays independent of its
         source.
         """
+
+    def validate_performance(self, perf: Performance) -> None:
+        """Raise :class:`ValueError` if ``perf`` cannot drive this integrator.
+
+        :class:`~opencdarr.performance.Performance` is deliberately one flat bag of numbers, shared
+        across airframes (``performance.py``: the integrator is kept separate from the limits). The
+        cost of that decoupling is that a field an airframe does not use sits at its ``0.0`` default
+        — and ``0.0`` is *also* a value the reading integrator interprets, so a mismatched envelope
+        flies **silently wrong** rather than failing: a fixed-wing given a multirotor's ``phi_max ==
+        0`` never banks, so it can never turn. This hook is where a model rejects an envelope it
+        cannot fly, at :class:`~opencdarr.fleet.Agent` construction and again at the composition
+        root, instead of stepping into that silent-straight-flight trap.
+
+        The base accepts any envelope; a model that reads airframe-specific fields overrides this.
+        """
+
