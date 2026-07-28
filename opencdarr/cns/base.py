@@ -93,6 +93,16 @@ class CommunicationModel(ABC):
         Pure: the state is threaded, never mutated (see :class:`CommState`).
         """
 
+    def validate_ids(self, ids: frozenset[str]) -> None:
+        """Raise :class:`ValueError` if this model is configured against unknown aircraft ids.
+
+        A per-link model keyed by aircraft id (e.g. :class:`~opencdarr.cns.communication.Comm`'s
+        directed ``reception_prob``) reads an absent link as its default, so a mistyped id — a link
+        naming an aircraft not in the fleet — is silently ignored rather than applied. The fleet
+        composition root calls this with the actual roster so that mistake fails loudly instead. The
+        base accepts anything; a model that keys configuration by id overrides it.
+        """
+
 
 class SurveillanceModel(ABC):
     """What a receiver believes about a source, given what communication delivered — the

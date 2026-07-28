@@ -109,6 +109,29 @@ class Comm(CommunicationModel):
             return self._scalar
         return self._per_link.get((source, receiver), 1.0)
 
+    def validate_ids(self, ids: frozenset[str]) -> None:
+        """Reject a directed ``reception_prob`` link naming an aircraft not in the fleet.
+
+        Because an absent link defaults to ``1.0``, a mistyped id (``("COPTER", "PLANE")`` when the
+        fleet is ``COPTER`` / ``CARGO``) would silently apply *no* loss on that link instead of the
+        value written. Checked at the composition root against the real roster, so the typo fails
+        loudly. A scalar ``reception_prob`` keys nothing and is always accepted.
+        """
+        if self._per_link is None:
+            return
+        unknown = {
+            aid
+            for link in self._per_link
+            for aid in link
+            if aid not in ids
+        }
+        if unknown:
+            raise ValueError(
+                f"reception_prob names aircraft not in the fleet: {sorted(unknown)}. "
+                f"Known ids: {sorted(ids)}. A directed link must name two aircraft that exist, "
+                "else it silently applies no loss (absent links default to 1.0)."
+            )
+
     def step(
         self,
         state: CommState,

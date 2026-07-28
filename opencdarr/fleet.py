@@ -401,6 +401,8 @@ def build_env(
     # harmlessly — the check is cheap and idempotent).
     for i in range(n):
         dyns[i].validate_performance(perfs[i])
+    if communication is not None:
+        communication.validate_ids(frozenset(a.state.id for a in agents))
     return FleetEnv(
         dyns=dyns,
         perfs=perfs,
