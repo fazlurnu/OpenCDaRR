@@ -35,7 +35,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from opencdarr.fleet import CnsStreams, FleetEnv, FleetState, FleetStreams
-from opencdarr.rng import generator, require_fresh, root_seed_sequence, spawn
+from opencdarr.rng import children, generator, root_seed_sequence, spawn
 
 # A particle's initial-state factory: sample one geometry from a seed → its env + world state.
 # (The forward-evolution RNG is NOT drawn here; it is spawned per level inside :func:`ips_once`.)
@@ -83,7 +83,7 @@ def _streams(seq: np.random.SeedSequence) -> FleetStreams:
     Always three substreams regardless of which CNS layers are active, so the stream tree stays
     config-invariant (ADR 0006 §6); unused generators are simply never drawn from.
     """
-    nav_seq, comm_seq, bc_seq = seq.spawn(3)
+    nav_seq, comm_seq, bc_seq = children(seq, 0, 3)
     return FleetStreams(
         cns=CnsStreams(nav=generator(nav_seq), comm=generator(comm_seq)),
         broadcast=generator(bc_seq),
@@ -156,22 +156,20 @@ def ips_once(
     clones of one survivor diverge). Returns ``prob = 0`` with ``collapsed_at`` set if some level
     has no survivors — a signal the shells are spaced too aggressively (ADR 0017 §2), not a real 0.
 
-    .. warning::
-       ``seq`` is **consumed**: this function spawns the whole run's stream tree from it, which
-       advances the sequence. Passing the same object twice would walk a *different* tree the
-       second time and quietly return a different answer, so re-running a replication means
-       building a fresh sequence — re-call :func:`replication_seeds` rather than keeping its
-       result around. Reuse is rejected outright (:func:`opencdarr.rng.require_fresh`).
+    ``seq`` is read, never consumed: the whole tree is addressed by index
+    (:func:`~opencdarr.rng.children`), so this is a pure function of its arguments and the caller's
+    sequence comes back untouched. That matters because ``SeedSequence.spawn`` is *stateful* —
+    spawning from ``seq`` here would mean a second call on the same object walked a different tree
+    and quietly returned a different answer, a difference nothing in the result would reveal.
     """
-    require_fresh(seq, "ips_once")
-    init_seq, evolve_seq = seq.spawn(2)
-    particles = [build_initial(s) for s in init_seq.spawn(n_particles)]
-    level_seqs = evolve_seq.spawn(len(levels))
+    init_seq, evolve_seq = children(seq, 0, 2)
+    particles = [build_initial(s) for s in children(init_seq, 0, n_particles)]
+    level_seqs = children(evolve_seq, 0, len(levels))
 
     survival: list[float] = []
     for k, target in enumerate(levels):
         # fresh forward streams per particle this level (+ one resampling stream)
-        sub = level_seqs[k].spawn(n_particles + 1)
+        sub = children(level_seqs[k], 0, n_particles + 1)
         evolved = evolve_shard(particles, target, sub[:n_particles])
         fraction, particles = resample_level(evolved, target, n_particles, sub[n_particles])
         survival.append(fraction)

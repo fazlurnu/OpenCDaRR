@@ -73,7 +73,7 @@ from opencdarr.ips import (
     replication_seeds,
     resample_level,
 )
-from opencdarr.rng import child, children, require_fresh
+from opencdarr.rng import child, children
 
 
 def resolve_jobs(n_jobs: int) -> int:
@@ -207,15 +207,14 @@ def _lockstep(
     clouds: list[list[Particle]] = []
     level_seqs: list[list[np.random.SeedSequence]] = []
     for seq in seqs:
-        # same contract as ips_once, whose tree this mirrors: the seed is consumed, so a reused
-        # one would walk a different tree and quietly return a different answer
-        require_fresh(seq, "ips_replications")
-        init_seq, evolve_seq = seq.spawn(2)
+        # addressed by index, exactly as ips_once does it, so the tree is the same one and the
+        # caller's sequence is left untouched
+        init_seq, evolve_seq = children(seq, 0, 2)
         # Built in the parent on purpose: building in workers would give each one its own `env`
         # objects, and pickle only collapses repeated references it can see are *the same object*.
         # Distinct-but-equal envs cost ~2x the bytes and ~4x the serialisation time per level.
-        clouds.append([build_initial(s) for s in init_seq.spawn(n_particles)])
-        level_seqs.append(list(evolve_seq.spawn(len(levels))))
+        clouds.append([build_initial(s) for s in children(init_seq, 0, n_particles)])
+        level_seqs.append(children(evolve_seq, 0, len(levels)))
 
     survival: list[list[float]] = [[] for _ in range(reps)]
     collapsed: dict[int, IPSResult] = {}

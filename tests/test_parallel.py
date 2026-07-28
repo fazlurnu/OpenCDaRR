@@ -107,16 +107,20 @@ def test_estimate_rare_prob_matches_the_serial_estimator() -> None:
 
 
 @pytest.mark.parametrize("n_jobs", [1, 2, 4])
-def test_reusing_seeds_is_rejected_on_every_path(n_jobs: int) -> None:
-    """Consumed seeds are refused whichever scheduling path runs — serial, whole-reps, lockstep.
+def test_reusing_seeds_gives_the_same_run_on_every_path(n_jobs: int) -> None:
+    """Re-running with the same seed objects reproduces the run, whichever path is taken.
 
-    The lockstep driver spawns its own tree rather than delegating to ``ips_once``, so it would
-    otherwise slip past that guard and reproduce the silent-wrong-answer bug the guard exists for.
+    Uniformity across ``n_jobs`` is the point, and it is not automatic: whole-replication mode
+    ships the seeds to workers, which would consume *copies* and leave the caller's originals
+    fresh, while the serial and lockstep paths run in-process. If either spawned from the caller's
+    sequence, reuse would be harmless at one ``n_jobs`` and silently change the answer at another.
+    Addressing the tree by index makes all three the same.
     """
     seqs = replication_seeds(3, 2)
-    ips_replications(_build_initial, LEVELS, N, seqs, n_jobs=n_jobs, min_shard=4)
-    with pytest.raises(ValueError, match="not been spawned from"):
-        ips_replications(_build_initial, LEVELS, N, seqs, n_jobs=n_jobs, min_shard=4)
+    first = ips_replications(_build_initial, LEVELS, N, seqs, n_jobs=n_jobs, min_shard=4)
+    second = ips_replications(_build_initial, LEVELS, N, seqs, n_jobs=n_jobs, min_shard=4)
+    assert [r.survival for r in first] == [r.survival for r in second]
+    assert all(s.n_children_spawned == 0 for s in seqs)
 
 
 def test_resolve_jobs_follows_the_joblib_convention() -> None:

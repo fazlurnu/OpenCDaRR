@@ -27,19 +27,31 @@ viable at ~135 s against 2500 s, and by the regime below `rpz` where MC is not s
 
 ## Measured scaling (M2, `reps=2`, 2000 particles × 17 shells, `dt=0.5`)
 
-| jobs | schedule | wall | speedup | efficiency |
-|---|---|---|---|---|
-| 1 | serial | 112.8 s | 1.00× | 100 % |
-| 2 | whole-reps | 60.7 s | 1.86× | 93 % |
-| 4 | **lockstep**, 8 tasks/level | 40.2 s | 2.81× | 70 % |
-| 8 | **lockstep**, 16 tasks/level | 33.8 s | 3.34× | 42 % |
+Three runs of the same command — the first on a cool machine, the second after ~40 min of sustained
+load, the third after a pause. All are reported, because the spread *is* the honest picture on a
+laptop:
 
-`reps=2` is the point of the configuration: the old code could not exceed two workers, so **60.7 s
-was its floor**. Lockstep reaches 33.8 s — a further 1.8× that was previously unreachable. On a
-96-core box at `reps=10` the same lever is far longer (10 workers → 96).
+| jobs | schedule | run 1 (cool) | run 2 (hot) | run 3 | speedup |
+|---|---|---|---|---|---|
+| 1 | serial | 112.8 s | 124.2 s | 119.1 s | 1.00× |
+| 2 | whole-reps | 60.7 s | 72.3 s | 69.4 s | 1.7–1.9× |
+| 4 | **lockstep**, 8 tasks/level | 40.2 s | 58.4 s | 47.6 s | 2.1–2.8× |
+| 8 | **lockstep**, 16 tasks/level | 33.8 s | 55.5 s | 48.4 s | 2.2–3.3× |
 
-Falling efficiency is the hardware, not the scheduler: the M2 is 4 performance + 4 efficiency
-cores, so "8 workers" was never 8× the compute. A homogeneous box should do materially better.
+Serial varies by 10 % across runs while 8-way varies by 64 %: the signature of thermal throttling,
+since the more cores are busy the harder the package clocks down. (Worth checking rather than
+assuming, because run 2 followed a code change — measured separately, `children()` costs **−6.6 %**
+against `spawn()`, i.e. −0.02 % of a replication. Not the cause.)
+
+`reps=2` is the point of the configuration: the old code could not exceed two workers, so the
+whole-reps row **was its floor**. Lockstep beats it in all three runs (40.2 / 58.4 / 47.6 against
+60.7 / 72.3 / 69.4). That ordering is the result; the absolute ratios are local colour.
+
+**Four workers is the practical ceiling on this machine** — by run 3, 8 jobs (48.4 s) buys nothing
+over 4 (47.6 s). The M2 is 4 performance + 4 efficiency cores, so "8 workers" was never 8× the
+compute, and the extra four mostly add heat. **Do not read a 96-core forecast off this table**: a
+homogeneous server that holds its clocks should do materially better, and that is what the box run
+is for.
 
 ## The answer does not move
 
@@ -75,11 +87,20 @@ collapses repeated references to *one* object, so identity is worth as much as t
 
 ## Two things that bit during implementation
 
-**`SeedSequence.spawn` is stateful.** It hands out children from the parent's
-`n_children_spawned`, so calling `ips_once` twice with the *same* seed object silently gives
-different answers — the second run walks a different subtree. This produced a convincing false
-"the results changed" signal and cost real debugging time. No current caller is wrong
-(`replication_seeds` returns fresh objects), but it is a sharp edge worth a guard.
+**`SeedSequence.spawn` is stateful**, and that made the estimators impure. It hands out children
+from the parent's `n_children_spawned`, so `ips_once` — whose first line used to be `seq.spawn(2)`
+— *consumed* its seed argument, and a second call on the same object walked a different subtree
+and returned a different estimate with nothing in the result to show it. This produced a
+convincing false "the results changed" signal and cost real debugging time.
+
+A guard was the obvious response, and it was the wrong one. Writing the test exposed why: in
+whole-replication mode the seeds are pickled to workers, which consume *copies* and leave the
+caller's originals fresh, so there is no state change to detect — reuse would have been silently
+fine at `n_jobs=2` and silently wrong at `n_jobs=1` or 96. A check cannot make that uniform.
+Addressing the tree by index instead (`children(seq, 0, 2)`, which reads without advancing) makes
+`ips_once` a pure function of its arguments on every path, so reuse is simply *safe*. Bit-identical
+to the old behaviour for every existing caller, since all of them passed fresh sequences. Removing
+a footgun beat reporting it.
 
 **Neither obvious memo spelling survives a worker.** `functools.cached_property` holds an `RLock`
 on Python 3.11; an `lru_cache` wrapper is a C object that pickles by *reference*, so the worker

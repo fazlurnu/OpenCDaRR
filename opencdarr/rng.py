@@ -26,6 +26,14 @@ explicit, documented tree — which is what lets an experiment's provenance reco
 its parent and its position, so a parallel worker can rebuild only the slice it needs
 rather than receiving the whole fan-out. They produce exactly what :func:`spawn` would.
 
+They also leave the parent **untouched**, which :func:`spawn` does not — it is stateful,
+handing out children from ``n_children_spawned``, so fanning out twice from one object
+continues the numbering instead of repeating it. A routine that spawns from its seed
+argument therefore quietly returns a different answer the second time it is called on
+that object. Routines meant to be reproducible from their arguments alone (the
+estimators in :mod:`opencdarr.ips` and :mod:`opencdarr.parallel`) address by index for
+exactly that reason, and are pure functions of the sequence they are handed.
+
 Every function that needs randomness should take a ``numpy.random.Generator`` as an
 explicit argument; this module is the only place a generator is created.
 """
@@ -56,30 +64,6 @@ def spawn(parent: np.random.SeedSequence, n: int) -> list[np.random.SeedSequence
     if n < 0:
         raise ValueError(f"n must be non-negative, got {n}")
     return list(parent.spawn(n))
-
-
-def require_fresh(seq: np.random.SeedSequence, what: str) -> None:
-    """Raise unless ``seq`` has never been fanned out — i.e. it is still an unused internal node.
-
-    :func:`spawn` is **stateful**: it hands out children starting from ``n_children_spawned``, so a
-    second fan-out from the same object continues the numbering rather than repeating it. A routine
-    that spawns from its seed argument therefore *consumes* it, and re-running that routine on the
-    same object silently walks a different stream tree — same call, same seed, different answer,
-    with nothing to show for it. That is the worst shape of bug: plausible wrong numbers.
-
-    So the module contract ("an internal node is fanned out **once**") gets a check at the doors
-    that matter. Callers pass a freshly built sequence — :func:`root_seed_sequence`,
-    :func:`spawn`, :func:`child`, or :func:`~opencdarr.ips.replication_seeds` — every time.
-    """
-    spawned = seq.n_children_spawned
-    if spawned:
-        raise ValueError(
-            f"{what} needs a SeedSequence that has not been spawned from, but this one has "
-            f"already handed out {spawned} children. Spawning again continues from there, so the "
-            f"run would silently use a different stream tree than the first one did. Build a "
-            f"fresh sequence (re-call replication_seeds / root_seed_sequence) instead of reusing "
-            f"the object."
-        )
 
 
 def child(parent: np.random.SeedSequence, i: int) -> np.random.SeedSequence:

@@ -90,16 +90,20 @@ def test_unreachable_shell_collapses() -> None:
     assert r.prob == 0.0
 
 
-def test_reusing_a_seed_object_is_rejected() -> None:
-    """``seq`` is consumed: a second run on the same object would walk a different stream tree.
+def test_reusing_a_seed_object_gives_the_same_run() -> None:
+    """``ips_once`` is a pure function of its seed: the same object twice gives the same answer.
 
-    Left unguarded this is silent — same call, same seed, different answer — so it is refused with
-    a message pointing at ``replication_seeds``. Re-running a replication means a *fresh* sequence.
+    It addresses the stream tree by index rather than spawning from ``seq``, so nothing is
+    consumed. Were it to spawn, ``SeedSequence.spawn``'s statefulness would send the second call
+    down a different tree and return a different estimate, with nothing in the result to show it —
+    exactly the silent failure this pins shut.
     """
     seq = root_seed_sequence(4)
-    ips_once(_build_initial, [60.0, 55.0], 20, seq)
-    with pytest.raises(ValueError, match="not been spawned from"):
-        ips_once(_build_initial, [60.0, 55.0], 20, seq)
+    first = ips_once(_build_initial, [60.0, 55.0], 20, seq)
+    second = ips_once(_build_initial, [60.0, 55.0], 20, seq)
+    assert first.survival == second.survival
+    assert first.prob == second.prob
+    assert seq.n_children_spawned == 0  # ... and the caller's sequence comes back untouched
 
 
 def test_deterministic_from_seed() -> None:

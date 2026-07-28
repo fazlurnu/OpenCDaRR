@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from opencdarr.rng import child, children, generator, require_fresh, root_seed_sequence, spawn
+from opencdarr.rng import child, children, generator, root_seed_sequence, spawn
 
 
 def _draw(seq: np.random.SeedSequence) -> int:
@@ -75,37 +75,21 @@ def test_children_chunks_tile_the_whole_fan_out() -> None:
     assert [_draw(k) for k in chunked] == [_draw(k) for k in spawn(root, 12)]
 
 
-def test_require_fresh_accepts_an_unspawned_sequence() -> None:
-    """Everything the module hands out is fresh: roots, spawned children, indexed children."""
-    root = root_seed_sequence(3)
-    require_fresh(root, "test")
-    require_fresh(spawn(root, 2)[1], "test")
-    require_fresh(child(root_seed_sequence(3), 4), "test")
+def test_spawn_consumes_the_parent_but_children_does_not() -> None:
+    """The reason the estimators address by index instead of spawning.
 
-
-def test_require_fresh_rejects_a_consumed_sequence() -> None:
-    """Once spawned from, a sequence would hand out *different* children next time — reject it.
-
-    The error has to name the routine and say what to do instead, because the failure it prevents
-    is silent: the same call on the same object returning a different answer.
+    ``spawn`` twice from one object yields a *different* tree the second time — not a
+    hypothetical, this produced a convincing false "the results changed" signal during the
+    parallel-scheduler work. ``children`` reads the same tree without advancing anything, so a
+    routine built on it stays a pure function of the sequence it was handed.
     """
     root = root_seed_sequence(3)
-    spawn(root, 2)
-    with pytest.raises(ValueError, match="already handed out 2 children"):
-        require_fresh(root, "some_estimator")
+    assert [_draw(k) for k in spawn(root, 2)] != [_draw(k) for k in spawn(root, 2)]
+    assert root.n_children_spawned == 4
 
-
-def test_reusing_a_sequence_really_would_change_the_stream() -> None:
-    """The bug the guard exists for: spawn twice from one object, get a different tree.
-
-    Not a hypothetical — this produced a convincing false 'the results changed' signal during the
-    parallel-scheduler work. Pinned so the guard's reason for existing is visible, not just its
-    behaviour.
-    """
-    root = root_seed_sequence(3)
-    first = [_draw(k) for k in spawn(root, 2)]
-    second = [_draw(k) for k in spawn(root, 2)]  # continues at index 2, not back to 0
-    assert first != second
+    fresh = root_seed_sequence(3)
+    assert [_draw(k) for k in children(fresh, 0, 2)] == [_draw(k) for k in children(fresh, 0, 2)]
+    assert fresh.n_children_spawned == 0
 
 
 def test_rejects_negative_indices() -> None:

@@ -74,7 +74,9 @@ The claim is exact equality, not statistical equivalence, and it rests on:
 - the per-level map is order-independent — particle *i* reads only `particles[i]` and `seeds[i]`;
 - **substreams are addressed by index, not consumed in sequence.** `spawn(parent, n)[i]` extends
   the parent's `spawn_key` by `i`, independent of `n`, so a worker rebuilds exactly its own slice
-  (`rng.child` / `rng.children`) without spawning siblings and without touching the parent;
+  (`rng.child` / `rng.children`) without spawning siblings and without touching the parent.
+  `ips_once` and the lockstep driver now build their *whole* tree this way, which additionally
+  makes them pure functions of the sequence handed in — see §6;
 - joblib returns results in submission order, so concatenating shards reproduces the serial list;
 - everything after the map — survivor filter, survival fraction, the resample draw from its own
   stream — runs in the parent on that identical list.
@@ -111,21 +113,41 @@ spellings break there: `functools.cached_property` holds an `RLock` on Python 3.
 `lru_cache` wrapper is a C object that pickles by *reference* — either one fails when cloudpickle
 ships a `__main__` class to a worker. Both were hit during implementation.
 
+### 6. The estimators address their seed tree by index rather than spawning from it
+
+`SeedSequence.spawn` is stateful, so `ips_once`'s old opening line `seq.spawn(2)` *consumed* its
+argument: a second call on the same object walked a different subtree and returned a different
+estimate, with nothing in the result to reveal it. That cost real debugging time during this work.
+
+The obvious fix — reject a already-spawned-from sequence — turns out not to work, and writing the
+test is what showed it. In whole-replication mode the seeds are pickled to workers, which consume
+*copies*; the caller's originals stay untouched. So reuse would have been silently harmless at
+`n_jobs=2` and silently wrong at `n_jobs=1` or 96, and no guard can reconcile that, because in the
+tolerant case there is no state change to observe.
+
+Building the tree with `children(seq, 0, n)` instead — which reads the same children without
+advancing anything — makes `ips_once` and `_lockstep` pure functions of their arguments on every
+path. Reuse becomes safe rather than detected, and the behaviour no longer depends on `n_jobs`.
+Bit-identical for every existing caller, all of which passed fresh sequences.
+
 ## Consequences
 
 **Measured on the M2 dev box** (`scripts/bench_ips_parallel.py`, `reps=2`, 2000 particles × 17
 shells, `dt=0.5`) — the gate that runs before any big-box deployment:
 
-| jobs | schedule | wall | speedup |
-|---|---|---|---|
-| 1 | serial | 112.8 s | 1.00× |
-| 2 | whole-reps | 60.7 s | 1.86× |
-| 4 | lockstep, 8 tasks/level | 40.2 s | 2.81× |
-| 8 | lockstep, 16 tasks/level | 33.8 s | 3.34× |
+| jobs | schedule | wall (3 runs) |
+|---|---|---|
+| 1 | serial | 112.8 / 124.2 / 119.1 s |
+| 2 | whole-reps | 60.7 / 72.3 / 69.4 s |
+| 4 | lockstep, 8 tasks/level | 40.2 / 58.4 / 47.6 s |
+| 8 | lockstep, 16 tasks/level | 33.8 / 55.5 / 48.4 s |
 
-Identical survival fingerprint at every worker count. With `reps=2` the old code could not exceed
-two workers, so 60.7 s was its floor; lockstep reaches 33.8 s. Efficiency falling to 42 % at 8 jobs
-is the hardware — the M2 is 4 performance + 4 efficiency cores — not the scheduler.
+Identical survival fingerprint at every worker count in every run. With `reps=2` the old code could
+not exceed two workers, so the whole-reps row was its floor; lockstep beats it in all three. The
+spread is thermal — serial varies 10 % across runs while 8-way varies 64 %, which is what a
+throttling laptop looks like — so the ordering is the result and the ratios are local colour. Four
+workers is this machine's practical ceiling (it has 4 performance + 4 efficiency cores, and by run
+3 eight jobs bought nothing over four). The 96-core figure is still to be measured.
 
 `examples/handbook/rare_event_ips.ipynb` re-runs to `P(LoS) = 4.17e-05`, CI and all 17 survival
 fractions unchanged from its stored output.
