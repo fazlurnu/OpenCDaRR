@@ -1,5 +1,19 @@
 # Design Brief — CDaRR, rebuilt with BlueSky as a library
 
+> **Historical document.** Written 2026-07-18, before any code existed. Kept as the record of the
+> original intent; the build overturned two of its premises.
+>
+> - **[BlueSky](https://github.com/TUDelft-CNS-ATM/bluesky) is no longer a dependency.** The
+>   geodesy is ours — `opencdarr/geo.py`, per ADR 0003 — so shipping code depends only on `numpy`
+>   and `pyyaml`. BlueSky survives as an offline validation anchor, not as the runtime library this
+>   brief describes.
+> - **`step_dynamics` became an interface.** The single extracted function grew into the
+>   `opencdarr/dynamics/` package: `Multirotor` and `FixedWing` behind a `Dynamics` abstract base
+>   class, exchanging `MotionCommand` setpoints (ADRs 0007, 0010, 0011).
+>
+> For the architecture as built, see
+> [`vault/architecture-dataflow.md`](../vault/architecture-dataflow.md).
+
 Written 2026-07-18. Successor to `refactor_fp.md` and the (now abandoned) engine-rewrite
 spec. This is a **brief, not an implementation plan** — deliberately lean, per
 `lesson-learnt.md`: it fixes the goal and the spine, names the decisions, and stops. No

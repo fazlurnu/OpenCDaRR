@@ -1,10 +1,13 @@
-# Design Philosophy — CDaRR (draft to ratify)
+# Design Philosophy — CDaRR
 
-**This is a draft menu, not law.** Adapted from *The Pragmatic Programmer* (Thomas &
-Hunt) and *Clean Code* (Martin), tuned for research code that must be **reproducible and
-defensible to reviewers**, in Python, with BlueSky used as a *library*. Go through it and
-**accept / reject / reword each principle until it's yours** — a principle you didn't
-choose is one you won't follow.
+**Ratified.** It began as a menu to accept or reject; the build settled it, and the numbered
+principles below are now cited as fixed references elsewhere in the repo — `pyproject.toml` cites
+#10 and #12 for keeping the dependency list short, `vault/experiments/README.md` cites #4 for
+provenance, `vault/derivations/README.md` cites #11 for naming things after the paper. Renumbering
+them would break those citations, so treat the numbers as stable.
+
+Adapted from *The Pragmatic Programmer* (Thomas & Hunt) and *Clean Code* (Martin), tuned for
+research code that must be **reproducible and defensible to reviewers**, in Python.
 
 *How to use it:* when you or an agent are unsure how to write something, this is the
 tiebreaker. When two principles conflict — they will — the "Tensions" note at the bottom
@@ -53,7 +56,7 @@ section is what this project adds.
 ## Core — purity & reproducibility (load-bearing; hardest to add later)
 
 1. **Pure by default, effects at the edges.** Detection / dynamics / resolution /
-   recovery are pure `state → value`. RNG, file I/O, and BlueSky calls live only in a thin
+   recovery are pure `state → value`. RNG, file I/O, and third-party calls live only in a thin
    shell. *(Clean Code: no side effects. Pragmatic: orthogonality.)*
 2. **One owner of state; pass it, don't hide it.** No module-level or singleton state
    carrying results between calls. *(This is the exact bug class — KI-1, ADSL — that cost
@@ -62,9 +65,11 @@ section is what this project adds.
    spawn reproducibly. Non-negotiable for a rare-event estimator.
 4. **Reproducibility is a feature, tested like one.** A run = `config + seed + code-hash
    → result`. If it can't be regenerated, it's broken — even if the number looks right.
-5. **Wrap third parties at a boundary; never let their globals leak inward.** BlueSky is
-   called only behind your own interfaces, so it stays swappable and its global state
-   never touches yours. *(Clean Code: boundaries. Pragmatic: reversibility.)*
+5. **Wrap third parties at a boundary; never let their globals leak inward.** Applied to
+   [BlueSky](https://github.com/TUDelft-CNS-ATM/bluesky), this principle worked so well that the
+   dependency was removable: it sat behind our own interfaces until ADR 0003 replaced the last
+   call with `opencdarr/geo.py`, and nothing above the boundary changed. Shipping code now depends
+   only on `numpy` and `pyyaml`. *(Clean Code: boundaries. Pragmatic: reversibility.)*
 
 ## Legibility — write for the reviewer, not the machine
 
@@ -133,4 +138,5 @@ section is what this project adds.
 
 ---
 *Companion docs:* `design_brief.md` (what to build) · `how-to-step-by-step.md` (the
-order & process) · `lesson-learnt.md` (why we work this way).
+order & process) · `roadmap.md` (the milestone trajectory) · `lesson-learnt.md` (why we
+work this way) · `vault/architecture-dataflow.md` (the architecture as built).

@@ -29,7 +29,10 @@ swappable module, lives at **[opencdarr.github.io](https://opencdarr.github.io)*
 
 Separation algorithms act on what CNS delivers, never on the ground truth, and what an aircraft
 perceives about itself is not what the intruder perceives about it. That gap, **asymmetric
-situational awareness**, is what a measurement noise and a missed or late broadcast add up to: two aircraft in the same encounter, neither seeing the other where it is, nor the same way the other does. A resolver evaluated on ground truth never meets that gap, so modelling it is the point of this platform.
+situational awareness**, is what measurement noise and a missed or late broadcast add up to: two
+aircraft in the same encounter, neither seeing the other where it is, nor seeing it the same way
+the other does. A resolver evaluated on ground truth never meets that gap, so modelling it is the
+point of this platform.
 
 ![One multirotor-vs-fixed-wing crossing, resolved under four progressively harder conditions](docs/img/overview.png)
 
@@ -72,10 +75,16 @@ pip install -e ".[dev]"
 ## Test
 
 ```bash
-pytest        # run the test suite
+pytest        # run the test suite — 339 tests, green
 mypy          # type-check (strict; type hints everywhere)
 ruff check    # lint
 ```
+
+`pytest` is the gate that passes. `mypy` and `ruff` are aimed at the whole tree rather than at
+shipping code alone, so both currently report findings — 94% of them in `scripts/` and the example
+notebooks, which [`docs/design-philosophy.md`](docs/design-philosophy.md) #12 deliberately holds to
+speed rather than rigor. Scoping the two tools to that same split is a post-freeze task; see
+[`vault/TODO.md`](vault/TODO.md).
 
 ## Documentation
 
@@ -88,17 +97,22 @@ resolution / recovery, CNS, wind, rare events). Runnable notebooks for the same 
 If you want to *extend* it, the **why / what / how** live in [`docs/`](docs/); the linked knowledge
 vault lives in [`vault/`](vault/).
 
-- [`docs/design_brief.md`](docs/design_brief.md): **what** to build (goal, architecture, the
-  BlueSky-as-a-library spine).
+- [`docs/design_brief.md`](docs/design_brief.md): **what** to build (goal and architecture). A
+  historical record of the intent the project started from, not a description of the code as built.
 - [`docs/design-philosophy.md`](docs/design-philosophy.md): **how** to write it (the standards;
   the tiebreaker).
 - [`docs/how-to-step-by-step.md`](docs/how-to-step-by-step.md): the **build order** and the process
-  for each step.
+  for each step, as it was followed.
 - [`docs/roadmap.md`](docs/roadmap.md): the milestone trajectory (v0.1 to v1.0).
+- [`docs/fixedwing-vs-bluesky.md`](docs/fixedwing-vs-bluesky.md): the fixed-wing equations of
+  motion, compared term by term against
+  [BlueSky](https://github.com/TUDelft-CNS-ATM/bluesky)'s.
 - [`docs/lesson-learnt.md`](docs/lesson-learnt.md): **why** the project is built this way.
 
-`vault/` is the contributor-facing knowledge base: decisions (ADRs), derivations, observations,
-algorithms, papers, and one provenance card per experiment.
+`vault/` is the contributor-facing knowledge base: decisions (architecture decision records, ADRs),
+derivations, and observations. The architecture as built is in
+[`vault/architecture-dataflow.md`](vault/architecture-dataflow.md). Reference papers are kept out of
+git, and experiment provenance cards are written at run time rather than committed.
 
 ## License
 

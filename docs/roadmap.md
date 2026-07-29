@@ -13,6 +13,13 @@ steps *inside* the early versions, see the build order in `how-to-step-by-step.m
   **not** built on OpenCDaRR — don't couple a paper deadline to a rebuild (`lesson-learnt.md`).
 - **OpenCDaRR is for the *next* paper, and the research after it.**
 
+## Where things stand
+
+The v0.1–v0.4 gates below are green: the CDaRR stack, the CNS layer, wind, the N-aircraft fleet
+environment and the rare-event estimator all run and are covered by tests. No version has been
+tagged — `pyproject.toml` still carries `version = "0.0.0"` and the public interface is not frozen —
+so read the milestones as capability gates, not as releases. v0.5 and v1.0 are open.
+
 ---
 
 ## Toward the next paper
@@ -21,19 +28,36 @@ steps *inside* the early versions, see the build order in `how-to-step-by-step.m
 encounter + one CDR method + plain Monte Carlo.
 *Done:* an end-to-end run from `config + seed` reproduces a known anchor within MC error.
 *(how-to Steps 0–2.)*
+*Gate green:* `run_encounter` in `opencdarr/loop.py`, `run_one_experiment` in `experiment.py`
+(`config + seed + code-hash → result`), and `estimate_ipr` in `estimator.py`. The dynamics are
+validated analytically (ADR 0002) and, for the multirotor, against a recorded
+[BlueSky](https://github.com/TUDelft-CNS-ATM/bluesky) trajectory (ADR 0005). `step_dynamics` itself
+became the `Dynamics` interface — see the note under *Pluggable dynamics* below.
 
 **v0.2 — Full CDR under CNS uncertainty.** All three CDR stages (detection, resolution,
 recovery) + the CNS noise / comms models, pairwise.
 *Done:* each CDR method reproduces its old-code anchor under uncertainty. *(how-to Step 3.)*
+*Gate green:* `cd/` (`StateBased`), `cr/` (`MVP`, `VO`), `crr/` (`FTR`, `PastCPA`,
+`ProbabilisticFTR`), and the `cns/` stack — one `sense()` call chaining navigation, communication
+and surveillance. Trajectory-level agreement with the reference pipeline is recorded in
+`vault/observations/trajectory-level-comparison.md`.
 
 **v0.3 — Multi-aircraft.** N-aircraft environment + an explicit coordination model (written
 up as an ADR: cooperative / priority / sequential).
 *Done:* reduces to the v0.1 pairwise result at N=2. *(how-to Step 4; reviewer item #1.)*
+*Gate green:* `run_fleet` / `FleetEnv` in `opencdarr/fleet.py`, with the layered-directed
+coordination model in ADR 0004. The N=2 reduction is asserted bit-for-bit — `tests/test_fleet.py`,
+and the `--verify-n2` check that `scripts/ipr_fleet_sweep.py` runs by default.
 
 **v0.4 — Rare events.** The `advance` / `level` / `is_terminal` interface + Blom–Bakker
 interacting particle system (IPS).
 *Done:* IPS agrees with brute-force MC in a *not-too-rare* regime; collision probability is
 reported **with a confidence interval**. *(how-to Steps 5–6.)*
+*Gate green:* `opencdarr/ips.py` (levels and splitting, ADR 0017) and `opencdarr/parallel.py`
+(scheduling across particles and replications, ADR 0018). `RareEventEstimate` carries a 95%
+confidence interval. The agreement gate is `scripts/ips_validate.py`, written up in
+`vault/observations/ips-gate1-correctness.md`; the efficiency gate is
+`ips-gate2-efficiency.md`.
 
 > **The next paper is written from v0.1–v0.4:** reproducible CDR robustness under CNS
 > uncertainty, extended to multi-aircraft encounters and rare-event collision-risk
@@ -68,30 +92,34 @@ against Past-CPA / FTR / Probabilistic-FTR.
   file, validate against the anchors, open a PR.
 - **Formal verification / trust-vs-guarantees** thread (reviewer items #3–4, carried
   forward).
-- **Pluggable dynamics / OpenAP aircraft** — separate the *dynamics interface* from its
-  implementation: `DronePointMass` (the v0.1 M600 model) and an `OpenAPDynamics` behind the
-  same `step(state, command, perf, dt) -> state` seam, selectable by config. OpenAP is a
-  standalone library (the M600 envelope already comes from its rotor database), so richer
-  aircraft need no BlueSky. Richer models grow the state (alt, vertical rate, mass) — a
-  deliberate, re-validated change. Build the abstraction only when the *second* model
-  (OpenAP) actually arrives, not before (don't frame for an audience of one).
+- **OpenAP aircraft** — the *dynamics interface* is done: `Dynamics` is an abstract base class
+  with `Multirotor` and `FixedWing` behind a `step(state, command, perf, dt, wind) -> state` seam,
+  and `Performance` is plain data a user can write
+  (`examples/03_build_your_own_performance.ipynb`). What remains is a *second family* of models —
+  an `OpenAPDynamics`. OpenAP is a standalone library (the M600 envelope already comes from its
+  rotor database), so richer aircraft need no
+  [BlueSky](https://github.com/TUDelft-CNS-ATM/bluesky). Richer models grow the state (alt,
+  vertical rate, mass) — a deliberate, re-validated change, and the reason to wait until a real
+  OpenAP model arrives rather than generalising for an audience of one.
 - **Performance: vectorized SoA step** — reach BlueSky-class speed by advancing a
   Structure-of-Arrays world/particle batch in one vectorized numpy step, instead of a Python
   loop over per-aircraft `AircraftState`. The pure, plain-data design already allows this; the
   math already vectorizes (`geo.forward` uses numpy ufuncs; the turn-rate limiter was
   vectorized in the BlueSky source we extracted from). For rare-event work the highest-value
   axis is batching across **particles** (each a small clonable world), then joblib across
-  CPUs. Do it on a *measured* profile, not on spec (`design-philosophy.md`: purity wins until
-  a measured bottleneck), in three steps:
-  1. **Keep the scalar model now** — the legible `step_dynamics` is the tracer bullet and the
-     reference; do not vectorize prematurely.
+  CPUs — the joblib half of that already shipped as `opencdarr/parallel.py` (ADR 0018), which
+  spreads an IPS run over particles *and* replications; the vectorized step below has not. Do it
+  on a *measured* profile, not on spec (`design-philosophy.md`: purity wins until a measured
+  bottleneck), in three steps:
+  1. **Keep the scalar model now** — the legible per-aircraft `Dynamics.step` is the reference;
+     do not vectorize prematurely.
   2. **When a profile shows the loop dominates, add `step_batch`** — a SoA step over
      particles/aircraft, behind the same `Dynamics` seam, validated to match the scalar
      reference (the analytical ⊂ … validation ladder).
   3. **If numpy still isn't enough, escalate** — `numba`-JIT the pure functions, and only as a
      last resort the Rust engine (`engine_rewrite_spec`), each on measured evidence.
 - **Engine replacement** — only if a *measured* reason appears (speed, licensing, missing
-  physics). The `step_dynamics` boundary makes it cheap; do it on evidence, not on spec.
+  physics). The `Dynamics` boundary makes it cheap; do it on evidence, not on spec.
 
 ---
 
@@ -104,4 +132,6 @@ against Past-CPA / FTR / Probabilistic-FTR.
 
 ---
 *Companion docs:* `design_brief.md` (what) · `design-philosophy.md` (how) ·
-`how-to-step-by-step.md` (build steps) · `lesson-learnt.md` (why).
+`how-to-step-by-step.md` (build steps) · `lesson-learnt.md` (why) ·
+`fixedwing-vs-bluesky.md` (the fixed-wing equations of motion, compared) ·
+`vault/architecture-dataflow.md` (the architecture as built).

@@ -1,5 +1,15 @@
 # How to drive a coding agent to build the new CDaRR
 
+> **Historical document.** Written 2026-07-18 as a forward plan. The build order in Part B was
+> followed to completion — Steps 0 through 7 all shipped — so this reads now as a record of how the
+> work was run, not as a live plan. Part A, the per-step loop, is still the working process.
+>
+> Two things it says have moved on. The spine it inherits from `design_brief.md`,
+> [BlueSky](https://github.com/TUDelft-CNS-ATM/bluesky) as a library, was dropped when the geodesy
+> became ours (ADR 0003). And the four documents you carry into a clean session are now five: the
+> knowledge vault in [`vault/`](../vault/) carries the decisions, derivations and observations that
+> did not exist when this was written.
+
 For **you** — still learning to manage an AI coding collaborator — to build the new CDaRR
 one step at a time, staying in control and *understanding what's going on*. It is both a
 **process** (Part A: how to run any step) and a **build order** (Part B: the milestones).
