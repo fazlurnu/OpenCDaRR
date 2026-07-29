@@ -10,10 +10,6 @@ Plain Monte Carlo needs on the order of 10¹¹ runs to resolve a probability tha
 platform ships the pieces needed to actually run that test: a **dynamics** model, a **separation
 manager** framework, an environment with **CNS** uncertainty and **wind**, and a **rare-event
 simulation** that reaches the tail with far fewer runs.
-[BlueSky](https://github.com/TUDelft-CNS-ATM/bluesky) is the inspiration, not a dependency: the
-state, the loop, and the geodesy are written here as plain, explicit data, and the shipping code
-depends on numpy alone. The design is built for three things: **reproducibility, readability, and
-maintainability**, research code that must be defensible to reviewers.
 
 The scope is deliberately narrow: a few aircraft in one encounter, run thousands of times. For
 **air traffic simulation at airspace scale**, with real navaid, airport and route data, whole-day
