@@ -67,6 +67,67 @@ def test_run_fleet_reduces_to_run_encounter_noisy() -> None:
         assert (flt.conflict, flt.los) == (enc.conflict, enc.los)
 
 
+# The crossing angles the plain-MC estimator actually samples: ``sample_pairwise`` draws
+# ``dpsi ~ U(5, 355)``, so the support runs from near-parallel through head-on and back. Both
+# passing sides are drawn too. These are the ends where the closing geometry is most degenerate.
+_SWEEP_ANGLES = (5.0, 45.0, 90.0, 180.0, 270.0, 355.0)
+
+
+def _sweep_kw() -> dict:
+    """The estimator's own run parameters (``scripts/ips_validate.py``'s scenario values)."""
+    return dict(rpz=_RPZ, t_lookahead=_LOOKAHEAD, dt=0.5, detector=StateBased(),
+                resolver=MVP(margin=1.05), recovery=PastCPA(bouncing_guard=True),
+                t_max=250.0, done_timeout=10.0)
+
+
+def test_run_fleet_reduces_to_run_encounter_across_the_angle_sweep() -> None:
+    """The reduction holds across the whole crossing-angle support the MC estimator samples.
+
+    The reduction tests above each pin *one* geometry (90°, 45°). The estimator sweeps ``dpsi``
+    over ``(5, 355)`` and both passing sides, so this walks that support — including the
+    near-parallel and head-on ends, where a divergence between the two runners would be likeliest
+    to hide. It is the precondition for driving plain MC through ``run_fleet``.
+    """
+    for dpsi in _SWEEP_ANGLES:
+        for side in (1, -1):
+            own = AircraftState(id="OWN", lat=52.0, lon=4.0, trk=0.0, gs=10.2889)
+            intr = create_conflict(own, intr_id="INT", dpsi=dpsi, dcpa=0.0, tlos=90.0,
+                                   rpz=_RPZ, side=side)
+            kw = _sweep_kw()
+            enc = run_encounter(own, intr, perf=M600, **kw)
+            flt = run_fleet([Agent(own, M600), Agent(intr, M600)], **kw)
+            assert (flt.conflict, flt.los, flt.min_sep) == (enc.conflict, enc.los, enc.min_sep), (
+                f"reduction broke at dpsi={dpsi}, side={side}"
+            )
+
+
+def test_run_fleet_reduces_to_run_encounter_across_the_angle_sweep_noisy() -> None:
+    """The same sweep under GNSS noise, on the **estimator's own substream layout**.
+
+    Mirrors ``estimate_ipr``'s per-encounter split — ``spawn(seq, 3)`` into geometry / navigation /
+    communication, always three regardless of which layers are live (ADR 0006 §6) — so this pins
+    the exact wiring the MC estimator hands its runner. The geometry substream is spawned and left
+    unread here because the geometry is pinned; that is the point of a config-invariant tree.
+    """
+    for i, dpsi in enumerate(_SWEEP_ANGLES):
+        for side in (1, -1):
+            own = AircraftState(id="OWN", lat=52.0, lon=4.0, trk=0.0, gs=10.2889,
+                                pos_ci95=10.0, vel_ci95=1.0)
+            intr = create_conflict(own, intr_id="INT", dpsi=dpsi, dcpa=0.0, tlos=90.0,
+                                   rpz=_RPZ, side=side)
+            kw = _sweep_kw() | dict(navigation=GnssNavigation())
+            agents = [Agent(own, M600), Agent(intr, M600)]
+
+            _, nav_e, _ = spawn(spawn(root_seed_sequence(11), len(_SWEEP_ANGLES))[i], 3)
+            enc = run_encounter(own, intr, perf=M600, rng=generator(nav_e), **kw)
+            _, nav_f, _ = spawn(spawn(root_seed_sequence(11), len(_SWEEP_ANGLES))[i], 3)
+            flt = run_fleet(agents, rng=generator(nav_f), **kw)
+
+            assert (flt.conflict, flt.los, flt.min_sep) == (enc.conflict, enc.los, enc.min_sep), (
+                f"noisy reduction broke at dpsi={dpsi}, side={side}"
+            )
+
+
 def _comm() -> Comm:
     """A lossy link: 80% reception, lognormal latency — the same on every call."""
     return Comm(reception_prob=0.8, latency=lognormal_latency(0.1, 0.25))

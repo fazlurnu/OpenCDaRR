@@ -20,10 +20,13 @@ IPS `level=`, AMS adaptive shells, phase-9 state accumulators, `n_particles` see
 
 ---
 
-## 1. Wire the code hash into the experiment card ← **current**
+## 1. Wire the code hash into the experiment card — **done 2026-07-29**
 
-- [ ] Replace the literal `code_hash: (deferred)` in `experiment.py:_write_card` with
-      `cache.code_fingerprint()`.
+- [x] Replace the literal `code_hash: (deferred)` in `experiment.py:_write_card` with
+      `cache.code_fingerprint()`. Stale module docstring ("A code-hash stamp is deferred") updated
+      to match. Full suite green (331 passed); a card now reads `code_hash: 4985ab5efa747ce1`, and
+      the digest was checked against an independent reimplementation and shown to move when any
+      `opencdarr/*.py` byte changes.
 
 `opencdarr/cache.py` has computed this since it landed — a sha256 over every `opencdarr/**/*.py`,
 memoised per process. The card has simply never called it. This is the `config + seed + code-hash →
@@ -34,10 +37,39 @@ result` contract the whole reproducibility story rests on
 - **Verify:** `pytest tests/test_experiment.py`; the card's hash changes when any `opencdarr/*.py`
   changes and is stable otherwise. No existing test pins the placeholder string.
 
-## 2. Route plain MC through `build_env` / `run_fleet`
+## 2. Route plain MC through `build_env` / `run_fleet` — **done 2026-07-29**
 
-- [ ] Make the MC estimator build a `FleetEnv` and step `advance`, instead of calling
-      `run_encounter` directly.
+- [x] `estimate_ipr` now runs each encounter through `run_fleet` at n=2 (so `build_env` /
+      `advance` / `is_terminal` — the same interface IPS drives) instead of calling
+      `run_encounter`. Gained three keyword-only arguments that were previously reachable through
+      IPS but not through MC: `dynamics`, `wind`, `share_intent`. `config.simulation.
+      broadcast_interval` maps to `BroadcastSchedule(interval=...)` — aligned phase, no jitter, so
+      no broadcast stream is ever drawn from and the substream tree is unchanged (ADR 0006 §6).
+
+**Verified.** Parity was established *before* the refactor, then re-checked after:
+
+- New reduction tests over the estimator's actual crossing-angle support — `dpsi ∈ {5, 45, 90, 180,
+  270, 355}` × both sides, noiseless and noisy, on `estimate_ipr`'s own `spawn(seq, 3)` layout.
+  The pre-existing reduction tests each pinned a single geometry (90°, 45°), so the sweep ends —
+  where the closing geometry is most degenerate — were untested.
+- Old-vs-new parity: the pre-refactor body reconstructed and compared across five CNS regimes
+  (noiseless ± resolver, nav noise with MVP+PastCPA and with VO+FTR, nav noise + lossy comm) —
+  identical counts throughout. Then a sharper per-encounter check on *sampled* geometry comparing
+  exact float `min_sep`: **0 mismatches in 480 encounters**, at noise levels giving 0, 2, 16 and 47
+  LoS out of 120 (so the comparison actually discriminates rather than matching 0 against 0).
+- Two permanent anchors added to `tests/test_estimator.py`, which previously pinned only
+  *relations* (reproducible, pools, above baseline) and so would have accepted a refactor that
+  changed every number: a **golden anchor** on exact counts (22/200, IPR 0.89 at pos_ci95=60), and
+  `test_dynamics_reaches_the_mc_path`, the regression that would have caught this defect. The
+  latter asserts an exact identity — an airframe that discards resolution commands must give
+  bit-for-bit what flying with no resolver gives — rather than a loose inequality.
+- Full suite 343 passed; `ruff` clean on the touched files; `mypy` clean on them (the 12 remaining
+  errors are the pre-existing ones [[TODO]] #5 catalogues in other modules);
+  `scripts/ips_validate.py --pos 40` still returns **PASS** with MC and IPS CIs overlapping.
+
+**Deliberately still single-airframe.** `Agent` supports per-aircraft `dynamics`/`perf` (mixed
+fleet, ADR 0011 §7) but `estimate_ipr` passes one of each to both aircraft, because `Config` carries
+one `aircraft_type`. A mixed-fleet MC sweep is a separate change with its own config question.
 
 **The defect this fixes.** `estimate_ipr` calls `run_encounter(...)` without passing `dynamics=`, so
 MC always uses the default `Multirotor` while IPS honours `Agent.dynamics` via `build_env`. A
@@ -55,7 +87,7 @@ One env, one seam, both backends. `record=True` and `stop_within` come along fre
   `(conflict, los, min_sep)` for a fixed seed across a spread of `dpsi`, with and without nav noise.
   The docstrings already claim this reduction; this makes it a test rather than a claim.
 
-## 3. Parametric pairwise sampler
+## 3. Parametric pairwise sampler ← **current**
 
 - [ ] Let `scenario.sample_pairwise` take `dpsi` / `dcpa` / `side` / `gs_intr` as either a fixed
       value or a draw.
