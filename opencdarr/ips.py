@@ -1,4 +1,4 @@
-"""Rare-event estimator — Blom–Bakker interacting particle system (IPS), Phase 8 / ADR 0017.
+"""Rare-event estimator — interacting particle system (IPS), Blom et al. 2007. Phase 8 / ADR 0017.
 
 Fixed-effort multilevel splitting over the fleet estimator interface (``advance / level /
 is_terminal``, :mod:`opencdarr.fleet`). Where plain Monte Carlo (:func:`opencdarr.estimator.
@@ -23,7 +23,7 @@ validation meaningful. Scenario-agnostic: the caller supplies ``build_initial`` 
 particle from a seed) and the shell sequence; everything else rides the interface.
 
 Confidence interval by **independent replications** (§5): within one run the particles interact
-(shared ancestors), so the honest CI comes from ``R`` independent IPS runs, reported in log space.
+(shared ancestors), so a valid CI comes from ``R`` independent IPS runs, reported in log space.
 """
 
 from __future__ import annotations
