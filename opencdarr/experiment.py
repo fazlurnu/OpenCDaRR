@@ -2,8 +2,10 @@
 
 ``run_one_experiment`` is the single top-level a newcomer can read straight through: resolve
 the CDR components named in the config, run the plain-MC estimate, and write one provenance
-card. Effects (the file write) live only here; the estimator stays pure. A code-hash stamp is
-deferred (recorded as such on the card for now).
+card. Effects (the file write) live only here; the estimator stays pure. The card is stamped with
+:func:`opencdarr.cache.code_fingerprint` — a hash of the whole ``opencdarr`` source — so a result
+is anchored to the code that produced it, completing the ``config + seed + code-hash -> result``
+contract (``design-philosophy.md`` #4) rather than just the first two thirds of it.
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ from pathlib import Path
 
 import yaml
 
+from opencdarr import cache
 from opencdarr.cd import StateBased
 from opencdarr.cd.base import ConflictDetector
 from opencdarr.config import Config
@@ -93,7 +96,7 @@ def _write_card(config: Config, result: IPRResult, card_dir: Path) -> Path:
         f"- seed: {config.seed}\n"
         f"- n_encounters: {config.n_encounters}\n"
         f"- IPR: {result.ipr:.6f}  ({result.n_los}/{result.n_conflict} LoS)\n"
-        f"- code_hash: (deferred)\n\n"
+        f"- code_hash: {cache.code_fingerprint()}\n\n"
         f"## Config\n\n```yaml\n{config_yaml}```\n"
     )
     return path
