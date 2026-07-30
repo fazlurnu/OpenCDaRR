@@ -24,13 +24,13 @@ from opencdarr.cns.base import NavigationModel
 from opencdarr.cns.stack import CNS, CnsState, CnsStreams
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr.base import RecoveryCriterion
-from opencdarr.dynamics import Dynamics, Multirotor
 from opencdarr.fleet import Agent, _all_clear, _pairwise_min_sep
+from opencdarr.kinematics import Kinematics, Multirotor
 from opencdarr.loop import _setpoint_adapter
 from opencdarr.separation import INACTIVE, FleetMemory, SeparationManager
 from opencdarr.state import AircraftState, DesiredVelocity
 
-_DEFAULT_DYNAMICS = Multirotor()
+_DEFAULT_KINEMATICS = Multirotor()
 
 LatLon = tuple[float, float]
 Point = tuple[float, float]
@@ -88,9 +88,9 @@ def run_fleet_traced(
     """
     n = len(agents)
     origin = origin or (agents[0].state.lat, agents[0].state.lon)
-    dyns: list[Dynamics] = [a.dynamics or _DEFAULT_DYNAMICS for a in agents]
+    kinematics: list[Kinematics] = [a.kinematics or _DEFAULT_KINEMATICS for a in agents]
     perfs = [a.perf for a in agents]
-    adapters = [_setpoint_adapter(dyns[i], perfs[i]) for i in range(n)]
+    adapters = [_setpoint_adapter(kinematics[i], perfs[i]) for i in range(n)]
     aps = [a.autopilot or CruiseAutopilot(a.state.trk, a.state.gs) for a in agents]
     states = [replace(a.state, desired=DesiredVelocity.from_track_speed(a.state.trk, a.state.gs))
               for a in agents]
@@ -120,7 +120,7 @@ def run_fleet_traced(
                                             detector, resolver, recovery, adapters[i])
             next_bcast += broadcast_interval
 
-        states = [dyns[i].step(states[i], cmds[i], perfs[i], dt) for i in range(n)]
+        states = [kinematics[i].step(states[i], cmds[i], perfs[i], dt) for i in range(n)]
         t += dt
         done_timer = done_timer + dt if _all_clear(states, mems, rpz) else 0.0
         if done_timer >= done_timeout:

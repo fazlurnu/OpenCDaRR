@@ -13,7 +13,7 @@ import dataclasses
 
 from opencdarr import geo
 from opencdarr.autopilot import GuidanceMemory, WaypointAutopilot
-from opencdarr.dynamics import Multirotor
+from opencdarr.kinematics import Multirotor
 from opencdarr.mission import Mission, Waypoint
 from opencdarr.performance import M600
 from opencdarr.state import AircraftState

@@ -29,10 +29,10 @@ encounter + one CDR method + plain Monte Carlo.
 *Done:* an end-to-end run from `config + seed` reproduces a known anchor within MC error.
 *(how-to Steps 0–2.)*
 *Gate green:* `run_encounter` in `opencdarr/loop.py`, `run_one_experiment` in `experiment.py`
-(`config + seed + code-hash → result`), and `estimate_ipr` in `estimator.py`. The dynamics are
+(`config + seed + code-hash → result`), and `estimate_ipr` in `estimator.py`. The kinematics are
 validated analytically (ADR 0002) and, for the multirotor, against a recorded
 [BlueSky](https://github.com/TUDelft-CNS-ATM/bluesky) trajectory (ADR 0005). `step_dynamics` itself
-became the `Dynamics` interface — see the note under *Pluggable dynamics* below.
+became the `Kinematics` interface — see the note under *Pluggable kinematics* below.
 
 **v0.2 — Full CDR under CNS uncertainty.** All three CDR stages (detection, resolution,
 recovery) + the CNS noise / comms models, pairwise.
@@ -92,11 +92,11 @@ against Past-CPA / FTR / Probabilistic-FTR.
   file, validate against the anchors, open a PR.
 - **Formal verification / trust-vs-guarantees** thread (reviewer items #3–4, carried
   forward).
-- **OpenAP aircraft** — the *dynamics interface* is done: `Dynamics` is an abstract base class
+- **OpenAP aircraft** — the *kinematics interface* is done: `Kinematics` is an abstract base class
   with `Multirotor` and `FixedWing` behind a `step(state, command, perf, dt, wind) -> state` seam,
   and `Performance` is plain data a user can write
   (`examples/03_build_your_own_performance.ipynb`). What remains is a *second family* of models —
-  an `OpenAPDynamics`. OpenAP is a standalone library (the M600 envelope already comes from its
+  an `OpenAPKinematics`. OpenAP is a standalone library (the M600 envelope already comes from its
   rotor database), so richer aircraft need no
   [BlueSky](https://github.com/TUDelft-CNS-ATM/bluesky). Richer models grow the state (alt,
   vertical rate, mass) — a deliberate, re-validated change, and the reason to wait until a real
@@ -111,15 +111,15 @@ against Past-CPA / FTR / Probabilistic-FTR.
   spreads an IPS run over particles *and* replications; the vectorized step below has not. Do it
   on a *measured* profile, not on spec (`design-philosophy.md`: purity wins until a measured
   bottleneck), in three steps:
-  1. **Keep the scalar model now** — the legible per-aircraft `Dynamics.step` is the reference;
+  1. **Keep the scalar model now** — the legible per-aircraft `Kinematics.step` is the reference;
      do not vectorize prematurely.
   2. **When a profile shows the loop dominates, add `step_batch`** — a SoA step over
-     particles/aircraft, behind the same `Dynamics` seam, validated to match the scalar
+     particles/aircraft, behind the same `Kinematics` seam, validated to match the scalar
      reference (the analytical ⊂ … validation ladder).
   3. **If numpy still isn't enough, escalate** — `numba`-JIT the pure functions, and only as a
      last resort the Rust engine (`engine_rewrite_spec`), each on measured evidence.
 - **Engine replacement** — only if a *measured* reason appears (speed, licensing, missing
-  physics). The `Dynamics` boundary makes it cheap; do it on evidence, not on spec.
+  physics). The `Kinematics` boundary makes it cheap; do it on evidence, not on spec.
 
 ---
 

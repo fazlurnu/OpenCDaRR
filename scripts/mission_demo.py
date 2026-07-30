@@ -22,7 +22,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 from opencdarr import geo  # noqa: E402
 from opencdarr.autopilot import GuidanceMemory, WaypointAutopilot  # noqa: E402
-from opencdarr.dynamics import Multirotor  # noqa: E402
+from opencdarr.kinematics import Multirotor  # noqa: E402
 from opencdarr.mission import Mission, Waypoint  # noqa: E402
 from opencdarr.performance import M600  # noqa: E402
 from opencdarr.state import AircraftState  # noqa: E402

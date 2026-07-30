@@ -1,13 +1,13 @@
 """Aircraft flight-envelope limits — plain data, one instance per airframe.
 
-Kept separate from ``dynamics.py`` on purpose: the *integrator* (how an aircraft moves)
+Kept separate from ``kinematics.py`` on purpose: the *integrator* (how an aircraft moves)
 should not be tangled with the *limits* (how fast and how tightly this particular airframe
 can move). A new airframe is then a new :class:`Performance` instance, not an edit to the
-step function — the airframe is a value the dynamics reads, not code it hard-codes
+step function — the airframe is a value the kinematics reads, not code it hard-codes
 (``design_brief.md``: the interface is the contribution surface).
 
 Constants are *read* from the BlueSky fork at ``~/Projects/bluesky`` and re-stated here; the
-limiter logic that consumes them is re-derived in ``dynamics.py``, not imported
+limiter logic that consumes them is re-derived in ``kinematics.py``, not imported
 (``lesson-learnt.md``: don't port). See ``vault/derivations/step-dynamics-m600.md``.
 """
 
@@ -27,21 +27,21 @@ class Performance:
     v_min:
         Minimum ground speed, metres per second. Negative for an airframe that can fly
         backward (the M600 envelope allows it); forward-flight scenarios simply command
-        positive speeds, and the dynamics clamps a command into ``[v_min, v_max]``.
+        positive speeds, and the kinematics clamps a command into ``[v_min, v_max]``.
     ax:
         Maximum acceleration, metres per second squared. Bounds how fast the ground speed
         may change per step (the speed analogue of a roll-rate limit for turn rate), so a speed
         command is approached via a ramp, not a jump.
     yaw_rate_max:
         Maximum yaw rate, degrees per second — the limit at which
-        :class:`~opencdarr.dynamics.Multirotor` converges its *nose heading* (``yaw``) toward a
+        :class:`~opencdarr.kinematics.Multirotor` converges its *nose heading* (``yaw``) toward a
         commanded ``target_yaw``, **independent** of the translation channel (ADR 0012). A
         multirotor-only limit: a fixed-wing's facing follows from its bank (``phi_max`` /
         ``roll_rate_max``) instead, so this is unused there. Defaults to ``0.0`` for airframes that
         declare no independent-yaw capability.
     phi_max:
         Maximum bank (roll) angle ``φ_max``, degrees — the fixed-wing turn authority
-        (:class:`~opencdarr.dynamics.FixedWing`, ADR 0013). The coordinated-turn yaw rate is
+        (:class:`~opencdarr.kinematics.FixedWing`, ADR 0013). The coordinated-turn yaw rate is
         ``g·tan φ / V_TAS``, so a bank cap is a *speed-dependent* turn-rate/radius cap
         (``R = V²/(g·tan φ)``), unlike the multirotor's fixed ``yaw_rate_max``. Bounded further in
         a turn by the stall-in-turn limit (load factor ``n = 1/cos φ``). Defaults to ``0.0`` for

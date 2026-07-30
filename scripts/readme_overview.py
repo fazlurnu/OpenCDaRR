@@ -32,8 +32,8 @@ from opencdarr.cd import StateBased  # noqa: E402
 from opencdarr.cns import Comm, GnssNavigation, lognormal_latency  # noqa: E402
 from opencdarr.cr import MVP  # noqa: E402
 from opencdarr.crr import PastCPA  # noqa: E402
-from opencdarr.dynamics import FixedWing, Multirotor  # noqa: E402
 from opencdarr.fleet import Agent, FleetOutcome, run_fleet  # noqa: E402
+from opencdarr.kinematics import FixedWing, Multirotor  # noqa: E402
 from opencdarr.mission import Mission  # noqa: E402
 from opencdarr.performance import M600, SMALL_FIXEDWING  # noqa: E402
 from opencdarr.scenario import create_conflict  # noqa: E402

@@ -11,7 +11,7 @@ import math
 
 from opencdarr import geo
 from opencdarr.autopilot import nominal_velocity
-from opencdarr.dynamics import MotionCommand
+from opencdarr.kinematics import MotionCommand
 from opencdarr.state import AircraftState, DesiredVelocity
 
 

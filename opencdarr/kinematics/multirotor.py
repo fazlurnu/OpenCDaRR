@@ -1,7 +1,7 @@
-"""Multirotor point-mass dynamics (ADR 0012): :class:`Multirotor`.
+"""Multirotor point-mass kinematics (ADR 0012): :class:`Multirotor`.
 
 The PX4-facing multirotor model. It consumes a PX4 ``TrajectorySetpoint``-shaped
-:class:`~opencdarr.dynamics.MotionCommand` and applies multirotor limits, in **two decoupled
+:class:`~opencdarr.kinematics.MotionCommand` and applies multirotor limits, in **two decoupled
 channels**:
 
 - **translation** — the ground-velocity vector moves directly toward ``target_velocity`` under an
@@ -26,7 +26,7 @@ import math
 from dataclasses import replace
 
 from opencdarr import geo
-from opencdarr.dynamics.base import _SPD_EPS, Dynamics, MotionCommand, _clip, odometry_update
+from opencdarr.kinematics.base import _SPD_EPS, Kinematics, MotionCommand, _clip, odometry_update
 from opencdarr.performance import Performance
 from opencdarr.relative import air_to_ground, ground_to_air, velocity_enu
 from opencdarr.state import AircraftState
@@ -103,7 +103,7 @@ def _step_yaw(
     return (cur + rate * dt) % 360.0
 
 
-class Multirotor(Dynamics):
+class Multirotor(Kinematics):
     """A multirotor point mass (ADR 0012): decoupled translation + yaw, PX4-setpoint input.
 
     Translation reuses ``perf.v_max`` (top speed) and ``perf.ax`` (isotropic acceleration); yaw
@@ -112,7 +112,7 @@ class Multirotor(Dynamics):
     decoupled from travel, so "backward" is just another direction reachable via the velocity
     vector.
 
-    ``trk`` / ``gs`` mean exactly what they do under :class:`~opencdarr.dynamics.FixedWing` —
+    ``trk`` / ``gs`` mean exactly what they do under :class:`~opencdarr.kinematics.FixedWing` —
     direction and magnitude of ground travel — so CD/CR/CRR and any other airframe sharing the
     encounter read this aircraft's state identically. ``yaw`` is the *additional* decoupled nose
     heading (``None`` until independently commanded); only *how the vehicle reaches* a velocity,

@@ -18,7 +18,7 @@ Scope
 -----
 ``AircraftState`` is the *certain kinematic core* — a single aircraft's 2D horizontal
 point-mass state — plus two **odometry accumulators** (``flight_time``, ``distance_flown``)
-the dynamics advance each step (ADR 0010). The accumulators are diagnostics, not dynamics
+the kinematics advance each step (ADR 0010). The accumulators are diagnostics, not kinematics
 inputs: nothing reads them back to decide the next step, but they must live *here* rather than
 be recomputed by the loop, because an IPS clone taken mid-flight has to carry its parent's
 elapsed time and path length with it. It is deliberately not the whole IPS particle: the
@@ -27,17 +27,18 @@ intruder velocity a recovery criterion compares against) and an RNG substream (`
 Those are added by the steps that introduce them (CDR: Steps 2-3; estimator: Steps 5-6), each
 inside the clonable state, never outside it.
 
-Not stored, on purpose (ADR 0010): the East/North velocity components — derivable from
-``(trk, gs)`` via :func:`~opencdarr.relative.velocity_enu`, so a stored copy would be a second
-source of truth that can drift. A heading distinct from ``trk`` (``yaw``) *is* now stored — the
-independent-yaw consumer that gives it meaning exists (the :class:`~opencdarr.dynamics.Multirotor`
-model, ADR 0012), so the field lands with that model exactly as this note anticipated, rather than
-as a copy of ``trk``; it defaults to ``None`` (nose aligned with track) so every existing
-construction is unchanged. Altitude / vertical rate remain deferred to a future 3D ADR.
+Not stored, on purpose (ADR 0010): the East/North velocity components — derivable from ``(trk,
+gs)`` via :func:`~opencdarr.relative.velocity_enu`, so a stored copy would be a second source of
+truth that can drift. A heading distinct from ``trk`` (``yaw``) *is* now stored — the
+independent-yaw consumer that gives it meaning exists (the
+:class:`~opencdarr.kinematics.Multirotor` model, ADR 0012), so the field lands with that model
+exactly as this note anticipated, rather than as a copy of ``trk``; it defaults to ``None`` (nose
+aligned with track) so every existing construction is unchanged. Altitude / vertical rate remain
+deferred to a future 3D ADR.
 
 The model is horizontal at fixed altitude, matching every experiment on the roadmap
 (recovery criteria, multi-aircraft conflict, rare events). A future 3D extension would add
-``alt`` / vertical rate here *and* vertical dynamics, detection, and a 3D level function —
+``alt`` / vertical rate here *and* vertical kinematics, detection, and a 3D level function —
 a deliberate, re-validated change recorded as its own ADR, not a set of dead fields now.
 """
 
@@ -54,9 +55,9 @@ class DesiredVelocity:
     """An aircraft's intended (desired/nominal) velocity, as East–North components [m/s].
 
     Stored as a velocity **vector** (``v_east``, ``v_north``), not polar ``(trk, gs)`` (ADR 0008):
-    it is the same representation :class:`~opencdarr.dynamics.Command` uses, so intent and control
-    target speak one language, and the intent-based recovery criteria read the components directly
-    with no trig at their edge. Build one from a track and speed with
+    it is the same representation :class:`~opencdarr.kinematics.Command` uses, so intent and
+    control target speak one language, and the intent-based recovery criteria read the components
+    directly with no trig at their edge. Build one from a track and speed with
     :meth:`from_track_speed`; read ``trk`` / ``gs`` back as derived properties.
 
     This is *intent* — where the aircraft wants to go — and it is **private by default**: another
@@ -102,7 +103,7 @@ class AircraftState:
     field or stray — can be assigned after construction, so nothing can smuggle hidden
     state onto an instance. Both serve the no-hidden-state invariant above. Evolve it
     functionally with :func:`dataclasses.replace`, e.g. inside a
-    :class:`~opencdarr.dynamics.Dynamics` step.
+    :class:`~opencdarr.kinematics.Kinematics` step.
 
     ``slots`` / a NumPy-backed layout is deliberately *not* used yet: it interacts badly
     with ``frozen`` (a known CPython class-recreation wart) and is a memory optimisation we
@@ -127,16 +128,16 @@ class AircraftState:
         the track (no independent yaw has been commanded) — so every construction that predates the
         independent-yaw model reads unchanged, and a coupled-heading airframe never has to set it.
         A concrete value is an independently-controlled heading: a
-        :class:`~opencdarr.dynamics.Multirotor` can translate one way while pointing another
+        :class:`~opencdarr.kinematics.Multirotor` can translate one way while pointing another
         (camera-pointing missions), converging ``yaw`` toward a commanded ``target_yaw`` under its
         yaw-rate limit, independent of ``trk`` (ADR 0012). It is *state*, not derived — like
         ``bank`` it must clone with the particle — and under wind it becomes the heading ``ψ``
         whose difference from track is the crab angle (Phase 5). A
-        :class:`~opencdarr.dynamics.FixedWing` always carries ``yaw`` as its heading ``ψ`` (nose =
-        airspeed vector); at zero wind it equals ``trk``.
+        :class:`~opencdarr.kinematics.FixedWing` always carries ``yaw`` as its heading ``ψ`` (nose
+        = airspeed vector); at zero wind it equals ``trk``.
     bank:
         Bank (roll) angle ``φ`` in degrees, signed (positive = right bank). *State*, not derived:
-        a :class:`~opencdarr.dynamics.FixedWing` limits how fast bank can change (roll rate
+        a :class:`~opencdarr.kinematics.FixedWing` limits how fast bank can change (roll rate
         ``roll_rate_max``), so the next step's bank is bounded relative to this one — an IPS clone
         that lost it would roll differently from its parent (the same reason the deleted
         turn-rate-limited model carried its turn rate in state). The coordinated-turn yaw rate is
@@ -158,9 +159,9 @@ class AircraftState:
         Zero (default) means a perfect, noiseless sensor.
     flight_time:
         Seconds this aircraft has been advanced (odometry accumulator, ADR 0010). Every
-        :class:`~opencdarr.dynamics.Dynamics` step adds ``dt``. A diagnostic (no dynamics reads it
-        back), but it rides in the state so an IPS clone inherits the parent's elapsed time. Zero
-        (default) for a freshly created aircraft.
+        :class:`~opencdarr.kinematics.Kinematics` step adds ``dt``. A diagnostic (no kinematics
+        reads it back), but it rides in the state so an IPS clone inherits the parent's elapsed
+        time. Zero (default) for a freshly created aircraft.
     distance_flown:
         Ground path length in metres this aircraft has covered (odometry accumulator, ADR 0010).
         Every step adds ``gs * dt`` (the odometer reading), so a there-and-back path keeps growing
@@ -198,10 +199,10 @@ def create_aircraft(
 
     The pure-value counterpart of BlueSky's ``cre`` (which mutates a global ``bs.traf``):
     it returns a new state and touches nothing else. Unlike a command — which a
-    :class:`~opencdarr.dynamics.Dynamics` step clamps into the envelope at runtime — an
+    :class:`~opencdarr.kinematics.Kinematics` step clamps into the envelope at runtime — an
     out-of-envelope *initial* condition is a scenario specification error, so this **fails fast**
     with ``ValueError`` rather than silently clamping. Direct ``AircraftState(...)`` construction
-    remains for internal state evolution (a ``Dynamics.step``'s outputs are in-envelope by
+    remains for internal state evolution (a ``Kinematics.step``'s outputs are in-envelope by
     construction); ``create_aircraft`` is the validated entry point at the scenario boundary.
     """
     if not perf.v_min <= gs <= perf.v_max:

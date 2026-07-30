@@ -22,7 +22,7 @@ from opencdarr.autopilot import Autopilot, GuidanceMemory, WaypointAutopilot
 from opencdarr.cd import StateBased
 from opencdarr.cr import MVP
 from opencdarr.crr import PastCPA
-from opencdarr.dynamics import MotionCommand, Multirotor
+from opencdarr.kinematics import MotionCommand, Multirotor
 from opencdarr.mission import Mission, Waypoint
 from opencdarr.performance import M600
 from opencdarr.scenario import create_conflict

@@ -35,8 +35,6 @@ from opencdarr.config import (
 from opencdarr.cr import MVP, VO
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr import PastCPA
-from opencdarr.dynamics import Dynamics, MotionCommand
-from opencdarr.dynamics.base import odometry_update
 from opencdarr.estimator import IPRResult
 from opencdarr.experiment import (
     IPS,
@@ -52,6 +50,8 @@ from opencdarr.experiment import (
     run_one_experiment,
 )
 from opencdarr.ips import RareEventEstimate
+from opencdarr.kinematics import Kinematics, MotionCommand
+from opencdarr.kinematics.base import odometry_update
 from opencdarr.performance import M600, Performance
 from opencdarr.rng import generator, root_seed_sequence
 from opencdarr.state import AircraftState
@@ -205,7 +205,7 @@ class _Passive(ConflictResolver):
         return MotionCommand.from_track_speed(own.trk, own.gs)
 
 
-class _Ballistic(Dynamics):
+class _Ballistic(Kinematics):
     """A contributed airframe that ignores every command — so no resolver can avoid anything."""
 
     def step(
@@ -242,10 +242,10 @@ def test_a_contributed_airframe_reaches_both_backends() -> None:
 
     MVP clears this geometry essentially always, so a near-certain loss of separation has exactly
     one explanation: the contributed airframe was flown, and it discards every command MVP issued.
-    Plain MC silently dropped ``dynamics`` before it was moved onto the fleet environment, and this
-    is the assertion that would have caught it — on the MC side alone, while IPS stayed green.
+    Plain MC silently dropped ``kinematics`` before it was moved onto the fleet environment, and
+    this is the assertion that would have caught it — on the MC side alone, while IPS stayed green.
     """
-    fitted = _methods(resolver=MVP(1.05), dynamics=_Ballistic())
+    fitted = _methods(resolver=MVP(1.05), kinematics=_Ballistic())
 
     mc = run_experiment(_SAFE, methods=fitted, backend=MC(n_encounters=30),
                    base_config=_base(), seed=0).cell()

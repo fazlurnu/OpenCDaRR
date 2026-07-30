@@ -14,7 +14,7 @@ the **same** non-cooperative intruder (StateBased + MVP + PastCPA). The contrast
   commanded course rather than snapping to it.
 
 The headline ``min_sep`` from ``run_encounter`` with a real mixed pair (**both** running DAA, each
-its own ``dynamics``/``perf`` — ADR 0011 §7) is printed too, tying the picture back to the gate.
+its own ``kinematics``/``perf`` — ADR 0011 §7) is printed too, tying the picture back to the gate.
 In the ``mixed-fleet-dubins-holonomic`` lineage (that demo's Dubins side is now a real FixedWing).
 
 Writes ``vault/observations/img/mixed-fleet-daa.png``.
@@ -36,7 +36,7 @@ from opencdarr import geo  # noqa: E402
 from opencdarr.cd import StateBased  # noqa: E402
 from opencdarr.cr import MVP  # noqa: E402
 from opencdarr.crr import PastCPA  # noqa: E402
-from opencdarr.dynamics import Dynamics, FixedWing, MotionCommand, Multirotor  # noqa: E402
+from opencdarr.kinematics import FixedWing, Kinematics, MotionCommand, Multirotor  # noqa: E402
 from opencdarr.loop import run_encounter  # noqa: E402
 from opencdarr.performance import M600, SMALL_FIXEDWING, Performance  # noqa: E402
 from opencdarr.scenario import create_conflict  # noqa: E402
@@ -62,8 +62,8 @@ def _pair(own_gs: float) -> tuple[AircraftState, AircraftState]:
     return own, intr
 
 
-def avoid(dyn: Dynamics, perf: Performance, *, project: bool) -> list[tuple[float, ...]]:
-    """One ownship (``dyn``/``perf``) resolves against a straight, non-cooperative intruder.
+def avoid(kinematics: Kinematics, perf: Performance, *, project: bool) -> list[tuple[float, ...]]:
+    """One ownship (``kinematics``/``perf``) resolves against a straight, non-cooperative intruder.
 
     ``project=True`` wires the fixed-wing velocity→course/airspeed adapter (Phase 4e); a multirotor
     passes ``project=False`` and flies the resolver velocity directly.
@@ -94,7 +94,7 @@ def avoid(dyn: Dynamics, perf: Performance, *, project: bool) -> list[tuple[floa
         gap = abs(((own.trk - cmd_track + 180.0) % 360.0) - 180.0)
         rows.append((t, oe, on, ie, in_, sepd, heading, own.bank, own.gs,
                      float(mem.resolving), gap))
-        own = dyn.step(own, cmd, perf, DT)
+        own = kinematics.step(own, cmd, perf, DT)
         intr = _MR.step(intr, intr_cmd, M600, DT)
         if on > 1500.0:
             break
@@ -108,7 +108,7 @@ def mixed_min_sep() -> float:
     return run_encounter(
         own, intr, perf=M600, rpz=RPZ, t_lookahead=LOOKAHEAD, dt=DT,
         detector=StateBased(), resolver=MVP(margin=1.1), recovery=PastCPA(bouncing_guard=True),
-        own_dynamics=_FW, own_perf=SMALL_FIXEDWING, intr_dynamics=_MR, intr_perf=M600,
+        own_kinematics=_FW, own_perf=SMALL_FIXEDWING, intr_kinematics=_MR, intr_perf=M600,
     ).min_sep
 
 

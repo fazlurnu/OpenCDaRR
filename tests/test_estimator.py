@@ -17,9 +17,9 @@ from opencdarr.config import (
 )
 from opencdarr.cr import MVP
 from opencdarr.crr import PastCPA
-from opencdarr.dynamics import Dynamics, MotionCommand
-from opencdarr.dynamics.base import odometry_update
 from opencdarr.estimator import IPRResult, combine_ipr, estimate_ipr, wilson_interval
+from opencdarr.kinematics import Kinematics, MotionCommand
+from opencdarr.kinematics.base import odometry_update
 from opencdarr.performance import M600, Performance
 from opencdarr.rng import children, root_seed_sequence
 from opencdarr.state import AircraftState
@@ -182,12 +182,12 @@ def test_wilson_interval_brackets_the_estimate_and_survives_zero_events() -> Non
     assert all(math.isnan(b) for b in wilson_interval(0, 0))  # nothing observed at all
 
 
-class _Ballistic(Dynamics):
-    """A dynamics that ignores every command and coasts on the current track.
+class _Ballistic(Kinematics):
+    """A kinematics that ignores every command and coasts on the current track.
 
     Deliberately incapable of avoidance: with it fitted, no resolver can prevent a loss of
-    separation, whatever it commands. That makes it a *detector* for whether ``dynamics=`` actually
-    reaches the encounter — see :func:`test_dynamics_reaches_the_mc_path`.
+    separation, whatever it commands. That makes it a *detector* for whether ``kinematics=``
+    actually reaches the encounter — see :func:`test_kinematics_reaches_the_mc_path`.
     """
 
     def step(
@@ -204,10 +204,10 @@ class _Ballistic(Dynamics):
         )
 
 
-def test_dynamics_reaches_the_mc_path() -> None:
-    """A contributed ``Dynamics`` must actually fly the MC encounters, not be silently dropped.
+def test_kinematics_reaches_the_mc_path() -> None:
+    """A contributed ``Kinematics`` must actually fly the MC encounters, not be silently dropped.
 
-    Plain MC used to call ``run_encounter`` without forwarding ``dynamics``, so a custom airframe
+    Plain MC used to call ``run_encounter`` without forwarding ``kinematics``, so a custom airframe
     was ignored here while IPS (which builds its own ``FleetEnv``) honoured it — the same model
     giving different answers on the two backends, with nothing in either result to show why.
     Fitting an airframe that *cannot* manoeuvre is the cheapest way to prove the wiring.
@@ -215,12 +215,12 @@ def test_dynamics_reaches_the_mc_path() -> None:
     The sharp form of the claim is an **exact** one: a resolver whose commands are thrown away by
     the airframe must give bit-for-bit what flying with *no resolver at all* gives, because both
     hold the initial cruise. So ``ballistic + MVP == multirotor + None``, while the multirotor
-    actually fitted with MVP resolves every one of the same encounters. If ``dynamics=`` were
+    actually fitted with MVP resolves every one of the same encounters. If ``kinematics=`` were
     dropped again, the first equality is what breaks.
     """
     cfg = _config()
     fitted = estimate_ipr(
-        cfg, M600, StateBased(), MVP(1.05), PastCPA(), dynamics=_Ballistic()
+        cfg, M600, StateBased(), MVP(1.05), PastCPA(), kinematics=_Ballistic()
     )
     unresolved = estimate_ipr(cfg, M600, StateBased(), None, None)
     resolved = estimate_ipr(cfg, M600, StateBased(), MVP(1.05), PastCPA())

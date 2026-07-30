@@ -1,8 +1,8 @@
-"""Steady, uniform, horizontal wind — the environment field the dynamics fly in (Phase 5).
+"""Steady, uniform, horizontal wind — the environment field the kinematics fly in (Phase 5).
 
 :class:`WindField` is a **read-only environment input**, not aircraft state (ADR 0016 / Phase-5
 plan decision 1): a steady uniform field is identical for every aircraft and cannot be affected by
-one, so it is threaded into :meth:`~opencdarr.dynamics.base.Dynamics.step` as an argument — the
+one, so it is threaded into :meth:`~opencdarr.kinematics.base.Kinematics.step` as an argument — the
 same category as ``perf`` / ``dt`` — never stored on an ``AircraftState``. The only per-aircraft
 consequence of wind, the crab / heading ``ψ``, already lives in the clonable ``yaw`` field
 (ADR 0012/0013).

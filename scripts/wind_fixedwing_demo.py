@@ -24,7 +24,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
 from opencdarr import geo  # noqa: E402
-from opencdarr.dynamics import FixedWing, MotionCommand, Multirotor  # noqa: E402
+from opencdarr.kinematics import FixedWing, MotionCommand, Multirotor  # noqa: E402
 from opencdarr.performance import M600, SMALL_FIXEDWING  # noqa: E402
 from opencdarr.state import AircraftState  # noqa: E402
 from opencdarr.wind import WindField  # noqa: E402

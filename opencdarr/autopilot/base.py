@@ -1,12 +1,12 @@
 """Guidance fundamentals — the :class:`Autopilot` contribution surface (ADR 0011, Phase 4a).
 
 An autopilot answers *how should the aircraft achieve its mission?* — it turns intent into an
-immediate :class:`~opencdarr.dynamics.MotionCommand` at the decision cadence (1 Hz), vehicle-aware.
-It is the setpoint **producer**; the low-level setpoint **tracker** (PX4's position / attitude /
-rate controllers) lives inside :class:`~opencdarr.dynamics.base.Dynamics`. This mirrors every
-other model family in the library (:class:`~opencdarr.cd.base.ConflictDetector`,
-:class:`~opencdarr.cr.base.ConflictResolver`, ...): a new guidance strategy or vehicle class adds
-a file beside this one, not a fork of the loop (``design_brief.md``: the interface is the
+immediate :class:`~opencdarr.kinematics.MotionCommand` at the decision cadence (1 Hz),
+vehicle-aware. It is the setpoint **producer**; the low-level setpoint **tracker** (PX4's position
+/ attitude / rate controllers) lives inside :class:`~opencdarr.kinematics.base.Kinematics`. This
+mirrors every other model family in the library (:class:`~opencdarr.cd.base.ConflictDetector`,
+:class:`~opencdarr.cr.base.ConflictResolver`, ...): a new guidance strategy or vehicle class adds a
+file beside this one, not a fork of the loop (``design_brief.md``: the interface is the
 contribution surface; [[0007-dynamics-as-pluggable-interface]] applied to guidance).
 
 Implementations live beside this file:
@@ -27,7 +27,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 from opencdarr import geo
-from opencdarr.dynamics import MotionCommand
+from opencdarr.kinematics import MotionCommand
 from opencdarr.performance import Performance
 from opencdarr.state import AircraftState, DesiredVelocity
 

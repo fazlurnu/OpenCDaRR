@@ -1,6 +1,6 @@
 """Stateless geodesy — the math OpenCDaRR owns (ADR 0003).
 
-Replaces the former ``bluesky.tools.geo`` call in ``dynamics.py`` so shipping code depends
+Replaces the former ``bluesky.tools.geo`` call in ``kinematics.py`` so shipping code depends
 only on numpy. :func:`forward` mirrors BlueSky's ``qdrpos`` (same WGS84 latitude-dependent
 radius and great-circle formula), so the two agree to floating-point precision — the
 BlueSky anchor test checks exactly that.

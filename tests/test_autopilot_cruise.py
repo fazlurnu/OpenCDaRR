@@ -9,7 +9,7 @@ regardless of the state (and performance) it is handed.
 from __future__ import annotations
 
 from opencdarr.autopilot import CruiseAutopilot, GuidanceMemory
-from opencdarr.dynamics import MotionCommand
+from opencdarr.kinematics import MotionCommand
 from opencdarr.performance import M600
 from opencdarr.state import AircraftState
 

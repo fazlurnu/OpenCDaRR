@@ -2,8 +2,8 @@
 
 *What* the aircraft should achieve, as an inert frozen value — it does **not** fly the aircraft.
 The :class:`~opencdarr.autopilot.Autopilot` (the navigator) turns a :class:`Mission` into a
-:class:`~opencdarr.dynamics.MotionCommand`; the airframe (the controller) tracks that. This mirrors
-the PX4 split: the mission/navigator holds the plan; the position controller flies it.
+:class:`~opencdarr.kinematics.MotionCommand`; the airframe (the controller) tracks that. This
+mirrors the PX4 split: the mission/navigator holds the plan; the position controller flies it.
 
 Positions are WGS84 ``lat/lon`` (the frame :class:`~opencdarr.state.AircraftState` uses), so no
 origin/frame bookkeeping is needed; the autopilot converts to bearings/ranges via
@@ -30,7 +30,7 @@ class Mission:
 
     Exactly one is expected to be set. ``goto`` is the one-waypoint special case (fly there and
     loiter); ``flight_plan`` is a sequence flown in order, loitering at the final waypoint. Inert:
-    consumed only by the autopilot, never read by the dynamics or the CDR core.
+    consumed only by the autopilot, never read by the kinematics or the CDR core.
     """
 
     goto: tuple[float, float] | None = None  # (lat, lon)

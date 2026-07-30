@@ -1,10 +1,11 @@
 """Handbook figures: fixed-wing coordinated-turn trajectories.
 
-Drives the real :class:`~opencdarr.dynamics.FixedWing` (SMALL_FIXEDWING): a speed-dependent banked
-turn (with the bank angle over time) and three position modes (pure-pursuit go-to, L1 leg tracking,
-loiter orbit). Writes into the site repo. Plot style: no grid, no suptitle, square subplots.
+Drives the real :class:`~opencdarr.kinematics.FixedWing` (SMALL_FIXEDWING): a speed-dependent
+banked turn (with the bank angle over time) and three position modes (pure-pursuit go-to, L1 leg
+tracking, loiter orbit). Writes into the site repo. Plot style: no grid, no suptitle, square
+subplots.
 
-    PYTHONPATH=. python scripts/handbook/dynamics_fixedwing.py
+    PYTHONPATH=. python scripts/handbook/kinematics_fixedwing.py
 """
 from __future__ import annotations
 
@@ -18,13 +19,13 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
 from opencdarr import geo  # noqa: E402
-from opencdarr.dynamics import FixedWing, MotionCommand  # noqa: E402
+from opencdarr.kinematics import FixedWing, MotionCommand  # noqa: E402
 from opencdarr.performance import SMALL_FIXEDWING as FW  # noqa: E402
 from opencdarr.state import AircraftState  # noqa: E402
 
 DT = 0.5
 LAT0, LON0 = 52.0, 4.0
-DYN = FixedWing()
+KINEMATICS = FixedWing()
 IMG = Path.home() / "Projects/opencdarr.github.io/docs/assets/img"
 
 CommandFn = Callable[[AircraftState, float], MotionCommand]
@@ -38,7 +39,7 @@ def fw_state(v: float, yaw: float = 0.0, at: tuple[float, float] | None = None) 
 def run(s0: AircraftState, fn: CommandFn, t_max: float) -> list[AircraftState]:
     states, s, t = [s0], s0, 0.0
     while t < t_max:
-        s = DYN.step(s, fn(s, t), FW, DT)
+        s = KINEMATICS.step(s, fn(s, t), FW, DT)
         states.append(s)
         t += DT
     return states

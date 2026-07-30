@@ -32,7 +32,7 @@ def test_all_has_no_duplicates() -> None:
 
 
 def test_the_contributor_path_imports() -> None:
-    """The [[TODO]] #3 use case: write your own CD/CR/CRR/dynamics, run it, measure it.
+    """The [[TODO]] #3 use case: write your own CD/CR/CRR/kinematics, run it, measure it.
 
     Spelled out as the imports a contributor actually writes, so a reshuffle that breaks the
     documented one-liners fails here rather than in someone's notebook.
@@ -44,7 +44,7 @@ def test_the_contributor_path_imports() -> None:
         AircraftState,
         ConflictDetector,
         ConflictResolver,
-        Dynamics,
+        Kinematics,
         MotionCommand,
         NavigationModel,
         NoiseDistribution,

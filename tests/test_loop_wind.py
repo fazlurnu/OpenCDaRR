@@ -17,7 +17,7 @@ from opencdarr.cns import GnssNavigation
 from opencdarr.cr import MVP, VO
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr import PastCPA
-from opencdarr.dynamics import FixedWing, Multirotor
+from opencdarr.kinematics import FixedWing, Multirotor
 from opencdarr.loop import EncounterOutcome, run_encounter
 from opencdarr.performance import M600, SMALL_FIXEDWING
 from opencdarr.rng import generator, root_seed_sequence, spawn
@@ -54,8 +54,8 @@ def _mixed(
     return run_encounter(
         own, intr, perf=M600, rpz=_RPZ, t_lookahead=_LOOKAHEAD, dt=dt,
         detector=StateBased(), resolver=resolver, recovery=PastCPA(bouncing_guard=True),
-        own_dynamics=FixedWing(), own_perf=SMALL_FIXEDWING,
-        intr_dynamics=Multirotor(), intr_perf=M600,
+        own_kinematics=FixedWing(), own_perf=SMALL_FIXEDWING,
+        intr_kinematics=Multirotor(), intr_perf=M600,
         wind=wind, navigation=nav, rng=rng,
     )
 

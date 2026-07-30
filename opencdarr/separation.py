@@ -2,9 +2,9 @@
 
 :class:`SeparationManager` answers *is the nominal command safe given nearby traffic, and should it
 be temporarily overridden?* It is the DAA layer between the :class:`~opencdarr.autopilot.Autopilot`
-(what the aircraft *wants* to do) and the :class:`~opencdarr.dynamics.base.Dynamics` (what it is
-physically able to do): it runs detect → resolve → recover, replacing the nominal with an avoidance
-command while a conflict is live and **releasing back to the nominal** on recovery — the
+(what the aircraft *wants* to do) and the :class:`~opencdarr.kinematics.base.Kinematics` (what it
+is physically able to do): it runs detect → resolve → recover, replacing the nominal with an
+avoidance command while a conflict is live and **releasing back to the nominal** on recovery — the
 Mission → Offboard → Mission switch a real DAA-equipped vehicle flies (``vault/phase-4-plan.md``).
 
 This is the loop's old ``_decide`` given a home and a name, **substantively unchanged** — the
@@ -32,7 +32,7 @@ from dataclasses import dataclass, replace
 from opencdarr.cd.base import ConflictDetector
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr.base import RecoveryCriterion
-from opencdarr.dynamics import MotionCommand
+from opencdarr.kinematics import MotionCommand
 from opencdarr.performance import Performance
 from opencdarr.state import AircraftState, DesiredVelocity
 
@@ -48,7 +48,7 @@ def project_to_fixedwing(command: MotionCommand, perf: Performance) -> MotionCom
 
     MVP/VO (and the coast fallback) emit a ground-**velocity** command — a native multirotor
     setpoint (PX4 ``TrajectorySetpoint.velocity``), but *not* a fixed-wing one: a fixed-wing takes
-    a lateral course + a longitudinal airspeed, and :class:`~opencdarr.dynamics.FixedWing` fails
+    a lateral course + a longitudinal airspeed, and :class:`~opencdarr.kinematics.FixedWing` fails
     fast on a raw velocity (ADR 0013 §4). This adapter is the missing link — it lowers the velocity
     onto the channels a fixed-wing can fly:
 

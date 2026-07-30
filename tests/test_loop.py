@@ -11,7 +11,7 @@ from opencdarr.cd import StateBased
 from opencdarr.cns import GnssNavigation
 from opencdarr.cr import MVP, VO
 from opencdarr.crr import PastCPA
-from opencdarr.dynamics import Command, Dynamics, FixedWing, MotionCommand, Multirotor
+from opencdarr.kinematics import Command, FixedWing, Kinematics, MotionCommand, Multirotor
 from opencdarr.loop import run_encounter
 from opencdarr.performance import M600, SMALL_FIXEDWING, Performance
 from opencdarr.rng import generator, root_seed_sequence, spawn
@@ -80,8 +80,8 @@ def test_encounter_is_deterministic() -> None:
     assert _run(own, intr) == _run(own, intr)
 
 
-class _FrozenDynamics(Dynamics):
-    """Test double: aircraft never move, whatever the command. Proves `dynamics=` is what
+class _FrozenKinematics(Kinematics):
+    """Test double: aircraft never move, whatever the command. Proves `kinematics=` is what
     actually drives the encounter, not a hardcoded call inside `run_encounter` (ADR 0007)."""
 
     def step(
@@ -95,14 +95,14 @@ class _FrozenDynamics(Dynamics):
         return state
 
 
-def test_dynamics_is_pluggable() -> None:
-    """A custom Dynamics passed as `dynamics=` replaces the default, not just decorates it."""
+def test_kinematics_is_pluggable() -> None:
+    """A custom Kinematics passed as `kinematics=` replaces the default, not just decorates it."""
     own, intr = _encounter()
     outcome = run_encounter(
         own,
         intr,
         perf=M600,
-        dynamics=_FrozenDynamics(),
+        kinematics=_FrozenKinematics(),
         rpz=_RPZ,
         t_lookahead=_LOOKAHEAD,
         dt=_DT,
@@ -110,12 +110,12 @@ def test_dynamics_is_pluggable() -> None:
     )
     # frozen: the pair never converges, so no loss of separation despite no resolver -
     # with the default Multirotor this same setup loses separation (see the
-    # unresolved-encounter test above), so this result is only possible if our Dynamics ran.
+    # unresolved-encounter test above), so this result is only possible if our Kinematics ran.
     assert outcome.los is False
 
 
 # --- Deterministic loop regression: the layered flow (CruiseAutopilot + SeparationManager) on the
-# default dynamics gives an exact, reproducible ``min_sep`` per seed — a strictly stronger check
+# default kinematics gives an exact, reproducible ``min_sep`` per seed — a strictly stronger check
 # than the aggregate IPR. Re-anchored on ``Multirotor`` in Phase 4c (the new default after Dubins
 # was deleted, ADR 0013): the noiseless gentle-maneuver anchors are unchanged from the
 # coupled-heading model (the turn-rate limit never bound there), the noisy ones moved (Multirotor

@@ -12,7 +12,7 @@ from opencdarr import geo
 from opencdarr.cd import StateBased
 from opencdarr.cr import MVP
 from opencdarr.crr import FTR, PastCPA
-from opencdarr.dynamics import Command
+from opencdarr.kinematics import Command
 from opencdarr.loop import _INACTIVE, _decide
 from opencdarr.state import AircraftState, DesiredVelocity
 

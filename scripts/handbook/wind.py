@@ -1,7 +1,7 @@
 """Handbook figures: steady wind — how each airframe meets it, and why DAA stays robust.
 
-The "Wind" module page's pictures, all drawn from the real dynamics/loop, with the wind shown as a
-background **velocity-vector field** (the direction the air moves):
+The "Wind" module page's pictures, all drawn from the real kinematics/loop, with the wind shown as
+a background **velocity-vector field** (the direction the air moves):
 
   1. ``fixedwing`` — a constant-airspeed fixed-wing in a steady turn traces a circle in the air but
      a **trochoid over the ground**, one per wind bearing (the paper's Fig. 4).
@@ -31,7 +31,7 @@ from opencdarr import geo  # noqa: E402
 from opencdarr.cd import StateBased  # noqa: E402
 from opencdarr.cr import MVP  # noqa: E402
 from opencdarr.crr import PastCPA  # noqa: E402
-from opencdarr.dynamics import FixedWing, MotionCommand, Multirotor  # noqa: E402
+from opencdarr.kinematics import FixedWing, MotionCommand, Multirotor  # noqa: E402
 from opencdarr.performance import SMALL_FIXEDWING, Performance  # noqa: E402
 from opencdarr.scenario import create_conflict  # noqa: E402
 from opencdarr.separation import INACTIVE, SeparationManager  # noqa: E402

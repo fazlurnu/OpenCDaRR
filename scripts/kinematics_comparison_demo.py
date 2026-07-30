@@ -5,10 +5,10 @@ Two scenarios, same initial state and same M600 Performance for both models:
 - **turn**   — flying north, then commanded to fly east (a 90 deg direction change).
 - **reverse** — flying north, then commanded to fly south (a 180 deg reversal).
 
-Both models get the exact same `Command` sequence; only the `Dynamics` differs. This is the
+Both models get the exact same `Command` sequence; only the `Kinematics` differs. This is the
 "how to control both models" example: identical control code, different physics.
 
-Usage:  python scripts/dynamics_comparison_demo.py
+Usage:  python scripts/kinematics_comparison_demo.py
 
 Writes ``vault/observations/img/dubins-vs-holonomic.png``. Backs
 ``vault/observations/controlling-dubins-vs-holonomic.md``.
@@ -24,9 +24,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 
-from opencdarr.dynamics import (  # noqa: E402
+from opencdarr.kinematics import (  # noqa: E402
     Command,
-    Dynamics,
+    Kinematics,
     Multirotor,
 )
 from opencdarr.performance import M600  # noqa: E402
@@ -42,7 +42,7 @@ def _start() -> AircraftState:
     return AircraftState(id="D0", lat=52.0, lon=4.0, trk=0.0, gs=SPEED)  # flying north
 
 
-def run(dynamics: Dynamics, new_heading: float) -> dict[str, np.ndarray]:
+def run(kinematics: Kinematics, new_heading: float) -> dict[str, np.ndarray]:
     """Fly north for 2 s (settled cruise), then hold a command to `new_heading` for the rest."""
     s = _start()
     cmd_cruise = Command.from_track_speed(0.0, SPEED)
@@ -53,7 +53,7 @@ def run(dynamics: Dynamics, new_heading: float) -> dict[str, np.ndarray]:
     while t < T_MAX + 1e-9:
         cmd = cmd_cruise if t < 2.0 else cmd_turn
         rows.append((t, s.gs, s.trk, (s.lat - 52.0) * M_PER_DEG_LAT, (s.lon - 4.0) * m_lon))
-        s = dynamics.step(s, cmd, M600, DT)
+        s = kinematics.step(s, cmd, M600, DT)
         t += DT
     a = np.array(rows)
     return {"t": a[:, 0], "gs": a[:, 1], "trk": a[:, 2], "north": a[:, 3], "east": a[:, 4]}

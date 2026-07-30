@@ -34,7 +34,7 @@ from any directory. Then open a notebook and run it top to bottom.
   ends by combining resolution + recovery into a single object.
 - [`03_build_your_own_performance.ipynb`](03_build_your_own_performance.ipynb) — write a new
   airframe as a `Performance` value: the horizontal envelope (speed, acceleration, turn authority)
-  that `Dynamics.step` reads. Builds a heavy-lift drone, a racing quad and a large fixed-wing, and
+  that `Kinematics.step` reads. Builds a heavy-lift drone, a racing quad and a large fixed-wing, and
   shows why a mismatched envelope is rejected rather than silently flown.
 
 ## Handbook notebooks
@@ -47,11 +47,11 @@ above — one module per notebook — and several of them generate the figures t
   notebook to a Monte-Carlo result: spawn two aircraft, run without resolution, add resolution, add
   CNS uncertainty, sweep, add a waypoint, add wind.
 - [`handbook/build-your-own-distilled.ipynb`](handbook/build-your-own-distilled.ipynb) — the same
-  arc, with your own dynamics, performance and resolver substituted at each step.
-- [`handbook/dynamics_multirotor.ipynb`](handbook/dynamics_multirotor.ipynb) — the `Multirotor`
+  arc, with your own kinematics, performance and resolver substituted at each step.
+- [`handbook/kinematics_multirotor.ipynb`](handbook/kinematics_multirotor.ipynb) — the `Multirotor`
   holonomic point mass under the DJI M600 envelope, driven through each `MotionCommand` setpoint
   (`target_velocity`, `target_body_velocity`, `target_position`) and its edge cases.
-- [`handbook/dynamics_fixedwing.ipynb`](handbook/dynamics_fixedwing.ipynb) — the `FixedWing`
+- [`handbook/kinematics_fixedwing.ipynb`](handbook/kinematics_fixedwing.ipynb) — the `FixedWing`
   coordinated-turn point mass: flying a velocity command it cannot fly directly, turning by
   banking at a finite roll rate, and following a path.
 - [`handbook/autopilot.ipynb`](handbook/autopilot.ipynb) — why one `WaypointAutopilot` serves both

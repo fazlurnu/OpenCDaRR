@@ -21,7 +21,7 @@ import math
 import pytest
 
 from opencdarr import geo
-from opencdarr.dynamics import MotionCommand, Multirotor
+from opencdarr.kinematics import MotionCommand, Multirotor
 from opencdarr.performance import M600
 from opencdarr.relative import velocity_enu
 from opencdarr.state import AircraftState

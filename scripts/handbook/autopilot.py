@@ -4,7 +4,7 @@ The "Autopilot" module page's pictures, drawn from the real
 :class:`~opencdarr.autopilot.WaypointAutopilot` driving the real airframes:
 
   1. ``mission`` — one flight plan, flown by a multirotor and a fixed-wing through the same
-     ``autopilot.step -> dynamics.step`` loop. Because the autopilot emits a *position* setpoint,
+     ``autopilot.step -> kinematics.step`` loop. Because the autopilot emits a *position* setpoint,
      one navigator serves both airframes: the multirotor flies straight in and hovers at the final
      waypoint; the fixed-wing rounds the corners with L1 leg tracking and orbits the last one.
   2. ``l1`` — the L1 guidance law the emitted leg invokes: the construction (foot of the
@@ -28,9 +28,9 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 from opencdarr import geo  # noqa: E402
 from opencdarr.autopilot import GuidanceMemory, WaypointAutopilot  # noqa: E402
-from opencdarr.dynamics import FixedWing, MotionCommand, Multirotor  # noqa: E402
-from opencdarr.dynamics.base import Dynamics  # noqa: E402
-from opencdarr.dynamics.fixedwing import _L1_DISTANCE  # noqa: E402
+from opencdarr.kinematics import FixedWing, MotionCommand, Multirotor  # noqa: E402
+from opencdarr.kinematics.base import Kinematics  # noqa: E402
+from opencdarr.kinematics.fixedwing import _L1_DISTANCE  # noqa: E402
 from opencdarr.mission import Mission, Waypoint  # noqa: E402
 from opencdarr.performance import M600, SMALL_FIXEDWING, Performance  # noqa: E402
 from opencdarr.state import AircraftState  # noqa: E402
@@ -61,9 +61,9 @@ PLAN_ENU: list[tuple[float, float]] = [
 CAPTURE, LOITER, CRUISE = 40.0, 80.0, 17.0
 
 
-def _fly_mission(dyn: Dynamics, perf: Performance, s0: AircraftState,
+def _fly_mission(kinematics: Kinematics, perf: Performance, s0: AircraftState,
                  tmax: float, dt: float = 0.2) -> tuple[list[float], list[float]]:
-    """Fly ``PLAN_ENU`` through the real ``WaypointAutopilot`` -> ``Dynamics`` loop (no wind),
+    """Fly ``PLAN_ENU`` through the real ``WaypointAutopilot`` -> ``Kinematics`` loop (no wind),
     exactly as ``run_encounter`` threads the two layers. Returns the ground track (east, north)."""
     plan = tuple(Waypoint(*_latlon(e, n)) for e, n in PLAN_ENU)
     ap = WaypointAutopilot(Mission(flight_plan=plan), cruise_airspeed=CRUISE,
@@ -76,7 +76,7 @@ def _fly_mission(dyn: Dynamics, perf: Performance, s0: AircraftState,
         xs.append(e)
         ys.append(n)
         cmd, gm = ap.step(s, gm, perf)
-        s = dyn.step(s, cmd, perf, dt)
+        s = kinematics.step(s, cmd, perf, dt)
         t += dt
     return xs, ys
 

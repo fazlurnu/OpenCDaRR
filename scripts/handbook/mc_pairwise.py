@@ -33,7 +33,7 @@ from opencdarr.cns import CNS, CnsState, CnsStreams, Comm, GnssNavigation, logno
 from opencdarr.cns.broadcast import BroadcastSchedule
 from opencdarr.cr import MVP, VO
 from opencdarr.crr import FTR, PastCPA
-from opencdarr.dynamics import FixedWing
+from opencdarr.kinematics import FixedWing
 from opencdarr.mission import Mission, Waypoint
 from opencdarr.performance import SMALL_FIXEDWING
 from opencdarr.rng import generator, root_seed_sequence, spawn

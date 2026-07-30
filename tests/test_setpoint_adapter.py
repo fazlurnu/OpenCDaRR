@@ -5,7 +5,8 @@ airspeed). :func:`~opencdarr.separation.project_to_fixedwing` bridges the gap. T
 
 1. the projection maps a velocity to the right ``(target_course, target_airspeed)`` and keeps the
    airspeed inside the airframe envelope (clamped to ``[v_min, v_max]``);
-2. the projected setpoint is one a :class:`~opencdarr.dynamics.FixedWing` actually **converges** to
+2. the projected setpoint is one a :class:`~opencdarr.kinematics.FixedWing` actually **converges**
+to
    — it turns onto the commanded course and never violates the stall / bank envelope on the way.
 """
 
@@ -13,7 +14,7 @@ from __future__ import annotations
 
 import math
 
-from opencdarr.dynamics import FixedWing, MotionCommand
+from opencdarr.kinematics import FixedWing, MotionCommand
 from opencdarr.performance import SMALL_FIXEDWING as P
 from opencdarr.separation import project_to_fixedwing
 from opencdarr.state import AircraftState

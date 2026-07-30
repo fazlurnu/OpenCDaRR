@@ -1,4 +1,4 @@
-"""Fixed-wing coordinated-turn dynamics (ADR 0013): :class:`FixedWing`.
+"""Fixed-wing coordinated-turn kinematics (ADR 0013): :class:`FixedWing`.
 
 The PX4-facing fixed-wing model, re-derived from the kinematic point-mass model of Reyner & Liem
 (*Energy-Efficient Trochoidal Path Planning...*, Drones 2026, 10, 426;
@@ -37,7 +37,7 @@ import math
 from dataclasses import replace
 
 from opencdarr import geo
-from opencdarr.dynamics.base import _SPD_EPS, Dynamics, MotionCommand, _clip, odometry_update
+from opencdarr.kinematics.base import _SPD_EPS, Kinematics, MotionCommand, _clip, odometry_update
 from opencdarr.performance import Performance
 from opencdarr.relative import ground_to_air, velocity_enu, wind_correction_angle
 from opencdarr.state import AircraftState
@@ -132,7 +132,7 @@ def _stall_bank_limit(airspeed: float, v_stall: float, phi_max: float) -> float:
     return min(phi_max, phi_stall)
 
 
-class FixedWing(Dynamics):
+class FixedWing(Kinematics):
     """A fixed-wing coordinated-turn point mass (ADR 0013): airspeed + bank-limited heading.
 
     Reads ``perf.v_min`` (**stall speed**, positive), ``perf.v_max`` (max airspeed), ``perf.ax``

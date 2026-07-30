@@ -1,10 +1,10 @@
 """Conflict-resolution interface — the contribution surface for resolution algorithms.
 
 An algorithm subclasses :class:`ConflictResolver` and implements ``resolve``, returning a
-:class:`~opencdarr.dynamics.MotionCommand` (with its ``target_velocity`` channel set — a resolver
-computes a ground-velocity vector) that flows straight into a :class:`~opencdarr.dynamics.Dynamics`
-step. Resolution is **directed and cooperative**: each aircraft resolves from its own perception of
-the traffic.
+:class:`~opencdarr.kinematics.MotionCommand` (with its ``target_velocity`` channel set — a resolver
+computes a ground-velocity vector) that flows straight into a
+:class:`~opencdarr.kinematics.Kinematics` step. Resolution is **directed and cooperative**: each
+aircraft resolves from its own perception of the traffic.
 
 ``resolve`` takes the **set** of intruders in conflict (Phase 6, ADR 0004) — the pairwise
 ``len == 1`` case is what Phases 2–5 used. Crucially, **how the set composes is algorithm-specific,
@@ -27,7 +27,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 
-from opencdarr.dynamics import MotionCommand
+from opencdarr.kinematics import MotionCommand
 from opencdarr.state import AircraftState
 
 

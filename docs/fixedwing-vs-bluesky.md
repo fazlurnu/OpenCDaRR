@@ -1,4 +1,4 @@
-# Fixed-wing dynamics: OpenCDaRR vs BlueSky
+# Fixed-wing kinematics: OpenCDaRR vs BlueSky
 
 How does OpenCDaRR's fixed-wing model differ from [BlueSky](https://github.com/TUDelft-CNS-ATM/bluesky)'s,
 what equations of motion does each integrate, and how does wind enter them? This note answers those
@@ -7,7 +7,7 @@ parameter-matched numerical experiment.
 
 Sources read for this comparison:
 
-- **OpenCDaRR** — [`opencdarr/dynamics/fixedwing.py`](../opencdarr/dynamics/fixedwing.py),
+- **OpenCDaRR** — [`opencdarr/kinematics/fixedwing.py`](../opencdarr/kinematics/fixedwing.py),
   [`opencdarr/relative.py`](../opencdarr/relative.py), [`opencdarr/wind.py`](../opencdarr/wind.py),
   and the derivation [`vault/derivations/fixedwing-coordinated-turn.md`](../vault/derivations/fixedwing-coordinated-turn.md).
 - **BlueSky** — the fork the `cdarr` conda env runs, `~/Projects/bluesky`:
@@ -28,7 +28,7 @@ They differ in how the bank angle is produced and limited, and in the software a
 |---|---|---|
 | Lateral EOM | `ψ̇ = g·tan φ / V` | `ψ̇ = g·tan φ / V` (identical) |
 | Bank angle φ | **Variable**, proportional to heading error, capped by `phi_max` (44°) | **Fixed** at `bankdef` = 25° (or an FMS turn-specific bank), applied at full value |
-| Roll dynamics | **Finite roll rate** (`roll_rate_max` = 60°/s); `bank` is a state variable that ramps | **Instantaneous** — no roll state; bank is 25° or 0°, switched immediately |
+| Roll kinematics | **Finite roll rate** (`roll_rate_max` = 60°/s); `bank` is a state variable that ramps | **Instantaneous** — no roll state; bank is 25° or 0°, switched immediately |
 | Stall-in-turn | Bank tightened by the load factor, `φ ≤ arccos[(V_s/V)²]` | None |
 | Airspeed | Bang-bang ramp at `ax` toward commanded EAS, clamped to `[v_min, v_max]` | Bang-bang ramp at `axmax` toward commanded TAS, then `perf.limits` (OpenAP/BADA envelope) |
 | Wind → ground vel | `V_ground = V_air(ψ) + wind` (Eq 9) | Same, but only applied when airborne (alt > 50 ft) |
@@ -46,7 +46,7 @@ the wind case the *same formula*.
 ## OpenCDaRR's equations of motion
 
 `FixedWing.step` is a pure map `(state, command, perf, dt, wind) → state`
-([`fixedwing.py`](../opencdarr/dynamics/fixedwing.py)). In the inertial ENU frame (x = east,
+([`fixedwing.py`](../opencdarr/kinematics/fixedwing.py)). In the inertial ENU frame (x = east,
 y = north, angles clockwise from north), one step is:
 
 **Airspeed** — clamp the commanded equivalent airspeed to the envelope, then ramp:
@@ -127,7 +127,7 @@ full bank instantly, no roll-in transient.
 > This fork also carries a **custom UAV turn-rate limiter** (`max_tr`, `max_dtr2`, `prev_turnrate`)
 > selected by a finite-`max_tr` mask. It rate-limits the *turn rate* and its derivative for the
 > multirotor M600, and is a different code path from the stock fixed-wing turn above — it is not the
-> fixed-wing model, and the M600 point-mass rotor dynamics are the part OpenCDaRR *did* validate
+> fixed-wing model, and the M600 point-mass rotor kinematics are the part OpenCDaRR *did* validate
 > against BlueSky (ADR 0005).
 
 **Ground speed** (`update_groundspeed`) — the wind-triangle vector sum, wind applied only when

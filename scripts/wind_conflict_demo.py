@@ -25,7 +25,7 @@ from opencdarr import geo  # noqa: E402
 from opencdarr.cd import StateBased  # noqa: E402
 from opencdarr.cr import MVP  # noqa: E402
 from opencdarr.crr import PastCPA  # noqa: E402
-from opencdarr.dynamics import FixedWing, MotionCommand  # noqa: E402
+from opencdarr.kinematics import FixedWing, MotionCommand  # noqa: E402
 from opencdarr.performance import SMALL_FIXEDWING as P  # noqa: E402
 from opencdarr.scenario import create_conflict  # noqa: E402
 from opencdarr.separation import INACTIVE, SeparationManager, project_to_fixedwing  # noqa: E402

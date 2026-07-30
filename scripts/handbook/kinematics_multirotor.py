@@ -1,10 +1,10 @@
 """Handbook figure: multirotor trajectories under different MotionCommands.
 
-Drives the real :class:`~opencdarr.dynamics.Multirotor` (M600 limits) from a hover under three
+Drives the real :class:`~opencdarr.kinematics.Multirotor` (M600 limits) from a hover under three
 command modes and plots the ground tracks and the speed profiles. Writes the PNG into the site
 repo next door.
 
-    PYTHONPATH=. python scripts/handbook/dynamics_multirotor.py
+    PYTHONPATH=. python scripts/handbook/kinematics_multirotor.py
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
 from opencdarr import geo  # noqa: E402
-from opencdarr.dynamics import Multirotor, MotionCommand  # noqa: E402
+from opencdarr.kinematics import Multirotor, MotionCommand  # noqa: E402
 from opencdarr.performance import M600  # noqa: E402
 from opencdarr.state import AircraftState  # noqa: E402
 
@@ -26,7 +26,7 @@ DT = 0.5
 T_MAX = 16.0
 YAW_TURN_T = 8.0  # when the body-forward case yaws from east to north
 LAT0, LON0 = 52.0, 4.0
-DYN = Multirotor()
+KINEMATICS = Multirotor()
 OUT = Path.home() / "Projects/opencdarr.github.io/docs/assets/img/multirotor-trajectories.png"
 
 CommandFn = Callable[[AircraftState, float], MotionCommand]
@@ -38,7 +38,7 @@ def run(command_fn: CommandFn, yaw0: float | None) -> tuple[list[float], list[fl
     es, ns, spd = [0.0], [0.0], [0.0]
     t = 0.0
     while t < T_MAX:
-        s = DYN.step(s, command_fn(s, t), M600, DT)
+        s = KINEMATICS.step(s, command_fn(s, t), M600, DT)
         qdr, dist = geo.qdrdist(LAT0, LON0, s.lat, s.lon)
         r = math.radians(qdr)
         es.append(dist * math.sin(r))

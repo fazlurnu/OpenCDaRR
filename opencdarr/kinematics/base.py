@@ -1,9 +1,9 @@
-"""Dynamics fundamentals shared by every implementation (ADR 0010 / 0011).
+"""Kinematics fundamentals shared by every implementation (ADR 0010 / 0011).
 
 Holds the control input (:class:`MotionCommand`), the contribution-surface ABC
-(:class:`Dynamics`), and the small helpers every implementation reuses (``_clip``, the zero-speed
+(:class:`Kinematics`), and the small helpers every implementation reuses (``_clip``, the zero-speed
 guard, and the odometry accumulator update). The concrete models live beside this file —
-``multirotor.py`` and ``dubins.py`` — one per file, mirroring ``cd/``, ``cr/``, ``crr/``.
+``multirotor.py`` and ``fixedwing.py`` — one per file, mirroring ``cd/``, ``cr/``, ``crr/``.
 """
 
 from __future__ import annotations
@@ -22,22 +22,22 @@ _SPD_EPS = 1e-9  # m/s: below this a command has no meaningful direction -> hold
 @dataclass(frozen=True)
 class MotionCommand:
     """The vehicle-neutral motion command — the single currency between guidance, separation, and
-    dynamics (ADR 0011, superseding the pure-velocity command of ADR 0008).
+    kinematics (ADR 0011, superseding the pure-velocity command of ADR 0008).
 
     A command is a PX4-offboard-shaped *setpoint*, not a state to snap to: each field targets one
-    channel of motion, and a :class:`Dynamics` model reads whichever fields its vehicle understands
-    and ignores the rest — :class:`~opencdarr.dynamics.Multirotor` reads ``target_velocity`` (and
-    ``target_yaw``); a fixed-wing (Phase 4c) reads the course/airspeed channels. Every field
-    defaults to ``None`` ("unspecified", PX4's ``NaN`` / unset ``type_mask``); a model **fails
-    fast** when no channel it requires is present (the missing-channel case of the ADR 0011
-    feasibility taxonomy — an under-specified command for that vehicle is a programming error,
-    surfaced here rather than silently obeyed).
+    channel of motion, and a :class:`Kinematics` model reads whichever fields its vehicle
+    understands and ignores the rest — :class:`~opencdarr.kinematics.Multirotor` reads
+    ``target_velocity`` (and ``target_yaw``); a fixed-wing (Phase 4c) reads the course/airspeed
+    channels. Every field defaults to ``None`` ("unspecified", PX4's ``NaN`` / unset
+    ``type_mask``); a model **fails fast** when no channel it requires is present (the
+    missing-channel case of the ADR 0011 feasibility taxonomy — an under-specified command for that
+    vehicle is a programming error, surfaced here rather than silently obeyed).
 
     ``target_velocity`` is the resolvers' native output (the old velocity-vector command is exactly
     a :class:`MotionCommand` with just that field set), so the :meth:`from_track_speed` /
     :meth:`from_velocity` constructors and the ``gs`` / ``trk`` / ``v_east`` / ``v_north`` derived
     reads are preserved over it, and every existing call site reads unchanged. ``target_yaw`` /
-    ``target_yawspeed`` land with :class:`~opencdarr.dynamics.Multirotor` (ADR 0012); the
+    ``target_yawspeed`` land with :class:`~opencdarr.kinematics.Multirotor` (ADR 0012); the
     fixed-wing course/airspeed channels with Phase 4c; ``target_altitude`` /
     ``target_vertical_speed`` are defined but ignored until 3D lands (ADR 0011 §1).
 
@@ -54,35 +54,35 @@ class MotionCommand:
         Desired velocity in the **body frame** ``(v_forward, v_right)`` [m/s] — forward is the nose
         direction (``yaw``), right is 90° clockwise from it (PX4 ``MAV_FRAME_BODY_FRD``). Resolved
         to an inertial ``(v_east, v_north)`` through the current ``yaw`` inside
-        :class:`~opencdarr.dynamics.Multirotor`, so "forward" is a fixed world direction only when
-        ``yaw`` says so. A multirotor-only channel (it needs the decoupled yaw); an absent DOF for
-        a fixed-wing. Takes precedence over ``target_velocity`` when both are set.
+        :class:`~opencdarr.kinematics.Multirotor`, so "forward" is a fixed world direction only
+        when ``yaw`` says so. A multirotor-only channel (it needs the decoupled yaw); an absent DOF
+        for a fixed-wing. Takes precedence over ``target_velocity`` when both are set.
     target_position:
         Desired position ``(lat, lon)`` [deg] — the goto / waypoint channel (PX4
         ``TrajectorySetpoint.position``; the active waypoint). A
-        :class:`~opencdarr.dynamics.Multirotor` flies straight to it and hovers; a
-        :class:`~opencdarr.dynamics.FixedWing` tracks the leg to it.
+        :class:`~opencdarr.kinematics.Multirotor` flies straight to it and hovers; a
+        :class:`~opencdarr.kinematics.FixedWing` tracks the leg to it.
     target_leg_start:
         The previous waypoint ``(lat, lon)`` [deg] — with ``target_position`` (the current
         waypoint) it is the **leg line** the fixed-wing L1 tracker follows (nulls cross-track).
     target_loiter_radius:
         Loiter radius [m] about ``target_position`` (the loiter centre) — set on arrival at the
-        final waypoint. A :class:`~opencdarr.dynamics.FixedWing` flies a min-radius **orbit** at
-        this radius (it cannot stop); a :class:`~opencdarr.dynamics.Multirotor` ignores it and
+        final waypoint. A :class:`~opencdarr.kinematics.FixedWing` flies a min-radius **orbit** at
+        this radius (it cannot stop); a :class:`~opencdarr.kinematics.Multirotor` ignores it and
         simply **hovers** at the centre (PX4 ``MAV_CMD_NAV_LOITER_*``).
         ``None`` for a bare goto ⇒ pure-pursuit to ``target_position``. A multirotor ignores it (it
         flies to the point, not along the line).
     target_yaw:
         Desired nose heading [deg, aviation] — the multirotor yaw channel (PX4
         ``TrajectorySetpoint.yaw``), **decoupled from the direction of travel**. ``None`` = yaw not
-        commanded (hold current yaw). Read by :class:`~opencdarr.dynamics.Multirotor` (ADR 0012);
+        commanded (hold current yaw). Read by :class:`~opencdarr.kinematics.Multirotor` (ADR 0012);
         an *absent degree of freedom* for a coupled-heading fixed-wing, ignored there (Phase 4c).
     target_yawspeed:
         Desired yaw rate [deg/s] — the multirotor yaw-rate channel (PX4
         ``TrajectorySetpoint.yawspeed``); used when ``target_yaw`` is unset.
     target_course:
         Desired ground-track course χ [deg, aviation] — the fixed-wing lateral channel (PX4
-        ``FixedWingLateralSetpoint.course``). Read by :class:`~opencdarr.dynamics.FixedWing`
+        ``FixedWingLateralSetpoint.course``). Read by :class:`~opencdarr.kinematics.FixedWing`
         (ADR 0013); an absent DOF for a multirotor, ignored there.
     target_airspeed_direction:
         Desired heading ψ of the airspeed vector [deg, aviation] — the fixed-wing lateral channel
@@ -181,7 +181,7 @@ def odometry_update(state: AircraftState, gs: float, dt: float) -> dict[str, flo
     """The odometry-accumulator changes for a step ending at ground speed ``gs`` over ``dt``.
 
     Returned as a dict to splat into ``dataclasses.replace(state, ..., **odometry_update(...))``,
-    so every :class:`Dynamics` implementation advances ``flight_time`` and ``distance_flown`` the
+    so every :class:`Kinematics` implementation advances ``flight_time`` and ``distance_flown`` the
     same way and none can forget them (ADR 0010). ``gs`` is the *new* (post-step) ground speed,
     matching the distance the position update actually moves (``gs * dt`` along the new track).
     """
@@ -191,23 +191,23 @@ def odometry_update(state: AircraftState, gs: float, dt: float) -> dict[str, flo
     }
 
 
-class Dynamics(ABC):
-    """Base class every dynamics model implements — the contribution surface for how an
-    aircraft's kinematics evolve (ADR 0007).
+class Kinematics(ABC):
+    """Base class every motion model implements — the contribution surface for how an aircraft's
+    state evolves under a command (ADR 0007).
 
-    A model subclasses :class:`Dynamics` and implements ``step``; it is passed into
-    :func:`~opencdarr.loop.run_encounter` as ``dynamics=...`` in place of the default. This
+    A model subclasses :class:`Kinematics` and implements ``step``; it is passed into
+    :func:`~opencdarr.loop.run_encounter` as ``kinematics=...`` in place of the default. This
     mirrors every other model family in the library (:class:`~opencdarr.cd.base.ConflictDetector`,
     :class:`~opencdarr.cr.base.ConflictResolver`, ...): a new physical effect adds a file, not a
     fork of the loop (``design_brief.md``: the interface is the contribution surface).
 
     Implementations live beside this file:
 
-    - :class:`~opencdarr.dynamics.Multirotor` — isotropic accel, no coupled heading, independent
+    - :class:`~opencdarr.kinematics.Multirotor` — isotropic accel, no coupled heading, independent
       yaw; consumes a PX4 ``TrajectorySetpoint``-shaped command (``multirotor.py``, ADR 0012).
-    - :class:`~opencdarr.dynamics.FixedWing` — non-holonomic coordinated-turn point mass:
-      bank-limited heading, stall/load envelope, finite roll, wind-ready (``fixedwing.py``, ADR
-      0013). Superseded the former ``DubinsDynamics``.
+    - :class:`~opencdarr.kinematics.FixedWing` — non-holonomic coordinated-turn point-mass
+      kinematics: bank-limited heading, stall/load envelope, finite roll, wind-ready
+      (``fixedwing.py``, ADR 0013). Superseded the former ``DubinsDynamics``.
 
     Every implementation must advance the odometry accumulators (via :func:`odometry_update`) so
     ``flight_time`` / ``distance_flown`` stay correct whichever model ran (ADR 0010), fed the

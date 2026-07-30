@@ -5,7 +5,7 @@ cadence** (``broadcast_interval``, the ADS-L/ASAS decision rate — 1 Hz in the 
 every integration step: at each broadcast tick each aircraft takes a fresh noisy self-measurement
 and decides (detect → resolve, or recover → resume) for **both directed pairs** (A→B, B→A) on
 its *perceived* view; the resulting command is then **held** while the encounter's
-:class:`~opencdarr.dynamics.Dynamics` model (:class:`~opencdarr.dynamics.Multirotor` by
+:class:`~opencdarr.kinematics.Kinematics` model (:class:`~opencdarr.kinematics.Multirotor` by
 default, ADR 0007) integrates at ``dt`` until the next tick. Deciding every step instead would
 re-draw independent noise 1/``dt``×
 per second and average it away — unphysically robust. Truth is used only to score the encounter
@@ -40,7 +40,7 @@ from opencdarr.cns.broadcast import BroadcastSchedule
 from opencdarr.cns.stack import CNS, CnsState, CnsStreams
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr.base import RecoveryCriterion
-from opencdarr.dynamics import Dynamics, FixedWing, MotionCommand, Multirotor
+from opencdarr.kinematics import FixedWing, Kinematics, MotionCommand, Multirotor
 from opencdarr.performance import Performance
 from opencdarr.relative import relative_enu, segment_min_range
 from opencdarr.separation import (
@@ -55,21 +55,22 @@ from opencdarr.wind import NO_WIND, WindField
 
 # module-level singleton, not a call in the signature default (ruff B008) - safe to share
 # since Multirotor is stateless (ADR 0007)
-_DEFAULT_DYNAMICS: Dynamics = Multirotor()
+_DEFAULT_KINEMATICS: Kinematics = Multirotor()
 
 _BROADCAST_EPS = 1e-9  # float guard so a tick lands on a broadcast time reached by dt steps
 
 
-def _setpoint_adapter(dynamics: Dynamics, perf: Performance) -> SetpointAdapter | None:
-    """The command projection this airframe needs before its final command reaches the dynamics.
+def _setpoint_adapter(kinematics: Kinematics, perf: Performance) -> SetpointAdapter | None:
+    """The command projection this airframe needs before its final command reaches the kinematics.
 
-    A :class:`~opencdarr.dynamics.FixedWing` cannot fly a raw velocity (ADR 0013 §4), so its final
-    command is projected onto course/airspeed (:func:`~opencdarr.separation.project_to_fixedwing`,
-    Phase 4e); a :class:`~opencdarr.dynamics.Multirotor` flies the resolver's velocity directly, so
-    it needs no projection (``None`` = identity, the byte-identical pre-Phase-4e path). The loop is
-    the composition root pairing an airframe with its adapter — the manager stays vehicle-neutral.
+    A :class:`~opencdarr.kinematics.FixedWing` cannot fly a raw velocity (ADR 0013 §4), so its
+    final command is projected onto course/airspeed
+    (:func:`~opencdarr.separation.project_to_fixedwing`, Phase 4e); a
+    :class:`~opencdarr.kinematics.Multirotor` flies the resolver's velocity directly, so it needs
+    no projection (``None`` = identity, the byte-identical pre-Phase-4e path). The loop is the
+    composition root pairing an airframe with its adapter — the manager stays vehicle-neutral.
     """
-    if isinstance(dynamics, FixedWing):
+    if isinstance(kinematics, FixedWing):
         return lambda command: project_to_fixedwing(command, perf)
     return None
 
@@ -126,9 +127,9 @@ def run_encounter(
     intr: AircraftState,
     *,
     perf: Performance,
-    dynamics: Dynamics = _DEFAULT_DYNAMICS,
-    own_dynamics: Dynamics | None = None,
-    intr_dynamics: Dynamics | None = None,
+    kinematics: Kinematics = _DEFAULT_KINEMATICS,
+    own_kinematics: Kinematics | None = None,
+    intr_kinematics: Kinematics | None = None,
     own_perf: Performance | None = None,
     intr_perf: Performance | None = None,
     rpz: float,
@@ -157,21 +158,21 @@ def run_encounter(
     With ``resolver=None`` the aircraft fly their nominal paths (a baseline that *should* lose
     separation). With a resolver (and ideally a recovery criterion), they maneuver to clear.
 
-    ``dynamics`` (default :class:`~opencdarr.dynamics.Multirotor`, ADR 0007) is how a
-    :class:`Command` becomes motion each ``dt``; swap it for a different :class:`Dynamics`
+    ``kinematics`` (default :class:`~opencdarr.kinematics.Multirotor`, ADR 0007) is how a
+    :class:`Command` becomes motion each ``dt``; swap it for a different :class:`Kinematics`
     implementation (a different airframe, or a future wind-aware model) without forking this
     function.
 
-    **Mixed fleet (ADR 0011 §7, Phase 4e):** ``dynamics`` / ``perf`` are the *shared* airframe;
-    pass ``own_dynamics`` / ``own_perf`` / ``intr_dynamics`` / ``intr_perf`` to give a side
-    its own bundle (each defaults to the shared one), so a multirotor-vs-fixed-wing encounter runs
+    **Mixed fleet (ADR 0011 §7, Phase 4e):** ``kinematics`` / ``perf`` are the *shared* airframe;
+    pass ``own_kinematics`` / ``own_perf`` / ``intr_kinematics`` / ``intr_perf`` to give a side its
+    own bundle (each defaults to the shared one), so a multirotor-vs-fixed-wing encounter runs
     through this same entry point the IPR sweeps use. Each aircraft's autopilot and separation
-    overlay are stepped with *its* ``perf``, it is advanced by *its* ``dynamics``, and a fixed-wing
-    airframe automatically gets the velocity→course projection its final command needs
+    overlay are stepped with *its* ``perf``, it is advanced by *its* ``kinematics``, and a
+    fixed-wing airframe automatically gets the velocity→course projection its final command needs
     (:func:`_setpoint_adapter`) — MVP/VO stay vehicle-neutral (they still emit a velocity).
 
     ``wind`` (default :data:`~opencdarr.wind.NO_WIND`, Phase 5) is the shared, steady environment
-    field threaded into every ``dynamics.step`` — one field for both aircraft, read-only, never
+    field threaded into every ``kinematics.step`` — one field for both aircraft, read-only, never
     stored on either state (ADR 0016). At ``NO_WIND`` the encounter is byte-identical to Phase 4.
 
     The CDR layers run every ``broadcast_interval`` seconds (the ADS-L/ASAS decision rate), not
@@ -226,14 +227,14 @@ def run_encounter(
     sched = BroadcastSchedule(interval=broadcast_interval) if schedule is None else schedule
     if sched.jitter > 0.0 and broadcast_rng is None:
         raise ValueError("broadcast jitter requires broadcast_rng (a substream, ADR 0006 §6)")
-    # per-aircraft bundle (ADR 0011 §7): each side falls back to the shared dynamics/perf, so the
+    # per-aircraft bundle (ADR 0011 §7): each side falls back to the shared kinematics/perf, so the
     # single-airframe callers (and the bit-for-bit anchors) are unchanged; a mixed-fleet caller
     # overrides one or both sides. The setpoint adapter is airframe-derived (fixed-wing: project).
     # Held per aircraft in index order (own = 0, intr = 1) — the same shape run_fleet threads, so
     # the broadcast tick below can act on the subset that is actually firing.
-    dyns = [own_dynamics or dynamics, intr_dynamics or dynamics]
+    per_side = [own_kinematics or kinematics, intr_kinematics or kinematics]
     perfs = [own_perf or perf, intr_perf or perf]
-    adapters = [_setpoint_adapter(dyns[i], perfs[i]) for i in range(2)]
+    adapters = [_setpoint_adapter(per_side[i], perfs[i]) for i in range(2)]
     states = [
         replace(ac, desired=DesiredVelocity.from_track_speed(ac.trk, ac.gs)) for ac in (own, intr)
     ]
@@ -309,7 +310,7 @@ def run_encounter(
 
         # advance both from their pre-step states (explicitly simultaneous), each by its airframe.
         # ``wind`` is the shared environment field (default NO_WIND -> Phase-4 behaviour, 5a).
-        states = [dyns[i].step(states[i], cmds[i], perfs[i], dt, wind) for i in range(2)]
+        states = [per_side[i].step(states[i], cmds[i], perfs[i], dt, wind) for i in range(2)]
         t += dt
 
         rel = relative_enu(states[0], states[1])

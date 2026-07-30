@@ -19,7 +19,7 @@ from opencdarr.crr import PastCPA
 # NOTE: historical BlueSky trajectory comparison. step_dynamics (the coupled-heading integrator)
 # was deleted in Phase 4c and the BlueSky trajectory anchor retired (ADR 0013); repointed to
 # Multirotor so the plumbing still runs.
-from opencdarr.dynamics import Command, Multirotor
+from opencdarr.kinematics import Command, Multirotor
 from opencdarr.loop import _INACTIVE, _decide
 from opencdarr.performance import M600
 from opencdarr.scenario import create_conflict

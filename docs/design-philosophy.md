@@ -55,7 +55,7 @@ section is what this project adds.
 
 ## Core — purity & reproducibility (load-bearing; hardest to add later)
 
-1. **Pure by default, effects at the edges.** Detection / dynamics / resolution /
+1. **Pure by default, effects at the edges.** Detection / kinematics / resolution /
    recovery are pure `state → value`. RNG, file I/O, and third-party calls live only in a thin
    shell. *(Clean Code: no side effects. Pragmatic: orthogonality.)*
 2. **One owner of state; pass it, don't hide it.** No module-level or singleton state

@@ -15,7 +15,7 @@ autopilot (Phase 4d); this class deliberately does none of it.
 from __future__ import annotations
 
 from opencdarr.autopilot.base import Autopilot, GuidanceMemory
-from opencdarr.dynamics import MotionCommand
+from opencdarr.kinematics import MotionCommand
 from opencdarr.performance import Performance
 from opencdarr.state import AircraftState
 

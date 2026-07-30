@@ -1,8 +1,8 @@
-"""The simplest thing that is still a working Dynamics — a scaffold for your own.
+"""The simplest thing that is still a working Kinematics — a scaffold for your own.
 
 ``VelocityFollower`` moves at exactly the commanded ground velocity each step. No acceleration
 ramp, no speed cap, no turn radius, no wind — it does not even read the ``Performance`` envelope.
-It is deliberately barer than :class:`~opencdarr.dynamics.Multirotor`, which is the same idea
+It is deliberately barer than :class:`~opencdarr.kinematics.Multirotor`, which is the same idea
 (a holonomic velocity-follower) plus every limit this one drops: an ``ax`` ramp, the wind
 air/ground-frame conversion, a decoupled yaw channel, and a waypoint stopping law.
 
@@ -11,7 +11,7 @@ state, so a clone (an IPS particle) evolved through it stays independent of its 
 
 Run it directly to watch it move and fly a real two-aircraft encounter::
 
-    python scripts/dummy_dynamics.py
+    python scripts/dummy_kinematics.py
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ import math
 from dataclasses import replace
 
 from opencdarr import geo
-from opencdarr.dynamics.base import Dynamics, MotionCommand, odometry_update
+from opencdarr.kinematics.base import Kinematics, MotionCommand, odometry_update
 from opencdarr.performance import Performance
 from opencdarr.state import AircraftState
 from opencdarr.wind import NO_WIND, WindField
@@ -28,8 +28,8 @@ from opencdarr.wind import NO_WIND, WindField
 _SPD_EPS = 1e-9  # m/s: below this a velocity has no meaningful direction -> hold current track
 
 
-class VelocityFollower(Dynamics):
-    """Move at exactly the commanded ground velocity. The minimal working Dynamics.
+class VelocityFollower(Kinematics):
+    """Move at exactly the commanded ground velocity. The minimal working Kinematics.
 
     Reads only the velocity channel of the command; ``perf`` and ``wind`` are part of the contract
     but ignored (that is what makes it a dummy). To respect a top speed, cap ``speed`` at
@@ -63,7 +63,7 @@ def _demo_pure_steps() -> None:
     """Step the model by hand and print the trajectory — the pure-function view."""
     from opencdarr.performance import M600
 
-    dyn = VelocityFollower()
+    kinematics = VelocityFollower()
     state = AircraftState(id="TOY", lat=52.0, lon=4.0, trk=0.0, gs=0.0, yaw=0.0)
     cmd = MotionCommand(target_velocity=(20.0, 20.0))  # NE at 28.3 m/s, followed exactly
 
@@ -73,7 +73,7 @@ def _demo_pure_steps() -> None:
     for _ in range(6):
         print(f"{t:5.0f} {state.lat:10.5f} {state.lon:10.5f} "
               f"{state.trk:6.1f} {state.gs:6.2f} {state.distance_flown:10.1f}")
-        state = dyn.step(state, cmd, M600, dt)
+        state = kinematics.step(state, cmd, M600, dt)
         t += dt
 
 

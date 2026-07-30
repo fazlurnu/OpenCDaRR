@@ -11,7 +11,7 @@ import math
 
 from opencdarr import geo
 from opencdarr.autopilot import GuidanceMemory, WaypointAutopilot
-from opencdarr.dynamics import FixedWing, MotionCommand
+from opencdarr.kinematics import FixedWing, MotionCommand
 from opencdarr.mission import Mission, Waypoint
 from opencdarr.performance import SMALL_FIXEDWING as P
 from opencdarr.state import AircraftState
@@ -79,7 +79,7 @@ def test_fixedwing_flies_waypoint_plan_in_order() -> None:
 
 def test_bare_goto_is_pure_pursuit() -> None:
     """With no leg start, the commanded course points straight at the target (pursuit)."""
-    from opencdarr.dynamics.fixedwing import _guidance_course
+    from opencdarr.kinematics.fixedwing import _guidance_course
 
     s = _state(52.0, 4.0)
     target = geo.forward(52.0, 4.0, 30.0, 500.0)  # bearing 30 deg from the aircraft

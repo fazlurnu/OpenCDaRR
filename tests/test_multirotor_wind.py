@@ -17,7 +17,7 @@ from __future__ import annotations
 import math
 
 from opencdarr import geo
-from opencdarr.dynamics import MotionCommand, Multirotor
+from opencdarr.kinematics import MotionCommand, Multirotor
 from opencdarr.performance import Performance
 from opencdarr.relative import velocity_enu
 from opencdarr.state import AircraftState

@@ -1,8 +1,8 @@
 """Mixed-fleet DAA through ``run_encounter`` (Phase 4e, ADR 0011 §7 + ADR 0013 §4).
 
 A multirotor and a fixed-wing meet in the *same* conflict and both run detect → resolve → recover
-through the normal entry point, each advanced by its own ``dynamics`` / ``perf`` bundle. Two things
-are proven here:
+through the normal entry point, each advanced by its own ``kinematics`` / ``perf`` bundle. Two
+things are proven here:
 
 1. **it resolves** — the pair clears (min-sep ≥ rpz) even though the two airframes obey different
    physics and the fixed-wing cannot fly the resolver's raw velocity (the loop projects it via
@@ -22,7 +22,7 @@ from opencdarr.cns import GnssNavigation
 from opencdarr.cr import MVP, VO
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr import PastCPA
-from opencdarr.dynamics import FixedWing, Multirotor
+from opencdarr.kinematics import FixedWing, Multirotor
 from opencdarr.loop import EncounterOutcome, run_encounter
 from opencdarr.performance import M600, SMALL_FIXEDWING
 from opencdarr.rng import generator, root_seed_sequence, spawn
@@ -59,9 +59,9 @@ def _mixed(
 ) -> EncounterOutcome:
     """A fixed-wing OWN vs a multirotor INT in a 90° crossing conflict, through ``run_encounter``.
 
-    OWN flies a :class:`~opencdarr.dynamics.FixedWing` (its avoidance velocity is projected to
+    OWN flies a :class:`~opencdarr.kinematics.FixedWing` (its avoidance velocity is projected to
     course/airspeed by the loop's airframe adapter); INT flies a
-    :class:`~opencdarr.dynamics.Multirotor` (velocity flown directly). ``noisy`` turns on the
+    :class:`~opencdarr.kinematics.Multirotor` (velocity flown directly). ``noisy`` turns on the
     seeded GPS self-fix path.
     """
     ci_p, ci_v = (10.0, 1.0) if noisy else (0.0, 0.0)
@@ -75,8 +75,8 @@ def _mixed(
     return run_encounter(
         own, intr, perf=M600, rpz=_RPZ, t_lookahead=_LOOKAHEAD, dt=dt,
         detector=StateBased(), resolver=resolver, recovery=PastCPA(bouncing_guard=True),
-        own_dynamics=FixedWing(), own_perf=SMALL_FIXEDWING,
-        intr_dynamics=Multirotor(), intr_perf=M600,
+        own_kinematics=FixedWing(), own_perf=SMALL_FIXEDWING,
+        intr_kinematics=Multirotor(), intr_perf=M600,
         navigation=nav, rng=rng,
     )
 
@@ -125,8 +125,8 @@ def test_mixed_fleet_ipr_from_seed() -> None:
             own, intr, perf=M600, rpz=_RPZ, t_lookahead=_LOOKAHEAD, dt=0.2,
             detector=StateBased(), resolver=MVP(margin=1.05),
             recovery=PastCPA(bouncing_guard=True),
-            own_dynamics=FixedWing(), own_perf=SMALL_FIXEDWING,
-            intr_dynamics=Multirotor(), intr_perf=M600,
+            own_kinematics=FixedWing(), own_perf=SMALL_FIXEDWING,
+            intr_kinematics=Multirotor(), intr_perf=M600,
             navigation=GnssNavigation(), rng=generator(seq),
         ))
     ipr = 1.0 - sum(o.los for o in outs) / len(outs)
@@ -140,7 +140,7 @@ def _both_fixedwing(resolver: ConflictResolver) -> EncounterOutcome:
     return run_encounter(
         own, intr, perf=SMALL_FIXEDWING, rpz=_RPZ, t_lookahead=_LOOKAHEAD, dt=0.5,
         detector=StateBased(), resolver=resolver, recovery=PastCPA(bouncing_guard=True),
-        own_dynamics=FixedWing(), intr_dynamics=FixedWing(),
+        own_kinematics=FixedWing(), intr_kinematics=FixedWing(),
     )
 
 

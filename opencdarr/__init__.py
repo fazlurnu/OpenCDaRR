@@ -9,7 +9,7 @@ file, not a fork" (``design_brief.md``: the interface is the contribution surfac
 level exports what a contributor needs to *write* one and *run* it against the built-ins:
 
 - **contribution surfaces** — ``ConflictDetector``, ``ConflictResolver``, ``RecoveryCriterion``,
-  ``Dynamics``, ``NavigationModel``, ``CommunicationModel``, ``SurveillanceModel``,
+  ``Kinematics``, ``NavigationModel``, ``CommunicationModel``, ``SurveillanceModel``,
   ``NoiseDistribution``;
 - **reference implementations** to compare against — ``StateBased``, ``MVP``, ``VO``, ``PastCPA``,
   ``FTR``, ``ProbabilisticFTR``, ``Multirotor``, ``FixedWing``, ``GnssNavigation``, ``Comm``,
@@ -56,9 +56,6 @@ from opencdarr.crr.base import RecoveryCriterion
 from opencdarr.crr.ftr import FTR
 from opencdarr.crr.pastcpa import PastCPA
 from opencdarr.crr.probabilistic_ftr import ProbabilisticFTR
-from opencdarr.dynamics.base import Dynamics, MotionCommand
-from opencdarr.dynamics.fixedwing import FixedWing
-from opencdarr.dynamics.multirotor import Multirotor
 from opencdarr.estimator import IPRResult, combine_ipr, estimate_ipr, wilson_interval
 from opencdarr.experiment import (
     IPS,
@@ -72,6 +69,9 @@ from opencdarr.experiment import (
 )
 from opencdarr.fleet import Agent, run_fleet
 from opencdarr.ips import estimate_rare_prob
+from opencdarr.kinematics.base import Kinematics, MotionCommand
+from opencdarr.kinematics.fixedwing import FixedWing
+from opencdarr.kinematics.multirotor import Multirotor
 from opencdarr.loop import run_encounter
 from opencdarr.performance import M600, SMALL_FIXEDWING, Performance
 from opencdarr.rng import generator, root_seed_sequence, spawn
@@ -97,7 +97,7 @@ __all__ = [
     "Config",
     "ConflictDetector",
     "ConflictResolver",
-    "Dynamics",
+    "Kinematics",
     "ExperimentResult",
     "Fixed",
     "FixedWing",

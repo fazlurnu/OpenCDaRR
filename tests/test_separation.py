@@ -14,7 +14,7 @@ from __future__ import annotations
 from opencdarr.cd import StateBased
 from opencdarr.cr import MVP
 from opencdarr.crr import PastCPA
-from opencdarr.dynamics import MotionCommand
+from opencdarr.kinematics import MotionCommand
 from opencdarr.loop import _decide  # the backward-compat shim, for the equivalence check
 from opencdarr.scenario import create_conflict
 from opencdarr.separation import INACTIVE, PairMemory, SeparationManager

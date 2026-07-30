@@ -22,7 +22,7 @@ from opencdarr.cd import StateBased
 from opencdarr.cr import MVP, VO
 from opencdarr.cr.vo import _cone
 from opencdarr.crr import PastCPA
-from opencdarr.dynamics import MotionCommand
+from opencdarr.kinematics import MotionCommand
 from opencdarr.scenario import create_conflict
 from opencdarr.separation import INACTIVE, SeparationManager
 from opencdarr.state import AircraftState

@@ -13,7 +13,7 @@ at ``n = 2`` — the same ``build_env`` / ``advance`` / ``is_terminal`` interfac
 estimator drives (:mod:`opencdarr.ips`) — rather than calling :func:`opencdarr.loop.run_encounter`
 directly. The two runners are equal at ``n = 2`` by construction, pinned across the whole sampled
 crossing-angle support (``tests/test_fleet.py``), so this changes no number. What it buys is that a
-model handed to *this* estimator is the same model IPS would run. Before it, ``dynamics`` never
+model handed to *this* estimator is the same model IPS would run. Before it, ``kinematics`` never
 reached the encounter at all: plain MC silently used the default multirotor while IPS honoured
 whatever the caller built into its ``FleetEnv``, so a contributed airframe appeared to work under
 one backend and be ignored under the other — with nothing in either result to show it.
@@ -33,8 +33,8 @@ from opencdarr.cns.broadcast import schedule_for
 from opencdarr.config import Config
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr.base import RecoveryCriterion
-from opencdarr.dynamics import Dynamics
 from opencdarr.fleet import Agent, run_fleet
+from opencdarr.kinematics import Kinematics
 from opencdarr.performance import Performance
 from opencdarr.rng import generator, root_seed_sequence, spawn
 from opencdarr.scenario import Draw, sample_pairwise
@@ -147,7 +147,7 @@ def estimate_ipr(
     communication: CommunicationModel | None = None,
     surveillance: SurveillanceModel | None = None,
     *,
-    dynamics: Dynamics | None = None,
+    kinematics: Kinematics | None = None,
     wind: WindField = NO_WIND,
     share_intent: bool = False,
     dpsi: float | Draw | None = None,
@@ -158,10 +158,10 @@ def estimate_ipr(
 ) -> IPRResult:
     """Run the plain-MC estimate over ``config.n_encounters`` sampled encounters.
 
-    ``dynamics`` is the airframe both aircraft fly (``None`` = the fleet default
-    :class:`~opencdarr.dynamics.Multirotor`, ADR 0007); ``wind`` and ``share_intent`` are the other
-    two per-run settings the fleet environment takes. All three are keyword-only additions that
-    were previously reachable through IPS but *not* through this estimator — see the module
+    ``kinematics`` is the airframe both aircraft fly (``None`` = the fleet default
+    :class:`~opencdarr.kinematics.Multirotor`, ADR 0007); ``wind`` and ``share_intent`` are the
+    other two per-run settings the fleet environment takes. All three are keyword-only additions
+    that were previously reachable through IPS but *not* through this estimator — see the module
     docstring for why that asymmetry mattered.
 
     ``dpsi`` / ``dcpa`` / ``side`` / ``gs_intr`` pin or re-distribute one geometry parameter of the
@@ -215,7 +215,7 @@ def estimate_ipr(
             random_phase=config.simulation.broadcast_random_phase,
         )
         outcome = run_fleet(
-            [Agent(own, perf, dynamics=dynamics), Agent(intr, perf, dynamics=dynamics)],
+            [Agent(own, perf, kinematics=kinematics), Agent(intr, perf, kinematics=kinematics)],
             rpz=config.conflict.rpz,
             t_lookahead=config.conflict.t_lookahead,
             dt=config.simulation.dt,

@@ -32,7 +32,7 @@ from opencdarr.cd import StateBased  # noqa: E402
 from opencdarr.cr import MVP  # noqa: E402
 from opencdarr.cr.base import ConflictResolver  # noqa: E402
 from opencdarr.crr import PastCPA  # noqa: E402
-from opencdarr.dynamics import Multirotor  # noqa: E402
+from opencdarr.kinematics import Multirotor  # noqa: E402
 from opencdarr.mission import Mission  # noqa: E402
 from opencdarr.performance import M600  # noqa: E402
 from opencdarr.separation import INACTIVE, SeparationManager  # noqa: E402

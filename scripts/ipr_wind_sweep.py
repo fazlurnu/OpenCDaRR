@@ -34,7 +34,7 @@ from opencdarr.cd import StateBased  # noqa: E402
 from opencdarr.cns import GnssNavigation  # noqa: E402
 from opencdarr.cr import MVP  # noqa: E402
 from opencdarr.crr import PastCPA  # noqa: E402
-from opencdarr.dynamics import FixedWing, Multirotor  # noqa: E402
+from opencdarr.kinematics import FixedWing, Multirotor  # noqa: E402
 from opencdarr.loop import run_encounter  # noqa: E402
 from opencdarr.performance import M600, SMALL_FIXEDWING, Performance  # noqa: E402
 from opencdarr.rng import generator, root_seed_sequence, spawn  # noqa: E402
@@ -43,7 +43,8 @@ from opencdarr.state import AircraftState  # noqa: E402
 from opencdarr.wind import WindField  # noqa: E402
 
 _FW, _MR = FixedWing(), Multirotor()
-# (own, intr) airframe pairs; each entry is (label, own_dyn, own_perf, intr_dyn, intr_perf).
+# (own, intr) airframe pairs; each entry is (label, own_kinematics, own_perf, intr_kinematics,
+# intr_perf).
 _MIXES = {
     "both fixed-wing": (_FW, SMALL_FIXEDWING, _FW, SMALL_FIXEDWING),
     "fixed-wing vs multirotor": (_FW, SMALL_FIXEDWING, _MR, M600),
@@ -55,7 +56,7 @@ _BEARINGS = (0.0, 90.0, 180.0, 270.0)  # meteorological "coming from"
 def _one(
     seq: np.random.SeedSequence, wind: WindField, mix: tuple, cfg: argparse.Namespace
 ) -> tuple:
-    own_dyn, own_perf, intr_dyn, intr_perf = mix
+    own_kinematics, own_perf, intr_kinematics, intr_perf = mix
     own = AircraftState(
         id="OWN", lat=52.0, lon=4.0, trk=0.0, gs=cfg.gs, yaw=0.0, bank=0.0,
         pos_ci95=cfg.pos_ci95, vel_ci95=cfg.vel_ci95,
@@ -66,7 +67,8 @@ def _one(
         own, intr, perf=intr_perf, rpz=cfg.rpz, t_lookahead=cfg.lookahead, dt=cfg.dt,
         detector=StateBased(), resolver=MVP(margin=cfg.margin),
         recovery=PastCPA(bouncing_guard=True),
-        own_dynamics=own_dyn, own_perf=own_perf, intr_dynamics=intr_dyn, intr_perf=intr_perf,
+        own_kinematics=own_kinematics, own_perf=own_perf,
+        intr_kinematics=intr_kinematics, intr_perf=intr_perf,
         wind=wind, navigation=GnssNavigation(), rng=generator(seq),
     )
     return out.los, out.min_sep

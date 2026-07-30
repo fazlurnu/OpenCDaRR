@@ -1,10 +1,10 @@
 """Handbook figures: the multirotor MotionCommand gallery.
 
 For every cell of the translation x yaw grid (and the edge cases), drive the real
-:class:`~opencdarr.dynamics.Multirotor` (M600) and plot the ground track with nose arrows, so
+:class:`~opencdarr.kinematics.Multirotor` (M600) and plot the ground track with nose arrows, so
 facing versus travel is visible. Writes one figure per group into the site repo.
 
-    PYTHONPATH=. python scripts/handbook/dynamics_multirotor_gallery.py
+    PYTHONPATH=. python scripts/handbook/kinematics_multirotor_gallery.py
 """
 from __future__ import annotations
 
@@ -18,13 +18,13 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
 from opencdarr import geo  # noqa: E402
-from opencdarr.dynamics import Multirotor, MotionCommand  # noqa: E402
+from opencdarr.kinematics import Multirotor, MotionCommand  # noqa: E402
 from opencdarr.performance import M600  # noqa: E402
 from opencdarr.state import AircraftState  # noqa: E402
 
 DT = 0.5
 LAT0, LON0 = 52.0, 4.0
-DYN = Multirotor()
+KINEMATICS = Multirotor()
 IMG = Path.home() / "Projects/opencdarr.github.io/docs/assets/img"
 TRACK, NOSE = "#1f77b4", "#888888"
 
@@ -43,7 +43,7 @@ def run(s0: AircraftState, fn: CommandFn, t_max: float) -> list[AircraftState]:
     states = [s0]
     s, t = s0, 0.0
     while t < t_max:
-        s = DYN.step(s, fn(s, t), M600, DT)
+        s = KINEMATICS.step(s, fn(s, t), M600, DT)
         states.append(s)
         t += DT
     return states

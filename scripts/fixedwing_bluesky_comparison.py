@@ -1,7 +1,7 @@
 """Fixed-wing equation-of-motion comparison: OpenCDaRR ``FixedWing`` vs BlueSky.
 
 Backs ``docs/fixedwing-vs-bluesky.md``. Drives OpenCDaRR's real
-:class:`~opencdarr.dynamics.FixedWing` step against a *source-faithful* transcription of
+:class:`~opencdarr.kinematics.FixedWing` step against a *source-faithful* transcription of
 BlueSky's fixed-wing kinematics (``bluesky/traffic/traffic.py`` ``update_airspeed`` /
 ``update_groundspeed`` / ``update_pos`` and ``aporasas.py`` crab), matched to the same airspeed,
 gravity, and time step so only the models differ. The BlueSky transcription is checked against a
@@ -24,7 +24,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
 from opencdarr import geo  # noqa: E402
-from opencdarr.dynamics import FixedWing, MotionCommand  # noqa: E402
+from opencdarr.kinematics import FixedWing, MotionCommand  # noqa: E402
 from opencdarr.performance import SMALL_FIXEDWING, Performance  # noqa: E402
 from opencdarr.state import AircraftState  # noqa: E402
 from opencdarr.wind import NO_WIND, WindField  # noqa: E402
@@ -126,11 +126,11 @@ def _enu(lat: float, lon: float) -> tuple[float, float]:
 def run_ours_turn(perf: Performance, hdg_target: float, n: int) -> dict[str, list[float]]:
     """OpenCDaRR FixedWing: command a heading change (airspeed_direction, no wind)."""
     st = AircraftState(id="F", lat=0.0, lon=0.0, trk=0.0, gs=V, yaw=0.0, bank=0.0)
-    dyn = FixedWing()
+    kinematics = FixedWing()
     cmd = MotionCommand(target_airspeed_direction=hdg_target, target_airspeed=V)
     xs, ys, banks, hdgs = [], [], [], []
     for _ in range(n):
-        st = dyn.step(st, cmd, perf, DT, NO_WIND)
+        st = kinematics.step(st, cmd, perf, DT, NO_WIND)
         e, nth = _enu(st.lat, st.lon)
         xs.append(e)
         ys.append(nth)
@@ -160,11 +160,11 @@ def run_bs_turn(bank_deg: float, hdg_target: float, n: int) -> dict[str, list[fl
 def run_ours_course(course: float, wind: WindField, n: int) -> dict[str, list[float]]:
     """OpenCDaRR FixedWing: make good a ground course under wind (target_course -> crab)."""
     st = AircraftState(id="F", lat=0.0, lon=0.0, trk=0.0, gs=V, yaw=0.0, bank=0.0)
-    dyn = FixedWing()
+    kinematics = FixedWing()
     cmd = MotionCommand(target_course=course, target_airspeed=V)
     xs, ys, hdgs = [], [], []
     for _ in range(n):
-        st = dyn.step(st, cmd, perf=SMALL_FIXEDWING, dt=DT, wind=wind)
+        st = kinematics.step(st, cmd, perf=SMALL_FIXEDWING, dt=DT, wind=wind)
         e, nth = _enu(st.lat, st.lon)
         xs.append(e)
         ys.append(nth)

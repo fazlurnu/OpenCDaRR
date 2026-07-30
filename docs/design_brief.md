@@ -8,7 +8,7 @@
 >   and `pyyaml`. BlueSky survives as an offline validation anchor, not as the runtime library this
 >   brief describes.
 > - **`step_dynamics` became an interface.** The single extracted function grew into the
->   `opencdarr/dynamics/` package: `Multirotor` and `FixedWing` behind a `Dynamics` abstract base
+>   `opencdarr/kinematics/` package: `Multirotor` and `FixedWing` behind a `Kinematics` abstract base
 >   class, exchanging `MotionCommand` setpoints (ADRs 0007, 0010, 0011).
 >
 > For the architecture as built, see

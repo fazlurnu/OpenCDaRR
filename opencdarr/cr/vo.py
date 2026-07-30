@@ -35,7 +35,7 @@ import math
 from collections.abc import Sequence
 
 from opencdarr.cr.base import ConflictResolver
-from opencdarr.dynamics import MotionCommand
+from opencdarr.kinematics import MotionCommand
 from opencdarr.relative import relative_enu, velocity_enu
 from opencdarr.state import AircraftState
 

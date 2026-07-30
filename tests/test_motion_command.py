@@ -16,7 +16,7 @@ import math
 
 import pytest
 
-from opencdarr.dynamics import Command, MotionCommand
+from opencdarr.kinematics import Command, MotionCommand
 
 # --- Velocity-channel round-trip (behaviour-preserving over the old Command) -----------------
 

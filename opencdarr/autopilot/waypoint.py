@@ -2,9 +2,9 @@
 
 The vehicle-neutral navigator. It turns a :class:`~opencdarr.mission.Mission` into a **position
 setpoint** for the active waypoint — ``MotionCommand(target_position=…)`` — and lets each
-airframe's controller (the :class:`~opencdarr.dynamics.base.Dynamics` step) track it (a multirotor
-flies straight in and hovers; a fixed-wing tracks the leg line and orbits). Because it emits a
-position rather than a pre-computed velocity/course, one autopilot serves both airframes.
+airframe's controller (the :class:`~opencdarr.kinematics.base.Kinematics` step) track it (a
+multirotor flies straight in and hovers; a fixed-wing tracks the leg line and orbits). Because it
+emits a position rather than a pre-computed velocity/course, one autopilot serves both airframes.
 
 It advances through the ``flight_plan`` on a capture radius (flying *through* intermediate
 waypoints) and emits a loiter setpoint at the final one (a fixed-wing orbits it; a multirotor
@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from opencdarr import geo
 from opencdarr.autopilot.base import Autopilot, GuidanceMemory
-from opencdarr.dynamics import MotionCommand
+from opencdarr.kinematics import MotionCommand
 from opencdarr.mission import Mission, Waypoint
 from opencdarr.performance import Performance
 from opencdarr.state import AircraftState

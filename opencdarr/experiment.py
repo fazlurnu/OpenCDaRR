@@ -3,7 +3,7 @@
 :func:`run_experiment` turns a **declaration** of what varies into a table of results. You say
 which parameters are held fixed and which are swept, hand it a backend, and it runs the
 cross-product and tabulates it. The point is that the *same* objects — your detector, your
-resolver, your dynamics —
+resolver, your kinematics —
 run unchanged whichever backend estimates the probability::
 
     res = run_experiment(
@@ -61,10 +61,10 @@ from opencdarr.cns.broadcast import schedule_for
 from opencdarr.config import Config
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr.base import RecoveryCriterion
-from opencdarr.dynamics import Dynamics
 from opencdarr.estimator import IPRResult, estimate_ipr
 from opencdarr.fleet import Agent, build_env
 from opencdarr.ips import Particle, RareEventEstimate, estimate_rare_prob
+from opencdarr.kinematics import Kinematics
 from opencdarr.parallel import _joblib, resolve_jobs
 from opencdarr.performance import Performance
 from opencdarr.rng import generator
@@ -84,7 +84,7 @@ _SIMULATION_FIELDS = frozenset(
 _GEOMETRY_SLOTS = frozenset({"dpsi", "dcpa", "side", "gs_intr"})
 _COMPONENTS = frozenset(
     {"detector", "resolver", "recovery", "navigation", "communication", "surveillance",
-     "dynamics", "perf"}
+     "kinematics", "perf"}
 )
 _KNOWN_KEYS = (
     _SCENARIO_FIELDS | _CONFLICT_FIELDS | _SIMULATION_FIELDS | _GEOMETRY_SLOTS | _COMPONENTS
@@ -199,7 +199,7 @@ class Methods:
     A plain bundle of defaults, not a new abstraction: each field is passed straight through to the
     estimator, and any of them can be overridden per condition by declaring the same name as an
     axis. ``perf`` defaults are the caller's business; the airframe defaults to the fleet's
-    multirotor when ``dynamics`` is ``None`` (ADR 0007).
+    multirotor when ``kinematics`` is ``None`` (ADR 0007).
     """
 
     detector: ConflictDetector
@@ -208,7 +208,7 @@ class Methods:
     navigation: NavigationModel | None = None
     communication: CommunicationModel | None = None
     surveillance: SurveillanceModel | None = None
-    dynamics: Dynamics | None = None
+    kinematics: Kinematics | None = None
     perf: Performance | None = None
 
 
@@ -296,7 +296,7 @@ def _run_mc(condition: Condition, base: Config, methods: Methods, backend: MC,
         dataclasses.replace(cfg, seed=seed),
         m.perf if m.perf is not None else _require_perf(),
         m.detector, m.resolver, m.recovery, m.navigation, m.communication, m.surveillance,
-        dynamics=m.dynamics,
+        kinematics=m.kinematics,
         **geometry,
     )
 
@@ -323,7 +323,10 @@ def _run_ips(condition: Condition, base: Config, methods: Methods, backend: IPS,
             rpz=cfg.conflict.rpz, pos_ci95=cfg.scenario.pos_ci95,
             vel_ci95=cfg.scenario.vel_ci95, **geometry,
         )
-        agents = [Agent(own, perf, dynamics=m.dynamics), Agent(intr, perf, dynamics=m.dynamics)]
+        agents = [
+            Agent(own, perf, kinematics=m.kinematics),
+            Agent(intr, perf, kinematics=m.kinematics),
+        ]
         env = build_env(
             agents, rpz=cfg.conflict.rpz, t_lookahead=cfg.conflict.t_lookahead,
             dt=cfg.simulation.dt, detector=m.detector, resolver=m.resolver, recovery=m.recovery,

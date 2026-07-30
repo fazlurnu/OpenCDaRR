@@ -19,8 +19,8 @@ from opencdarr.cns.broadcast import BroadcastSchedule
 from opencdarr.cns.stack import CNS
 from opencdarr.cr import MVP
 from opencdarr.crr import PastCPA
-from opencdarr.dynamics import Multirotor
 from opencdarr.fleet import Agent, FleetEnv, FleetStreams, level, run_fleet
+from opencdarr.kinematics import Multirotor
 from opencdarr.performance import M600
 from opencdarr.separation import SeparationManager
 from opencdarr.state import AircraftState
@@ -44,7 +44,7 @@ def _env(agents: list[Agent]) -> FleetEnv:
     """A FleetEnv built by hand — how IPS will assemble the fixed rules once, per experiment."""
     n = len(agents)
     return FleetEnv(
-        dyns=tuple(Multirotor() for _ in range(n)),
+        kinematics=tuple(Multirotor() for _ in range(n)),
         perfs=tuple(a.perf for a in agents),
         adapters=tuple(None for _ in range(n)),  # multirotor flies velocity directly
         aps=tuple(CruiseAutopilot(a.state.trk, a.state.gs) for a in agents),

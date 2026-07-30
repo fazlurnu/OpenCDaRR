@@ -13,7 +13,7 @@ import pytest
 
 from opencdarr import geo
 from opencdarr.cr import MVP
-from opencdarr.dynamics import Command
+from opencdarr.kinematics import Command
 from opencdarr.scenario import create_conflict
 from opencdarr.state import AircraftState
 

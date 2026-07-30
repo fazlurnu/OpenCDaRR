@@ -21,7 +21,7 @@ import math
 import pytest
 
 from opencdarr import geo
-from opencdarr.dynamics import FixedWing, MotionCommand
+from opencdarr.kinematics import FixedWing, MotionCommand
 from opencdarr.performance import SMALL_FIXEDWING as P
 from opencdarr.state import AircraftState
 

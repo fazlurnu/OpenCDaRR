@@ -2,7 +2,7 @@
 
 :func:`run_fleet` is the multi-aircraft generalisation of
 :func:`~opencdarr.loop.run_encounter`: a **list of aircraft**, each with its own
-:class:`~opencdarr.autopilot.Autopilot` / :class:`~opencdarr.dynamics.Dynamics` /
+:class:`~opencdarr.autopilot.Autopilot` / :class:`~opencdarr.kinematics.Kinematics` /
 :class:`~opencdarr.performance.Performance`, all advancing simultaneously. Every aircraft runs its
 own detect → resolve → recover against **all the others it perceives** (the cooperative fleet — no
 central controller), so in a conflict *everyone* manoeuvres, not just one side. The directed,
@@ -13,8 +13,8 @@ and recovery waits until an aircraft is clear of **all** its conflicts.
 **The estimator interface (Phase 8 / ADR 0004).** The environment is split into the three pieces a
 rare-event estimator needs, so Monte Carlo *and* the future IPS see only these:
 
-- :class:`FleetEnv` — the **fixed rules** (dynamics, CDR methods, geometry, timing). Immutable and
-  shared unchanged across every IPS particle.
+- :class:`FleetEnv` — the **fixed rules** (kinematics, CDR methods, geometry, timing). Immutable
+  and shared unchanged across every IPS particle.
 - :class:`FleetState` — the **particle**: the whole mutable world (every aircraft's state, guidance
   and recovery memory, held command, broadcast clock, the datalink value state, the clock and the
   measured accumulators). Deeply immutable — :meth:`FleetEnv.advance` returns a *new* state and
@@ -58,8 +58,8 @@ from opencdarr.cns.broadcast import BroadcastSchedule
 from opencdarr.cns.stack import CNS, CnsState, CnsStreams
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr.base import RecoveryCriterion
-from opencdarr.dynamics import Dynamics, MotionCommand
-from opencdarr.loop import _DEFAULT_DYNAMICS, _setpoint_adapter
+from opencdarr.kinematics import Kinematics, MotionCommand
+from opencdarr.loop import _DEFAULT_KINEMATICS, _setpoint_adapter
 from opencdarr.performance import Performance
 from opencdarr.relative import Relative, relative_enu, segment_min_range
 from opencdarr.separation import INACTIVE, FleetMemory, SeparationManager, SetpointAdapter
@@ -75,22 +75,23 @@ class Agent:
     """One aircraft's bundle in the fleet: its state + how it navigates, flies, and is limited.
 
     ADR 0011 §7 deferred a per-aircraft grouping "until a real grouping need appears"; N parallel
-    lists is that need, so the bundle lands here. ``dynamics`` defaults to the shared
-    :class:`~opencdarr.dynamics.Multirotor`; ``autopilot`` defaults to a
+    lists is that need, so the bundle lands here. ``kinematics`` defaults to the shared
+    :class:`~opencdarr.kinematics.Multirotor`; ``autopilot`` defaults to a
     :class:`~opencdarr.autopilot.CruiseAutopilot` holding the state's initial cruise.
     """
 
     state: AircraftState
     perf: Performance
-    dynamics: Dynamics | None = None
+    kinematics: Kinematics | None = None
     autopilot: Autopilot | None = None
 
     def __post_init__(self) -> None:
         # Fail at the line the mismatch is written, not deep inside the first step. Only the
-        # explicit case can be checked here; when ``dynamics`` is left to its default the effective
-        # model is not known until the composition root, which re-validates there (see ``build``).
-        if self.dynamics is not None:
-            self.dynamics.validate_performance(self.perf)
+        # explicit case can be checked here; when ``kinematics`` is left to its default the
+        # effective model is not known until the composition root, which re-validates there (see
+        # ``build``).
+        if self.kinematics is not None:
+            self.kinematics.validate_performance(self.perf)
 
 
 @dataclass(frozen=True)
@@ -253,7 +254,7 @@ class FleetEnv:
     :meth:`is_terminal` (with the free function :func:`level`).
     """
 
-    dyns: tuple[Dynamics, ...]
+    kinematics: tuple[Kinematics, ...]
     perfs: tuple[Performance, ...]
     adapters: tuple[SetpointAdapter | None, ...]
     aps: tuple[Autopilot, ...]
@@ -335,8 +336,8 @@ class FleetEnv:
 
         Measures the true states (conflict / LoS / running min-sep), lets every aircraft whose
         broadcast clock is due sense-and-decide on the datalink, holds each command while the
-        dynamics integrate one ``dt``, and updates the done-timer. Draws only from ``streams``; the
-        returned :class:`FleetState` is new and the input is untouched.
+        kinematics integrate one ``dt``, and updates the done-timer. Draws only from ``streams``;
+        the returned :class:`FleetState` is new and the input is untouched.
         """
         n = len(state.states)
         states = list(state.states)
@@ -381,7 +382,7 @@ class FleetEnv:
                 next_bc[i] = self.schedule.advance(next_bc[i], streams.broadcast)
 
         # advance all aircraft from their pre-step states (explicitly simultaneous)
-        states = [self.dyns[i].step(states[i], cmds[i], self.perfs[i], self.dt, self.wind)
+        states = [self.kinematics[i].step(states[i], cmds[i], self.perfs[i], self.dt, self.wind)
                   for i in range(n)]
         t += self.dt
 
@@ -434,24 +435,24 @@ def build_env(
     drives and IPS (Phase 8) reuses per particle — everything here is per-run configuration, *not*
     per-particle RNG (that is :class:`FleetStreams`) or world state (that is :class:`FleetState`).
     The per-aircraft tuples default off the ``agents`` bundle: shared
-    :class:`~opencdarr.dynamics.Multirotor`, a velocity→course adapter only for a fixed-wing, and a
-    frozen :class:`CruiseAutopilot` at each aircraft's initial cruise unless it carries its own
+    :class:`~opencdarr.kinematics.Multirotor`, a velocity→course adapter only for a fixed-wing, and
+    a frozen :class:`CruiseAutopilot` at each aircraft's initial cruise unless it carries its own
     mission autopilot.
     """
     n = len(agents)
-    dyns = tuple(a.dynamics or _DEFAULT_DYNAMICS for a in agents)
+    kinematics = tuple(a.kinematics or _DEFAULT_KINEMATICS for a in agents)
     perfs = tuple(a.perf for a in agents)
-    # Backstop for the default-dynamics case: an Agent that left ``dynamics=None`` was validated
-    # against nothing at construction, so check the resolved model here (explicit agents re-validate
-    # harmlessly — the check is cheap and idempotent).
+    # Backstop for the default-kinematics case: an Agent that left ``kinematics=None`` was
+    # validated against nothing at construction, so check the resolved model here (explicit agents
+    # re-validate harmlessly — the check is cheap and idempotent).
     for i in range(n):
-        dyns[i].validate_performance(perfs[i])
+        kinematics[i].validate_performance(perfs[i])
     if communication is not None:
         communication.validate_ids(frozenset(a.state.id for a in agents))
     return FleetEnv(
-        dyns=dyns,
+        kinematics=kinematics,
         perfs=perfs,
-        adapters=tuple(_setpoint_adapter(dyns[i], perfs[i]) for i in range(n)),
+        adapters=tuple(_setpoint_adapter(kinematics[i], perfs[i]) for i in range(n)),
         aps=tuple(a.autopilot or CruiseAutopilot(a.state.trk, a.state.gs) for a in agents),
         separation=SeparationManager(),  # stateless; memory rides in state.mems (ADR 0011 §5)
         detector=detector,
@@ -512,7 +513,7 @@ def run_fleet(
     (perfect delivery); with it, each aircraft reads :class:`SurveillanceModel`'s ``perceived`` per
     directed link — the last message *that* link delivered, or ``None`` (absent) before first
     contact, so that neighbour is dropped from the perceived set until first heard. The command
-    is held while the dynamics integrate at ``dt``; all aircraft advance together. The outcome
+    is held while the kinematics integrate at ``dt``; all aircraft advance together. The outcome
     (conflict / LoS / min-sep) is measured on the **true** states every step. Terminates once every
     pair is diverging and separated and no aircraft is resolving for ``done_timeout``, or at
     ``t_max``.
