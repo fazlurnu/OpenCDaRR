@@ -7,7 +7,33 @@ how badly it could corrupt a number.
 
 ---
 
-## 1. Loss of separation is only sampled at `dt`, so a fast tangential pass can be missed
+## 1. Loss of separation was only sampled at `dt` — **FIXED (2026-07-30)**
+
+**Status: confirmed, quantified, fixed.** Separation is now measured over each whole step
+(`kinematics.segment_min_range`), not at its endpoints. Full measurements, the cost, and what the fix
+does *not* cover in [[segment-min-separation]].
+
+**The impact, against an analytic reference.** `P(LoS)` at `rpz` was barely affected — worst case
+**−0.6%** at `dt=1.0` — which is why no published IPR number here was materially wrong and why this
+survived so long. The damage was at the small radii IPS splits on, where the relative error goes as
+`(v_rel·dt)² / (24 d²)`:
+
+| shell | `dt=1.0` | `dt=0.5` | `dt=0.2` | after |
+|---|---|---|---|---|
+| 10 m | −9.3% | −2.0% | 0.0% | exact |
+| 5 m | **−43.8%** | −9.2% | −0.8% | exact |
+| 1 m | **−89.2%** | −75.8% | −42.5% | exact |
+
+The `1/d²` is why refining `dt` was never the answer: sub-1% needs `dt < d/(2 v_rel)`, i.e. 0.024 s
+for a 1 m shell. The fix costs **+0.95%** of a step and is exact at `dt=1.0`.
+
+Two findings worth carrying forward: the fix must **interpolate positions, not extrapolate the
+pre-step velocity** (the latter invents losses of separation on turning aircraft — `P(LoS)` inflated
+10%), and the strict/non-strict boundary below is *still* open, as is the `tlos ≡ 0 mod dt` alignment
+artifact, which was 100% present at every `dt` tested and is untouched by the fix.
+
+<details>
+<summary><b>Original entry</b> (kept for the trail, per <code>design-philosophy.md</code> #19)</summary>
 
 **Status: confirmed behaviour, impact unquantified. Highest concern of anything here.**
 
@@ -39,6 +65,12 @@ endpoint — closed-form CPA between the pre- and post-step states, which the CP
 
 Related: `ips.py` uses `min_sep <= target` (non-strict) while `fleet.py` uses `cur < rpz` (strict).
 Measure-zero in floating point, but they should agree on the boundary by construction, not by luck.
+
+</details>
+
+**Still open from this entry** (deliberately not bundled into the fix): the `<` / `<=` mismatch
+above — ADR 0017 §1 sets `d_m = rpz` and claims IPS estimates the *same* `P(LoS)` as MC, which fails
+exactly at the boundary — and the ADR-0017 §6 gate re-validation, since every IPS number re-bases.
 
 ## 2. Resolution thrashes ~9× harder at shallow crossing angles
 
@@ -157,6 +189,7 @@ regardless) — [[run-experiment-todo]] item 9.
 
 ## Related
 
+- [[segment-min-separation]] — entry 1's measurements, fix and remaining gaps
 - [[run-experiment-todo]] — the build order these were found in; items 4a (fixed), 4b, 7, 9 touch them
 - [[important-ips-gap]] — the discrete-jump coordinate problem, and the comm-stream note
 - [[0017-ips-level-and-splitting]] — the shells that entry 1 could cause to be missed
