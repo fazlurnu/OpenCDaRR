@@ -387,13 +387,14 @@ Two things corrected while doing it, both mine:
 
 ## 6a. The study runner — **done 2026-07-30**
 
-- [x] `opencdarr/study.py`: `Fixed`/`Sweep` axes → conditions → per-condition estimate →
-      `StudyResult` with `records()`, `frame()` and `cell()`. `MC(n_encounters=…)` and
+- [x] `opencdarr/experiment.py`: `Fixed`/`Sweep` axes → conditions → per-condition estimate →
+      `ExperimentResult` with `records()`, `frame()` and `cell()`. `MC(n_encounters=…)` and
       `IPS(shells=…, n_particles=…, reps=…)` swap over the **same** `Methods` bundle.
 
-Named `run_study` / `StudyResult`, not `run_experiment` / `ExperimentResult`: `experiment.py`
-already defines an `ExperimentResult`, and two same-named classes in one package — one of them
-top-level exported — is a trap. The design doc's names were explicitly proposals.
+**Renamed 2026-07-30** to the design doc's own vocabulary. It shipped as `study.run_study` /
+`StudyResult` to avoid colliding with the then-existing `experiment.ExperimentResult`; that
+collision was resolved by splitting the old module — the name registry moved to `registry.py` and
+`run_one_experiment` re-homed here as the all-`Fixed` wrapper, so there is one card writer.
 
 **What it does.** `Fixed` holds a parameter, `Sweep` fans it out; an all-`Fixed` declaration is the
 single-cell case rather than a separate path. `Sweep(values, name=…, build=…)` is the piece worth
@@ -401,7 +402,7 @@ having got right: `build` maps a level onto the value the run needs, so a *compo
 over a readable scalar axis — `Sweep([1.05, 1.4], build=lambda m: MVP(margin=m), name="margin")`
 puts numbers in the table and objects in the run. Bare object levels work too (`Sweep([MVP(1.05),
 VO(1.05)])`) for the categorical benchmark case. Unknown keys fail immediately with the declarable
-list, so a typo or an aspirational axis cannot be silently ignored — 20 keys, every one wired.
+list, so a typo or an aspirational axis cannot be silently ignored — 23 keys, every one wired.
 
 Geometry pins now reach MC: `estimate_ipr` gained `dpsi`/`dcpa`/`side`/`gs_intr`, forwarded to
 `sample_pairwise` — the "item 6's business" left open by item 3.
@@ -436,12 +437,12 @@ crossing-angle profile comes out with the expected shape (P(LoS) 0.060 / 0.005 /
   is "high, not ~0"; tightening it to the number it happens to produce would be tuning the threshold
   to the run.
 
-- **Files:** `opencdarr/study.py` (new), `opencdarr/estimator.py` (geometry pins),
-  `opencdarr/__init__.py` (exports), `tests/test_study.py` (new)
+- **Files:** `opencdarr/experiment.py` (new), `opencdarr/estimator.py` (geometry pins),
+  `opencdarr/__init__.py` (exports), `tests/test_experiment.py` (new)
 
 ## 6b. Cache, provenance card, `plot()`, `n_jobs` — **done 2026-07-30**
 
-- [x] `run_study(..., cache=…, n_jobs=…, card_dir=…)` plus `StudyResult.plot()`.
+- [x] `run_experiment(..., cache=…, n_jobs=…, card_dir=…)` plus `ExperimentResult.plot()`.
 
 **The cache, and the identity problem it turned on.** `cache.run_key` stringifies non-JSON values,
 and a live component is hostile to keying: `GnssNavigation` and `Comm` hold **function objects**
@@ -516,7 +517,7 @@ Reuse rather than rebuild: `cache.run_key` / `cache.load_or_run` per cell (the c
 already exists, `.opencdarr_cache/` and all), `parallel.resolve_jobs` for `n_jobs`,
 `estimator.combine_ipr` for pooling, and `cache.code_fingerprint()` on the card.
 
-- **Files:** new `opencdarr/study.py` (or similar), `opencdarr/experiment.py`
+- **Files:** new `opencdarr/experiment.py` (or similar), `opencdarr/experiment.py`
 - **Verify:** the **release-gate test** — a toy custom `ConflictResolver` *and* a toy custom
   `Dynamics`, run under `MC(...)` then `IPS(...)` with the same objects, asserting both backends
   actually *used* them (a resolver that always brakes must measurably move `min_sep` on both paths).

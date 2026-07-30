@@ -453,6 +453,11 @@ module, `step_dynamics`, `HolonomicDynamics` and `DubinsDynamics` no longer exis
 
 ## Related
 
+- [[observations/experiment-layer-architecture]] — **the layer above this one.** This note stops at
+  `estimate_ipr` / `estimate_rare_prob`; `opencdarr/experiment.py`'s `run_experiment` (added after it was written) declares
+  *what varies* and fans conditions out across either estimator. That note also records how the
+  entry points differ, and that plain MC now drives `fleet.run_fleet` rather than
+  `loop.run_encounter` — so §1's backbone reaches the environment through the same seam §1b does.
 - [[decisions/0001-rng-per-particle-spawn]] — the substream tree wired in §1.
 - [[decisions/0003-own-the-geodesy-bluesky-free-runtime]] — why `geo.py` is ours and there is no
   BlueSky runtime dependency.
