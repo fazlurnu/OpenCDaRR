@@ -95,14 +95,15 @@ def _verify_n2(seqs: list[np.random.SeedSequence], cfg: argparse.Namespace) -> N
     fleet = sc.swap_ring(2, speed=cfg.speed, radius=cfg.radius)
     own = replace(fleet[0][0], pos_ci95=cfg.pos_ci95, vel_ci95=cfg.vel_ci95)
     intr = replace(fleet[1][0], pos_ci95=cfg.pos_ci95, vel_ci95=cfg.vel_ci95)
-    kw = _kwargs(cfg, "mvp")  # run_fleet kwargs (carry a BroadcastSchedule)
-    # run_encounter is the interval-only pairwise primitive: swap the schedule for its interval
-    enc_kw = {k: v for k, v in kw.items() if k != "schedule"}
-    enc_kw["broadcast_interval"] = cfg.broadcast_interval
+    # both runners take the same BroadcastSchedule now, so the comparison uses one kwargs bundle.
+    # It used to strip the schedule and substitute its interval, which was equivalent only while
+    # the schedule stayed aligned and jitter-free — adding either would have quietly compared a
+    # dithered fleet run against an undithered pairwise one.
+    kw = _kwargs(cfg, "mvp")
     mismatches = 0
     for seq in seqs:
         enc = run_encounter(own, intr, perf=M600, navigation=GnssNavigation(),
-                            rng=generator(seq), **enc_kw)
+                            rng=generator(seq), **kw)
         flt = run_fleet([Agent(own, M600), Agent(intr, M600)], navigation=GnssNavigation(),
                         rng=generator(seq), **kw)
         if (enc.los, enc.min_sep) != (flt.los, flt.min_sep):

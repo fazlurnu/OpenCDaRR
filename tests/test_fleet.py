@@ -12,9 +12,12 @@ from __future__ import annotations
 
 import math
 
+import pytest
+
 from opencdarr import geo
 from opencdarr.cd import StateBased
 from opencdarr.cns import Comm, GnssNavigation, lognormal_latency
+from opencdarr.cns.broadcast import BroadcastSchedule
 from opencdarr.cr import MVP, VO
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr import PastCPA
@@ -161,6 +164,39 @@ def test_run_fleet_lossy_reduces_to_run_encounter_noisy() -> None:
                     communication=_comm(), comm_rng=generator(comm_f), **kw)
     assert flt.min_sep == enc.min_sep
     assert (flt.conflict, flt.los) == (enc.conflict, enc.los)
+
+
+def test_run_fleet_reduces_to_run_encounter_off_phase_and_jittered() -> None:
+    """The reduction holds at *any* schedule, not only the aligned default.
+
+    ``run_encounter`` used to advance a single global ``next_broadcast`` by a scalar interval, so
+    the two aircraft always fired together and this case could not be written at all — the pairwise
+    runner had no off-phase or jitter to compare. Both runners now thread the same
+    :class:`~opencdarr.cns.broadcast.BroadcastSchedule`, so a per-aircraft phase offset and a
+    per-transmission dither reduce like every other CNS effect. ``phase`` is deliberately not a
+    multiple of ``dt``, so the two aircraft fire on genuinely different ticks.
+    """
+    own, intr = _noisy_pair()
+    sched = BroadcastSchedule(interval=1.0, phase=[0.0, 0.37], jitter=0.2)
+    kw = dict(rpz=_RPZ, t_lookahead=_LOOKAHEAD, dt=0.1, detector=StateBased(),
+              resolver=MVP(margin=1.05), recovery=PastCPA(bouncing_guard=True),
+              navigation=GnssNavigation(), schedule=sched)
+    nav_e, bc_e = spawn(root_seed_sequence(4), 2)
+    enc = run_encounter(own, intr, perf=M600, rng=generator(nav_e),
+                        broadcast_rng=generator(bc_e), **kw)
+    nav_f, bc_f = spawn(root_seed_sequence(4), 2)
+    flt = run_fleet([Agent(own, M600), Agent(intr, M600)], rng=generator(nav_f),
+                    broadcast_rng=generator(bc_f), **kw)
+    assert flt.min_sep == enc.min_sep
+    assert (flt.conflict, flt.los) == (enc.conflict, enc.los)
+
+
+def test_run_encounter_jitter_without_a_stream_is_rejected() -> None:
+    """The same guard ``run_fleet`` has: a dithered gap needs its own substream (ADR 0006 §6)."""
+    own, intr = _pair()
+    with pytest.raises(ValueError, match="broadcast jitter requires broadcast_rng"):
+        run_encounter(own, intr, perf=M600, rpz=_RPZ, t_lookahead=_LOOKAHEAD, dt=1.0,
+                      detector=StateBased(), schedule=BroadcastSchedule(1.0, jitter=0.2))
 
 
 def test_fleet_perception_gates_avoidance() -> None:

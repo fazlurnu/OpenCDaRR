@@ -36,6 +36,7 @@ from opencdarr.cns.base import (
     NavigationModel,
     SurveillanceModel,
 )
+from opencdarr.cns.broadcast import BroadcastSchedule
 from opencdarr.cns.stack import CNS, CnsState, CnsStreams
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr.base import RecoveryCriterion
@@ -55,6 +56,8 @@ from opencdarr.wind import NO_WIND, WindField
 # module-level singleton, not a call in the signature default (ruff B008) - safe to share
 # since Multirotor is stateless (ADR 0007)
 _DEFAULT_DYNAMICS: Dynamics = Multirotor()
+
+_BROADCAST_EPS = 1e-9  # float guard so a tick lands on a broadcast time reached by dt steps
 
 
 def _setpoint_adapter(dynamics: Dynamics, perf: Performance) -> SetpointAdapter | None:
@@ -142,6 +145,8 @@ def run_encounter(
     t_max: float = 600.0,
     done_timeout: float = 10.0,
     broadcast_interval: float = 1.0,
+    schedule: BroadcastSchedule | None = None,
+    broadcast_rng: np.random.Generator | None = None,
     share_intent: bool = False,
     own_autopilot: Autopilot | None = None,
     intr_autopilot: Autopilot | None = None,
@@ -173,6 +178,15 @@ def run_encounter(
     every ``dt``: at each tick each aircraft takes a fresh noisy self-measurement and **decides**
     on its *perceived* view; the resulting command is **held** until the next tick. Without a
     ``navigation`` model (and ``rng``) the self-measurement is the true state (Phase 2 behaviour).
+
+    ``broadcast_interval`` is the scalar spelling of that cadence and covers the common case.
+    ``schedule`` is the full one: a :class:`~opencdarr.cns.broadcast.BroadcastSchedule` carrying
+    per-aircraft **phase** offsets and per-transmission **jitter** as well as the interval, which
+    the scalar cannot express. Passing it supersedes ``broadcast_interval``; a non-zero
+    ``schedule.jitter`` needs ``broadcast_rng`` (its own substream, ADR 0006 §6). This is the same
+    object ``run_fleet`` takes, and giving both runners one transmit-timing model is what makes the
+    n = 2 reduction hold at *any* schedule rather than only at the aligned default — before this,
+    the two aircraft here shared one global broadcast clock and could not be off-phased at all.
 
     **``communication`` (Phase 3b, optional):** without it, a decision's *other* is the other
     aircraft's broadcast directly — instant, perfect delivery (Phase 3a behaviour, unchanged).
@@ -206,17 +220,23 @@ def run_encounter(
         share_intent=share_intent,
     )
     cns_streams = CnsStreams(nav=rng, comm=comm_rng)
+    # transmit timing: the scalar spelling unless a full schedule is given. Both runners now share
+    # one BroadcastSchedule, so phase offsets and jitter mean the same thing here as in run_fleet
+    # and the n = 2 reduction is no longer conditional on the aligned default.
+    sched = BroadcastSchedule(interval=broadcast_interval) if schedule is None else schedule
+    if sched.jitter > 0.0 and broadcast_rng is None:
+        raise ValueError("broadcast jitter requires broadcast_rng (a substream, ADR 0006 §6)")
     # per-aircraft bundle (ADR 0011 §7): each side falls back to the shared dynamics/perf, so the
     # single-airframe callers (and the bit-for-bit anchors) are unchanged; a mixed-fleet caller
     # overrides one or both sides. The setpoint adapter is airframe-derived (fixed-wing: project).
-    dyn_own = own_dynamics or dynamics
-    dyn_intr = intr_dynamics or dynamics
-    perf_own = own_perf or perf
-    perf_intr = intr_perf or perf
-    adapter_own = _setpoint_adapter(dyn_own, perf_own)
-    adapter_intr = _setpoint_adapter(dyn_intr, perf_intr)
-    own = replace(own, desired=DesiredVelocity.from_track_speed(own.trk, own.gs))
-    intr = replace(intr, desired=DesiredVelocity.from_track_speed(intr.trk, intr.gs))
+    # Held per aircraft in index order (own = 0, intr = 1) — the same shape run_fleet threads, so
+    # the broadcast tick below can act on the subset that is actually firing.
+    dyns = [own_dynamics or dynamics, intr_dynamics or dynamics]
+    perfs = [own_perf or perf, intr_perf or perf]
+    adapters = [_setpoint_adapter(dyns[i], perfs[i]) for i in range(2)]
+    states = [
+        replace(ac, desired=DesiredVelocity.from_track_speed(ac.trk, ac.gs)) for ac in (own, intr)
+    ]
     # Layered flow (ADR 0011): a per-aircraft Autopilot produces the nominal command, the
     # SeparationManager overlays safety on it. CruiseAutopilot holds each aircraft's cruise
     # (heading, speed) frozen from the *true initial* state — byte-identical to the old frozen
@@ -224,77 +244,75 @@ def run_encounter(
     # Default to the frozen-cruise nominal (behaviour-preserving); a caller navigating a mission
     # passes a WaypointAutopilot per aircraft. Guidance progress rides in the threaded
     # GuidanceMemory (leg index), clonable like PairMemory (ADR 0014).
-    ap_own: Autopilot = own_autopilot or CruiseAutopilot(own.trk, own.gs)
-    ap_intr: Autopilot = intr_autopilot or CruiseAutopilot(intr.trk, intr.gs)
-    gm_own = gm_intr = GuidanceMemory()
-    separation = SeparationManager()  # stateless; memory rides in mem_own / mem_intr (ADR 0011 §5)
-    mem_own = mem_intr = INACTIVE  # per-direction resopairs membership + inferred-intent memory
-    cmd_own, gm_own = ap_own.step(own, gm_own, perf_own)
-    cmd_intr, gm_intr = ap_intr.step(intr, gm_intr, perf_intr)
+    aps: list[Autopilot] = [
+        own_autopilot or CruiseAutopilot(own.trk, own.gs),
+        intr_autopilot or CruiseAutopilot(intr.trk, intr.gs),
+    ]
+    separation = SeparationManager()  # stateless; memory rides in ``mems`` (ADR 0011 §5)
+    mems = [INACTIVE, INACTIVE]  # per-direction resopairs membership + inferred-intent memory
+    gms: list[GuidanceMemory] = []
+    cmds: list[MotionCommand] = []
+    for i in range(2):
+        cmd, gm = aps[i].step(states[i], GuidanceMemory(), perfs[i])
+        cmds.append(cmd)
+        gms.append(gm)
     cns_state = CnsState.initial(2, communication)
 
     conflict = los = False
     min_sep = float("inf")
     done_timer = 0.0
     t = 0.0
-    next_broadcast = 0.0
-    eps = 1e-9  # float guard so a tick lands on t = k*broadcast_interval reached by dt steps
+    next_bc = sched.initial(2)  # per-aircraft broadcast clock: aligned at 0, or the phase offsets
 
     while t < t_max:
         # the pre-step geometry; separation itself is measured across the whole step, after
         # integrating, so a pass that dips inside rpz and back out within one dt is not missed
         # (``kinematics.segment_min_range``)
-        rel_pre = relative_enu(own, intr)
-        if detector.detect(own, intr, rpz, t_lookahead) or detector.detect(
-            intr, own, rpz, t_lookahead
+        rel_pre = relative_enu(states[0], states[1])
+        if detector.detect(states[0], states[1], rpz, t_lookahead) or detector.detect(
+            states[1], states[0], rpz, t_lookahead
         ):
             conflict = True
 
-        # CDR decisions on the broadcast cadence; the command is held between ticks
-        if t + eps >= next_broadcast:
-            # the datalink, whole: both aircraft take their (noisy) self-fix and put it on the air
-            # (intent stripped at transmit time unless shared), then each is told what it now holds
-            # of the other — absent before first contact on a lossy link, which flies that pair
-            # nominal (ADR 0006 §5). Same stack, same order, as ``run_fleet``.
-            cns_state, perception = cns.sense((own, intr), (0, 1), t, cns_state, cns_streams)
-            see_own, see_intr = perception[0], perception[1]
-
-            # guidance: each aircraft's nominal command + advanced guidance memory. A mission
-            # autopilot navigates from the live self-fix (re-planned each tick, which is what makes
-            # the resume-after-avoidance automatic); CruiseAutopilot ignores it and holds.
-            nom_own, gm_own = ap_own.step(see_own.own, gm_own, perf_own)
-            nom_intr, gm_intr = ap_intr.step(see_intr.own, gm_intr, perf_intr)
-            # intent as a velocity: what each aircraft would fly if it reverted to nominal *now*
-            # (the live mission command, not a value frozen at t=0), so intent-based recovery (FTR)
-            # tests the velocity the aircraft will actually resume. Byte-identical for a frozen
-            # CruiseAutopilot. Stamped on the self-fix for this decision and persisted on the true
-            # state so the next tick's transmit carries it under ``share_intent``.
-            self_own = replace(see_own.own, desired=nominal_velocity(nom_own, see_own.own))
-            self_intr = replace(see_intr.own, desired=nominal_velocity(nom_intr, see_intr.own))
-            own = replace(own, desired=self_own.desired)
-            intr = replace(intr, desired=self_intr.desired)
-            # safety overlay: SeparationManager may override the nominal, releasing back on
-            # recovery. adapter_* projects the final command onto each airframe's channels
-            # (fixed-wing: a velocity override -> course/airspeed; multirotor: None, flown direct).
-            cmd_own, mem_own = separation.step(
-                self_own, see_own.traffic, nom_own, mem_own,
-                rpz, t_lookahead, detector, resolver, recovery, adapter_own,
-            )
-            cmd_intr, mem_intr = separation.step(
-                self_intr, see_intr.traffic, nom_intr, mem_intr,
-                rpz, t_lookahead, detector, resolver, recovery, adapter_intr,
-            )
-            next_broadcast += broadcast_interval
+        # CDR decisions on the broadcast cadence; the command is held between ticks. Both aircraft
+        # fire together on the aligned default; once phases are offset it is a per-aircraft subset.
+        firing = sched.due(next_bc, t, _BROADCAST_EPS)
+        if firing:
+            # the datalink, whole: each firing aircraft takes its (noisy) self-fix and puts it on
+            # the air (intent stripped at transmit time unless shared), then is told what it now
+            # holds of the other — absent before first contact on a lossy link, which flies that
+            # pair nominal (ADR 0006 §5). Same stack, same order, as ``run_fleet``.
+            cns_state, perception = cns.sense(states, firing, t, cns_state, cns_streams)
+            for i in firing:
+                see = perception[i]
+                # guidance: this aircraft's nominal command + advanced guidance memory. A mission
+                # autopilot navigates from the live self-fix (re-planned each tick, which is what
+                # makes resume-after-avoidance automatic); CruiseAutopilot ignores it and holds.
+                nom, gms[i] = aps[i].step(see.own, gms[i], perfs[i])
+                # intent as a velocity: what it would fly if it reverted to nominal *now* (the live
+                # mission command, not a value frozen at t=0), so intent-based recovery (FTR) tests
+                # the velocity the aircraft will actually resume. Byte-identical for a frozen
+                # CruiseAutopilot. Stamped on the self-fix for this decision and persisted on the
+                # true state so the next tick's transmit carries it under ``share_intent``.
+                self_i = replace(see.own, desired=nominal_velocity(nom, see.own))
+                states[i] = replace(states[i], desired=self_i.desired)
+                # safety overlay: SeparationManager may override the nominal, releasing back on
+                # recovery. adapters[i] projects the final command onto this airframe's channels
+                # (fixed-wing: a velocity override -> course/airspeed; multirotor: None, direct).
+                cmds[i], mems[i] = separation.step(
+                    self_i, see.traffic, nom, mems[i],
+                    rpz, t_lookahead, detector, resolver, recovery, adapters[i],
+                )
+                # next broadcast: a fixed interval, or one dithered per transmission by the
+                # schedule's jitter (ADS-B slot randomisation), drawn in agent order
+                next_bc[i] = sched.advance(next_bc[i], broadcast_rng)
 
         # advance both from their pre-step states (explicitly simultaneous), each by its airframe.
         # ``wind`` is the shared environment field (default NO_WIND -> Phase-4 behaviour, 5a).
-        own, intr = (
-            dyn_own.step(own, cmd_own, perf_own, dt, wind),
-            dyn_intr.step(intr, cmd_intr, perf_intr, dt, wind),
-        )
+        states = [dyns[i].step(states[i], cmds[i], perfs[i], dt, wind) for i in range(2)]
         t += dt
 
-        rel = relative_enu(own, intr)
+        rel = relative_enu(states[0], states[1])
 
         # separation over the step just flown; consecutive segments share an endpoint, so the
         # running minimum covers the trajectory continuously rather than at sampled instants
@@ -304,7 +322,7 @@ def run_encounter(
             los = True
 
         diverging = rel.rx * rel.vx + rel.ry * rel.vy > 0.0  # past CPA
-        clear = diverging and rel.dist >= rpz and not mem_own.resolving and not mem_intr.resolving
+        clear = diverging and rel.dist >= rpz and not any(m.resolving for m in mems)
         done_timer = done_timer + dt if clear else 0.0
         if done_timer >= done_timeout:
             break
