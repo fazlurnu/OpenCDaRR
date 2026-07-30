@@ -24,7 +24,7 @@ import numpy as np
 
 from opencdarr.cns.noise_distributions import CI95_TO_SIGMA
 from opencdarr.crr.base import RecoveryCriterion
-from opencdarr.kinematics import relative_enu, velocity_enu
+from opencdarr.relative import relative_enu, velocity_enu
 from opencdarr.state import AircraftState
 
 _SQRT2PI = math.sqrt(2.0 * math.pi)

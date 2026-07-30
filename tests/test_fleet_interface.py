@@ -103,7 +103,7 @@ def test_segment_minimum_never_exceeds_the_sampled_comb() -> None:
 
     This replaces an assertion that the two were *equal*, which pinned the defect it was meant to
     guard: equality is exactly what a per-``dt`` sample-and-compare gives, and it is wrong whenever
-    a pair's closest approach falls between two steps (``kinematics.segment_min_range``).
+    a pair's closest approach falls between two steps (``relative.segment_min_range``).
     """
     agents = _ring(4)
     env = _env(agents)

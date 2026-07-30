@@ -41,8 +41,8 @@ from opencdarr.cns.stack import CNS, CnsState, CnsStreams
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr.base import RecoveryCriterion
 from opencdarr.dynamics import Dynamics, FixedWing, MotionCommand, Multirotor
-from opencdarr.kinematics import relative_enu, segment_min_range
 from opencdarr.performance import Performance
+from opencdarr.relative import relative_enu, segment_min_range
 from opencdarr.separation import (
     INACTIVE,
     PairMemory,
@@ -267,7 +267,7 @@ def run_encounter(
     while t < t_max:
         # the pre-step geometry; separation itself is measured across the whole step, after
         # integrating, so a pass that dips inside rpz and back out within one dt is not missed
-        # (``kinematics.segment_min_range``)
+        # (``relative.segment_min_range``)
         rel_pre = relative_enu(states[0], states[1])
         if detector.detect(states[0], states[1], rpz, t_lookahead) or detector.detect(
             states[1], states[0], rpz, t_lookahead

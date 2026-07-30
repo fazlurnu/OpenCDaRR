@@ -10,7 +10,7 @@ import pytest
 
 from opencdarr import geo
 from opencdarr.cns import GnssNavigation
-from opencdarr.kinematics import velocity_enu
+from opencdarr.relative import velocity_enu
 from opencdarr.state import AircraftState
 
 _TRUE = AircraftState(id="A", lat=52.0, lon=4.0, trk=30.0, gs=10.0)

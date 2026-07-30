@@ -28,7 +28,7 @@ Those are added by the steps that introduce them (CDR: Steps 2-3; estimator: Ste
 inside the clonable state, never outside it.
 
 Not stored, on purpose (ADR 0010): the East/North velocity components — derivable from
-``(trk, gs)`` via :func:`~opencdarr.kinematics.velocity_enu`, so a stored copy would be a second
+``(trk, gs)`` via :func:`~opencdarr.relative.velocity_enu`, so a stored copy would be a second
 source of truth that can drift. A heading distinct from ``trk`` (``yaw``) *is* now stored — the
 independent-yaw consumer that gives it meaning exists (the :class:`~opencdarr.dynamics.Multirotor`
 model, ADR 0012), so the field lands with that model exactly as this note anticipated, rather than

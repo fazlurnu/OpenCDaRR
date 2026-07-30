@@ -40,9 +40,9 @@ from opencdarr.cr import MVP  # noqa: E402
 from opencdarr.cr.base import ConflictResolver  # noqa: E402
 from opencdarr.crr import PastCPA  # noqa: E402
 from opencdarr.dynamics import Multirotor  # noqa: E402
-from opencdarr.kinematics import relative_enu  # noqa: E402
 from opencdarr.mission import Mission  # noqa: E402
 from opencdarr.performance import M600  # noqa: E402
+from opencdarr.relative import relative_enu  # noqa: E402
 from opencdarr.separation import INACTIVE, FleetMemory, SeparationManager  # noqa: E402
 from opencdarr.state import AircraftState, DesiredVelocity  # noqa: E402
 

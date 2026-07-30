@@ -1,4 +1,4 @@
-"""Relative kinematics shared by detection, resolution, and recovery.
+"""Relative geometry shared by detection, resolution, and recovery.
 
 ``relative_enu`` extracts the relative position and velocity of ``intr`` with respect to
 ``own`` in the local East–North frame — the common front-end of the CPA algebra. Centralising
@@ -24,7 +24,7 @@ def velocity_enu(state: AircraftState) -> tuple[float, float]:
     return state.gs * math.sin(r), state.gs * math.cos(r)
 
 
-# --- Wind kinematics (Phase 5): the Eq 9 vector sum and its consequences ---------------------
+# --- Wind triangle (Phase 5): the Eq 9 vector sum and its consequences -----------------------
 # The one relation everything reduces to is  ground velocity = airspeed vector + wind  (Eq 9). The
 # helpers below are that sum, its inverse, and the two scalar read-outs (ground speed as a closed
 # form, and the crab a fixed-wing must hold to make good a course). All in the ENU frame, angles in

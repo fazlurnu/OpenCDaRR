@@ -45,8 +45,8 @@ from opencdarr.cns import Comm, GnssNavigation
 from opencdarr.cr import MVP
 from opencdarr.crr import PastCPA
 from opencdarr.fleet import Agent, CnsStreams, FleetEnv, FleetState, FleetStreams, build_env
-from opencdarr.kinematics import relative_enu
 from opencdarr.performance import M600
+from opencdarr.relative import relative_enu
 from opencdarr.rng import generator, root_seed_sequence, spawn
 from opencdarr.scenario import create_conflict
 from opencdarr.state import AircraftState

@@ -16,8 +16,8 @@ import math
 
 from opencdarr import geo
 from opencdarr.dynamics import FixedWing, MotionCommand
-from opencdarr.kinematics import ground_speed, wind_correction_angle
 from opencdarr.performance import SMALL_FIXEDWING as P
+from opencdarr.relative import ground_speed, wind_correction_angle
 from opencdarr.state import AircraftState
 from opencdarr.wind import NO_WIND, WindField
 

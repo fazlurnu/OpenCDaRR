@@ -3,7 +3,7 @@
 
 ``FleetEnv.advance`` used to sample separation once per ``dt`` and set ``los = cur < rpz``, so a
 pass that dipped inside a threshold and back out within one step left no sampled point inside. It
-now takes the minimum over each whole step (:func:`opencdarr.kinematics.segment_min_range`). This
+now takes the minimum over each whole step (:func:`opencdarr.relative.segment_min_range`). This
 script measures what that is worth, and it exists because the claim cannot be checked from inside
 the simulation: every earlier test compared ``los`` against quantities read off the *same* sampled
 trajectory, which cannot detect a measurement that misses part of that trajectory.
@@ -43,8 +43,8 @@ from opencdarr.cns.stack import CnsStreams
 from opencdarr.cr.mvp import MVP
 from opencdarr.crr.pastcpa import PastCPA
 from opencdarr.fleet import Agent, FleetStreams, build_env, run_fleet
-from opencdarr.kinematics import Relative, relative_enu, segment_min_range
 from opencdarr.performance import M600
+from opencdarr.relative import Relative, relative_enu, segment_min_range
 from opencdarr.rng import generator, root_seed_sequence, spawn
 from opencdarr.scenario import create_conflict, sample_pairwise
 

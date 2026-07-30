@@ -39,7 +39,7 @@ from joblib import Parallel, delayed
 
 from opencdarr.fleet import FleetState
 from opencdarr.ips import Particle, _streams
-from opencdarr.kinematics import relative_enu
+from opencdarr.relative import relative_enu
 from opencdarr.rng import generator, root_seed_sequence, spawn
 from scripts.ips_validate import Scenario, mc_estimate
 

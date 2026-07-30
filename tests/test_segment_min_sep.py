@@ -22,9 +22,9 @@ from opencdarr.cd import StateBased
 from opencdarr.cr import MVP
 from opencdarr.crr import PastCPA
 from opencdarr.fleet import Agent, run_fleet
-from opencdarr.kinematics import Relative, segment_min_range
 from opencdarr.loop import run_encounter
 from opencdarr.performance import M600
+from opencdarr.relative import Relative, segment_min_range
 from opencdarr.scenario import create_conflict
 from opencdarr.state import AircraftState
 
@@ -115,7 +115,7 @@ def test_endpoint_sampling_would_have_missed_these() -> None:
     so any sample offset shows up undiluted. Measured shortfall: 8.84 m at dt=1.0, 1.45 m at
     dt=0.5, 0.61 m at dt=0.2. Note the last: shrinking dt does not make endpoint sampling correct.
     """
-    from opencdarr.kinematics import relative_enu
+    from opencdarr.relative import relative_enu
 
     for dt in (1.0, 0.5, 0.2):
         worst = 0.0

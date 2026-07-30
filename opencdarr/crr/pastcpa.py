@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from opencdarr.cd import is_los
 from opencdarr.crr.base import RecoveryCriterion
-from opencdarr.kinematics import relative_enu
+from opencdarr.relative import relative_enu
 from opencdarr.state import AircraftState
 
 _BOUNCE_ANGLE_DEG = 30.0  # tracks within this are "near-parallel"

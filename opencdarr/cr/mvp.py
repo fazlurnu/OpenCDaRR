@@ -11,7 +11,7 @@ from collections.abc import Sequence
 
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.dynamics import MotionCommand
-from opencdarr.kinematics import relative_enu, velocity_enu
+from opencdarr.relative import relative_enu, velocity_enu
 from opencdarr.state import AircraftState
 
 # m: floor on the predicted miss used to *bias* the resolution direction. Below it the actual CPA

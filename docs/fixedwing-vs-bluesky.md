@@ -8,7 +8,7 @@ parameter-matched numerical experiment.
 Sources read for this comparison:
 
 - **OpenCDaRR** — [`opencdarr/dynamics/fixedwing.py`](../opencdarr/dynamics/fixedwing.py),
-  [`opencdarr/kinematics.py`](../opencdarr/kinematics.py), [`opencdarr/wind.py`](../opencdarr/wind.py),
+  [`opencdarr/relative.py`](../opencdarr/relative.py), [`opencdarr/wind.py`](../opencdarr/wind.py),
   and the derivation [`vault/derivations/fixedwing-coordinated-turn.md`](../vault/derivations/fixedwing-coordinated-turn.md).
 - **BlueSky** — the fork the `cdarr` conda env runs, `~/Projects/bluesky`:
   `bluesky/traffic/traffic.py` (`update_airspeed`, `update_groundspeed`, `update_pos`),
@@ -157,7 +157,7 @@ This is where the two models are closest — the wind kinematics are the *same e
 
 **Ground velocity is the wind triangle.** Both compute ground velocity as the airspeed vector plus
 the wind vector, `V_ground = V_air(ψ) + wind`. In OpenCDaRR this is Eq 9 in
-[`kinematics.py`](../opencdarr/kinematics.py) (`air_to_ground`); in BlueSky it is the `gsnorth`/
+[`relative.py`](../opencdarr/relative.py) (`air_to_ground`); in BlueSky it is the `gsnorth`/
 `gseast` lines above. Consequences are identical: under wind, ground speed ≠ airspeed and track ≠
 heading.
 

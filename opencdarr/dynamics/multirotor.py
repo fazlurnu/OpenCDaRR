@@ -27,8 +27,8 @@ from dataclasses import replace
 
 from opencdarr import geo
 from opencdarr.dynamics.base import _SPD_EPS, Dynamics, MotionCommand, _clip, odometry_update
-from opencdarr.kinematics import air_to_ground, ground_to_air, velocity_enu
 from opencdarr.performance import Performance
+from opencdarr.relative import air_to_ground, ground_to_air, velocity_enu
 from opencdarr.state import AircraftState
 from opencdarr.wind import NO_WIND, WindField
 

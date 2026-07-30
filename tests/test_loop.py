@@ -122,7 +122,7 @@ def test_dynamics_is_pluggable() -> None:
 # sidesteps cleanly where that turn-rate limit used to bind). The MVP/VO IPR on the *fixed-wing*
 # airframe re-anchors in Phase 4e (it needs the velocity->course/airspeed projection).
 #
-# Re-anchored again for the segment-minimum measurement (``kinematics.segment_min_range``): min_sep
+# Re-anchored again for the segment-minimum measurement (``relative.segment_min_range``): min_sep
 # is now the minimum over each *step* rather than at its endpoints, so every anchor moved **down**,
 # by 1.8e-5 m to 0.20 m here. The direction is guaranteed, not observed — a segment minimum can
 # never exceed the minimum of its own endpoints — and ``test_segment_minimum_never_exceeds_the_

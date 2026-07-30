@@ -38,8 +38,8 @@ from dataclasses import replace
 
 from opencdarr import geo
 from opencdarr.dynamics.base import _SPD_EPS, Dynamics, MotionCommand, _clip, odometry_update
-from opencdarr.kinematics import ground_to_air, velocity_enu, wind_correction_angle
 from opencdarr.performance import Performance
+from opencdarr.relative import ground_to_air, velocity_enu, wind_correction_angle
 from opencdarr.state import AircraftState
 from opencdarr.wind import NO_WIND, WindField
 
@@ -106,7 +106,7 @@ def _heading_for_course(chi: float, v_tas: float, wind: WindField) -> float:
 
     A fixed-wing steers its *airspeed vector* (heading ψ), but guidance wants the *ground track* χ,
     so the airframe crabs: ``ψ = χ + θ_w`` with ``θ_w`` from
-    :func:`~opencdarr.kinematics.wind_correction_angle`. When the course is unachievable
+    :func:`~opencdarr.relative.wind_correction_angle`. When the course is unachievable
     (downwind-dominated, ``|arg| > 1``) the crab is clamped to ±90° — point as far into the
     cross-wind as possible (the closest achievable course), not silently pretend (Phase-5 decision
     4). At ``NO_WIND`` the crab is zero, so ``ψ == χ`` (byte-identical to the pre-wind tracker).

@@ -29,7 +29,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 from opencdarr import geo  # noqa: E402
 from opencdarr.cr import MVP, VO  # noqa: E402
 from opencdarr.cr.vo import _Cone, _cone  # noqa: E402
-from opencdarr.kinematics import velocity_enu  # noqa: E402
+from opencdarr.relative import velocity_enu  # noqa: E402
 from opencdarr.scenario import create_conflict  # noqa: E402
 from opencdarr.state import AircraftState  # noqa: E402
 

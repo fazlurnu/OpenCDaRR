@@ -28,8 +28,8 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 from opencdarr import geo  # noqa: E402
 from opencdarr.dynamics import MotionCommand, Multirotor  # noqa: E402
-from opencdarr.kinematics import ground_to_air, velocity_enu  # noqa: E402
 from opencdarr.performance import Performance  # noqa: E402
+from opencdarr.relative import ground_to_air, velocity_enu  # noqa: E402
 from opencdarr.state import AircraftState  # noqa: E402
 from opencdarr.wind import WindField  # noqa: E402
 from scripts.windviz import draw_wind_arrow  # noqa: E402

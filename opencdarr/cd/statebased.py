@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 
 from opencdarr.cd.base import ConflictDetector
-from opencdarr.kinematics import relative_enu
+from opencdarr.relative import relative_enu
 from opencdarr.state import AircraftState
 
 _PARALLEL_EPS = 1e-9  # |v_rel|^2 below this = no approach (parallel, equal speed)

@@ -59,9 +59,9 @@ from opencdarr.cns.stack import CNS, CnsState, CnsStreams
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr.base import RecoveryCriterion
 from opencdarr.dynamics import Dynamics, MotionCommand
-from opencdarr.kinematics import Relative, relative_enu, segment_min_range
 from opencdarr.loop import _DEFAULT_DYNAMICS, _setpoint_adapter
 from opencdarr.performance import Performance
+from opencdarr.relative import Relative, relative_enu, segment_min_range
 from opencdarr.separation import INACTIVE, FleetMemory, SeparationManager, SetpointAdapter
 from opencdarr.state import AircraftState, DesiredVelocity
 from opencdarr.wind import NO_WIND, WindField
@@ -214,7 +214,7 @@ def _segment_min_sep(pre: tuple[Relative, ...], post: tuple[Relative, ...]) -> f
     ``P(min_sep <= d)`` goes as ``(v_rel*dt)^2 / (24 d^2)``, i.e. it grows as the target tightens.
     See ``vault/observations/segment-min-separation.md`` for the measurements.
 
-    The per-pair algebra is :func:`~opencdarr.kinematics.segment_min_range`, shared with
+    The per-pair algebra is :func:`~opencdarr.relative.segment_min_range`, shared with
     :func:`~opencdarr.loop.run_encounter` so the two runners cannot drift apart on the n = 2
     reduction.
     """

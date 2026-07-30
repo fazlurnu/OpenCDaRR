@@ -13,7 +13,7 @@ import numpy as np
 from opencdarr import geo
 from opencdarr.cns.base import Message, NavigationModel, NoiseDistribution
 from opencdarr.cns.noise_distributions import gaussian
-from opencdarr.kinematics import velocity_enu
+from opencdarr.relative import velocity_enu
 from opencdarr.state import AircraftState
 
 

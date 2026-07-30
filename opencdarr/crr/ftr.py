@@ -15,7 +15,7 @@ otherwise FTR uses the single criterion (intruder holds its current velocity).
 from __future__ import annotations
 
 from opencdarr.crr.base import RecoveryCriterion
-from opencdarr.kinematics import relative_enu, velocity_enu
+from opencdarr.relative import relative_enu, velocity_enu
 from opencdarr.state import AircraftState
 
 _STATIONARY_EPS = 1e-9  # (m/s)^2: no relative motion

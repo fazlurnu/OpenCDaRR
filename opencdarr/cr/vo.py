@@ -36,7 +36,7 @@ from collections.abc import Sequence
 
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.dynamics import MotionCommand
-from opencdarr.kinematics import relative_enu, velocity_enu
+from opencdarr.relative import relative_enu, velocity_enu
 from opencdarr.state import AircraftState
 
 _ANG_EPS = 1e-9  # rad: a velocity within this of a cone edge counts as *outside* (on the boundary)

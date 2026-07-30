@@ -1,4 +1,4 @@
-"""Wind kinematics helpers (Phase 5a) — the Eq 9 vector sum and its consequences.
+"""Wind-triangle helpers (Phase 5a) — the Eq 9 vector sum and its consequences.
 
 Independent-implementation cross-checks (the [[0002-analytical-validation-of-dynamics]] discipline,
 not eyeballing): the closed-form ground speed (Eq 4) equals the vector-sum magnitude; the
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import math
 
-from opencdarr.kinematics import (
+from opencdarr.relative import (
     air_to_ground,
     ground_speed,
     ground_to_air,

@@ -18,8 +18,8 @@ import math
 
 from opencdarr import geo
 from opencdarr.dynamics import MotionCommand, Multirotor
-from opencdarr.kinematics import velocity_enu
 from opencdarr.performance import Performance
+from opencdarr.relative import velocity_enu
 from opencdarr.state import AircraftState
 from opencdarr.wind import NO_WIND, WindField
 
