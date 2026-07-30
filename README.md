@@ -7,7 +7,7 @@ algorithm, get your CDaRR performance.
 
 Separation standards are held to a target level of safety on the order of 10⁻⁹ per flight hour.
 Plain Monte Carlo needs on the order of 10¹¹ runs to resolve a probability that small, so this
-platform ships the pieces needed to actually run that test: a **dynamics** model, a **separation
+platform ships the pieces needed to actually run that test: a **kinematics** model, a **separation
 manager** framework, an environment with **CNS** uncertainty and **wind**, and a **rare-event
 simulation** that reaches the tail with far fewer runs.
 
@@ -75,7 +75,7 @@ pip install -e ".[dev]"
 ## Test
 
 ```bash
-pytest        # run the test suite — 339 tests, green
+pytest        # run the test suite — 426 tests, green
 mypy          # type-check (strict; type hints everywhere)
 ruff check    # lint
 ```
@@ -90,7 +90,7 @@ speed rather than rigor. Scoping the two tools to that same split is a post-free
 
 If you want to *use* OpenCDaRR, read the handbook:
 **[opencdarr.github.io](https://opencdarr.github.io)**. It covers installation, one full simulation
-step, a first run, and a page per swappable module (dynamics, autopilot, conflict detection /
+step, a first run, and a page per swappable module (kinematics, autopilot, conflict detection /
 resolution / recovery, CNS, wind, rare events). Runnable notebooks for the same material are in
 [`examples/`](examples/).
 

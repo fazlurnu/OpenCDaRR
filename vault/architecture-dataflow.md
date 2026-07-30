@@ -64,7 +64,7 @@ flowchart TB
     SAMP -->|"(own, intr)"| PAIR["AircraftState x2"]
 
     subgraph loopy["loop.py — the environment"]
-        LOOP["run_encounter(own, intr, perf, dynamics,<br/>detector, resolver, recovery,<br/>navigation, communication, surveillance, ...)"]
+        LOOP["run_encounter(own, intr, perf, kinematics,<br/>detector, resolver, recovery,<br/>navigation, communication, surveillance, ...)"]
         OUT["EncounterOutcome<br/>(conflict, los, min_sep)"]
         LOOP --> OUT
     end
@@ -98,7 +98,7 @@ At N=2 the two agree bit-for-bit (`tests/test_fleet.py`).
 
 ```mermaid
 flowchart TB
-    AGENTS["Agent x N<br/>(state, perf, dynamics, autopilot)"]
+    AGENTS["Agent x N<br/>(state, perf, kinematics, autopilot)"]
     ENV["build_env(agents, rpz, t_lookahead, dt,<br/>detector, resolver, recovery, wind, ...)<br/>-> FleetEnv"]
     S0["FleetState<br/>(states, gms, mems, cmds, next_bc,<br/>cns_state, t, conflict, los, min_sep)"]
     ADV["env.advance(state, streams)"]
@@ -148,12 +148,12 @@ statistics: it is scheduling, and `parallel.estimate_rare_prob` returns the same
 ## 2. One tick inside `run_encounter` — the heart of the loop
 
 Two cadences: aircraft **decide** every `broadcast_interval` (the ADS-L/ASAS rate) on their
-*perceived* view, then that `MotionCommand` is **held** while dynamics **integrate** every `dt`.
+*perceived* view, then that `MotionCommand` is **held** while kinematics **integrate** every `dt`.
 Truth is used only to score the encounter.
 
 Three layers produce that command, in order (ADR 0011). The **autopilot** turns the mission into a
 nominal setpoint; the **separation manager** overrides it when a conflict is detected and hands it
-back when the recovery criterion fires; the **dynamics** tracks whatever setpoint survives, within
+back when the recovery criterion fires; the **kinematics** tracks whatever setpoint survives, within
 the airframe's envelope. Guidance produces, safety overrides, physics tracks.
 
 ```mermaid
@@ -188,7 +188,7 @@ flowchart TB
 
     subgraph integ["Integration (every dt, command held)"]
         ADAPT["SetpointAdapter<br/>(project_to_fixedwing, ADR 0015)"]
-        DYN["dynamics.step(state, command, perf, dt, wind)<br/>-> AircraftState"]
+        DYN["kinematics.step(state, command, perf, dt, wind)<br/>-> AircraftState"]
         SCORE["geo.qdrdist -> separation<br/>detector.detect -> conflict?<br/>relative_enu -> past-CPA / done"]
     end
 
@@ -217,12 +217,12 @@ Key points the diagram encodes:
 - **Own detection reads the ownship's own noisy self-fix,** not truth: `Perception.own` is the
   measured state. An aircraft is uncertain about itself as well as about its traffic, which is
   what makes the two aircraft's pictures asymmetric.
-- **`dynamics.step` is the one swap point** for physics (ADR 0007): `Multirotor`, the holonomic
+- **`kinematics.step` is the one swap point** for the motion model (ADR 0007): `Multirotor`, the holonomic
   point mass (ADRs 0009, 0012), or `FixedWing`, the coordinated-turn point mass (ADR 0013). Both
   take the same `wind` argument (ADR 0016) and the same `MotionCommand`.
 - **A setpoint an airframe cannot fly is projected, not rejected.** A resolver emits a velocity
   vector; a fixed-wing cannot fly one directly, so `project_to_fixedwing` adapts it into a
-  course-and-airspeed setpoint on the way to `dynamics.step` (ADR 0015). This is what lets one
+  course-and-airspeed setpoint on the way to `kinematics.step` (ADR 0015). This is what lets one
   resolver serve a mixed fleet.
 - **The transmit clock is state.** `BroadcastSchedule` carries a per-aircraft phase and optional
   jitter, so aircraft do not all broadcast on the same tick.
@@ -254,8 +254,8 @@ flowchart LR
         CRRABC --> FTRn["FTR"]
         CRRABC --> PFTR["ProbabilisticFTR(...)"]
     end
-    subgraph DYNf["dynamics/ — physics (ADR 0007/0010)"]
-        DABC["Dynamics (ABC)<br/>step(state, command, perf, dt, wind)<br/>-> AircraftState<br/>validate_performance(perf)"]
+    subgraph DYNf["kinematics/ — motion models (ADR 0007/0010/0020)"]
+        DABC["Kinematics (ABC)<br/>step(state, command, perf, dt, wind)<br/>-> AircraftState<br/>validate_performance(perf)"]
         DABC --> MR["Multirotor<br/>holonomic, independent yaw<br/>(ADR 0009/0012)"]
         DABC --> FW["FixedWing<br/>coordinated turn, finite roll rate<br/>(ADR 0013)"]
         MC["MotionCommand<br/>PX4-shaped setpoints (ADR 0011)"]
@@ -293,7 +293,7 @@ flowchart LR
 
 `Performance` is the other contribution surface, and it is not an ABC — it is plain data. A new
 airframe is a frozen `Performance` value (`M600`, `SMALL_FIXEDWING`), not a subclass;
-`Dynamics.validate_performance` rejects an envelope that does not match the airframe, so a
+`Kinematics.validate_performance` rejects an envelope that does not match the airframe, so a
 fixed-wing envelope handed to a `Multirotor` fails loudly rather than flying wrong.
 
 ---
@@ -302,7 +302,7 @@ fixed-wing envelope handed to a `Multirotor` fails loudly rather than flying wro
 
 All are frozen dataclasses (clonable, no aliasing). `AircraftState` is the certain kinematic
 core; `MotionCommand` is the one setpoint message every autopilot and resolver emits and every
-dynamics consumes.
+kinematics consumes.
 
 ```mermaid
 flowchart LR
@@ -327,7 +327,7 @@ flowchart LR
 
     subgraph geo_km["Pure math — ours, no third-party runtime (ADR 0003)"]
         GEO["geo.py<br/>forward, qdrdist, earth_radius"]
-        KM["kinematics.py<br/>relative_enu, velocity_enu,<br/>air_to_ground, wind_correction_angle"]
+        KM["relative.py<br/>relative_enu, velocity_enu,<br/>air_to_ground, wind_correction_angle"]
     end
     KM --> REL
     GEO -. used by .-> KM
@@ -356,7 +356,7 @@ Every `.py` in `opencdarr/`, its public surface, and what flows in/out.
 |---|---|---|---|
 | `experiment.py` | `run_one_experiment(config, card_dir)` | `Config` | `ExperimentResult(ipr, card_path)` — and writes a provenance card |
 | `estimator.py` | `estimate_ipr(config, perf, detector, resolver, recovery, nav?, comm?, surv?)` | config + built components | `IPRResult(ipr, n_conflict, n_los)` |
-| `loop.py` | `run_encounter(own, intr, *, perf, dynamics, rpz, t_lookahead, dt, detector, resolver?, recovery?, navigation?, rng?, communication?, surveillance?, comm_rng?, t_max, done_timeout, broadcast_interval, share_intent)` | two `AircraftState` + all models | `EncounterOutcome(conflict, los, min_sep)` |
+| `loop.py` | `run_encounter(own, intr, *, perf, kinematics, rpz, t_lookahead, dt, detector, resolver?, recovery?, navigation?, rng?, communication?, surveillance?, comm_rng?, t_max, done_timeout, broadcast_interval, share_intent)` | two `AircraftState` + all models | `EncounterOutcome(conflict, los, min_sep)` |
 | `loop.py` | `_decide(ac, other, nominal, memory, rpz, tla, detector, resolver, recovery)` | one directed view | `(MotionCommand, FleetMemory)` — a shim that delegates to `SeparationManager.step` |
 | `fleet.py` | `build_env(agents, …)` / `run_fleet(agents, …, record=False)` | N `Agent`s + all models | `FleetEnv` / `FleetOutcome(conflict, los, min_sep, frames)` |
 | `fleet.py` | `FleetEnv.initial_state / .advance(state, streams) / .is_terminal(state)` | `FleetState` + `FleetStreams` | next `FleetState` / `bool` — the IPS-facing interface |
@@ -381,20 +381,22 @@ Every `.py` in `opencdarr/`, its public surface, and what flows in/out.
 | `mission.py` | `Waypoint`, `Mission(goto, flight_plan)` | — | the route an autopilot flies (ADR 0014) |
 | `scenario.py` | `swap_pair` / `swap_ring` / `converging_ring` / `near_parallel` | geometry params | N-aircraft `FleetScenario` builders |
 
-### Dynamics (ADR 0007, 0010)
+### Kinematics (ADR 0007, 0010, 0020)
 
-`opencdarr/dynamics.py` was split into the `opencdarr/dynamics/` package in Phase 4; the flat
-module, `step_dynamics`, `HolonomicDynamics` and `DubinsDynamics` no longer exist.
+`opencdarr/dynamics.py` was split into a package in Phase 4 and the package renamed
+`opencdarr/kinematics/` in ADR 0020 — these models carry no mass or forces, so "dynamics" was the
+wrong word. The flat module, `step_dynamics`, `HolonomicDynamics` and `DubinsDynamics` no longer
+exist.
 
 | Module | Symbol | Input | Output |
 |---|---|---|---|
-| `dynamics/base.py` | `MotionCommand` | — | PX4-shaped setpoint bundle; `Command` is a backward-compatible alias (ADRs 0008, 0011) |
-| `dynamics/base.py` | `MotionCommand.from_track_speed(hdg, spd)` / `.from_velocity(v_east, v_north)` | polar or vector | a `MotionCommand` |
-| `dynamics/base.py` | `Dynamics` (ABC) `.step(state, command, perf, dt, wind)` | one aircraft + setpoint + wind | next `AircraftState` |
-| `dynamics/base.py` | `Dynamics.validate_performance(perf)` | an envelope | raises if the envelope does not match the airframe |
-| `dynamics/base.py` | `odometry_update(state, dt)` | one aircraft | accumulated `flight_time`, `distance_flown` |
-| `dynamics/multirotor.py` | `Multirotor` | — | holonomic point mass, independent yaw (ADRs 0009, 0012) |
-| `dynamics/fixedwing.py` | `FixedWing` | — | coordinated-turn point mass, finite roll rate (ADR 0013) |
+| `kinematics/base.py` | `MotionCommand` | — | PX4-shaped setpoint bundle; `Command` is a backward-compatible alias (ADRs 0008, 0011) |
+| `kinematics/base.py` | `MotionCommand.from_track_speed(hdg, spd)` / `.from_velocity(v_east, v_north)` | polar or vector | a `MotionCommand` |
+| `kinematics/base.py` | `Kinematics` (ABC) `.step(state, command, perf, dt, wind)` | one aircraft + setpoint + wind | next `AircraftState` |
+| `kinematics/base.py` | `Kinematics.validate_performance(perf)` | an envelope | raises if the envelope does not match the airframe |
+| `kinematics/base.py` | `odometry_update(state, dt)` | one aircraft | accumulated `flight_time`, `distance_flown` |
+| `kinematics/multirotor.py` | `Multirotor` | — | holonomic point mass, independent yaw (ADRs 0009, 0012) |
+| `kinematics/fixedwing.py` | `FixedWing` | — | coordinated-turn point mass, finite roll rate (ADR 0013) |
 
 ### Guidance, safety and environment
 
@@ -445,9 +447,9 @@ module, `step_dynamics`, `HolonomicDynamics` and `DubinsDynamics` no longer exis
 |---|---|---|---|
 | `geo.py` | `forward(lat, lon, bearing, dist)` | point + vector | new `(lat, lon)` |
 | `geo.py` | `qdrdist(lat1, lon1, lat2, lon2)` | two points | `(bearing, distance)` |
-| `kinematics.py` | `relative_enu(own, intr)` | two states | `Relative(rx, ry, vx, vy, dist)` |
-| `kinematics.py` | `velocity_enu(state)` | one state | `(v_east, v_north)` |
-| `kinematics.py` | `air_to_ground` / `ground_to_air` / `ground_track` / `ground_speed` / `wind_correction_angle` | airspeed vector + wind | ground velocity, track, crab angle |
+| `relative.py` | `relative_enu(own, intr)` | two states | `Relative(rx, ry, vx, vy, dist)` |
+| `relative.py` | `velocity_enu(state)` | one state | `(v_east, v_north)` |
+| `relative.py` | `air_to_ground` / `ground_to_air` / `ground_track` / `ground_speed` / `wind_correction_angle` | airspeed vector + wind | ground velocity, track, crab angle |
 
 ---
 
@@ -464,7 +466,8 @@ module, `step_dynamics`, `HolonomicDynamics` and `DubinsDynamics` no longer exis
 - [[decisions/0004-layered-directed-design-for-multiaircraft-and-ips]] — why the estimator is
   oblivious to N, and why every model is directed/pairwise-primitive.
 - [[decisions/0006-communication-model-design]] — the `measure → communicate → perceive` chain in §2.
-- [[decisions/0007-dynamics-as-pluggable-interface]] — the one swap point for physics in §2/§3.
+- [[decisions/0007-dynamics-as-pluggable-interface]] — the one swap point for the motion model in
+  §2/§3.
 - [[decisions/0008-velocity-vector-command]] — why `DesiredVelocity` in §4 is a velocity vector,
   not polar.
 - [[decisions/0009-holonomic-dynamics]] — the holonomic model that became `Multirotor`; see also
@@ -477,7 +480,7 @@ module, `step_dynamics`, `HolonomicDynamics` and `DubinsDynamics` no longer exis
   against BlueSky's in `docs/fixedwing-vs-bluesky.md`.
 - [[decisions/0015-velocity-to-fixedwing-projection]] — why a resolver's velocity setpoint is
   projected rather than rejected.
-- [[decisions/0016-steady-uniform-wind]] — the `WindField` threaded through `dynamics.step`.
+- [[decisions/0016-steady-uniform-wind]] — the `WindField` threaded through `kinematics.step`.
 - [[decisions/0017-ips-level-and-splitting]] — the importance coordinate and shells in §1b.
 - [[decisions/0018-parallel-ips-scheduling]] — why `parallel.py` is scheduling only, with no
   statistics of its own.
