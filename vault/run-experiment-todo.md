@@ -133,7 +133,7 @@ Suite 348 passed; `ruff` and `mypy` clean on the touched files; `scripts/ips_val
 **Not done here (item 6's business):** no `Config` field for a pinned `dcpa`. `estimate_ipr` still
 passes `dcpa_max` only, so reaching the new slots from a config-driven run arrives with the runner.
 
-## 4. The denominator, and what an encounter is ← **current**
+## 4. The denominator, and what an encounter is — **4a done, 4b/4c deferred**
 
 > **This item was redesigned on 2026-07-30 after a review discussion that superseded the original
 > plan.** The original framing — "unconditional vs conditional estimand, keep both, IPR ≠ 1−P(LoS)"
@@ -385,7 +385,7 @@ Two things corrected while doing it, both mine:
   name resolves, that the documented contributor one-liners import, and that a fresh interpreter
   importing the package pulls neither optional extra.
 
-## 6a. The study runner — **done 2026-07-30**
+## 6a. The experiment runner — **done 2026-07-30**
 
 - [x] `opencdarr/experiment.py`: `Fixed`/`Sweep` axes → conditions → per-condition estimate →
       `ExperimentResult` with `records()`, `frame()` and `cell()`. `MC(n_encounters=…)` and
@@ -494,8 +494,6 @@ remaining tree-wide findings are the pre-existing ones [[TODO]] #5 catalogues).
 into invalid syntax by joining code-adjacent lines. Caught immediately by `ast.parse`, repaired by
 hand, and the helper is retired — targeted edits from here.
 
-## 6. `run_experiment` itself — superseded by 6a / 6b above
-
 - [ ] `Fixed` / `Sweep` axes → a conditions list → run each cell → `ExperimentResult` with
       `frame()`, `cell()`, `plot()`.
 
@@ -524,19 +522,42 @@ already exists, `.opencdarr_cache/` and all), `parallel.resolve_jobs` for `n_job
   This is the test that would have caught the item-2 defect. Plus: reproduce an angle-sweep profile
   and cross-check `scripts/ipr_angle_sweep.py` on a handful of angles.
 
-## 7. A seam for stateful user models ← **current**
+## 7. A seam for stateful user models — **done 2026-07-30**
 
-- [ ] Add `CommunicationModel.initial_state() -> CommState` (default `CommState()`), and have
-      `CnsState.initial(n)` call it.
+- [x] `CommunicationModel.initial_state() -> CommState` (default `CommState()`), called by
+      `CnsState.initial(n, communication=None)` — so a stateful model's own `CommState` subclass is
+      in place on the **first** tick instead of being handed a plain one to detect and upgrade.
 
 `CommState` is a closed frozen dataclass — exactly `held` and `in_flight`. A user model that must
 remember something (the motivating case: a `comm_is_on` latch that fails once and stays failed) has
 nowhere to put it. Subclassing does survive the round trip, because `CNS.sense` threads whatever
-`step` returns straight back into `CnsState` — but `CnsState.initial(n)` hands the model a plain
-`CommState()` on the first tick, so every such model has to detect and upgrade it by hand.
+`step` returns straight back into `CnsState` — but `CnsState.initial(n)` handed the model a plain
+`CommState()` on the first tick, so every such model had to detect and upgrade it by hand.
 
 ~5 lines, and it is the general seam for **any** stateful contribution, which is squarely the v1
 audience. Same argument applies to `SurveillanceModel` if a dead-reckoning model ever lands.
+
+**`initial_state()` takes no arguments**, which was the one open question — a *per-aircraft* state
+(the transceiver model of item 10) looks like it needs the roster at `t = 0`. It does not:
+`CommState.held` already reads an absent key as "nothing has happened on that link yet", so a
+per-aircraft field keys the same way and starts empty. That keeps the hook at the width item 7 was
+designed for, and keeps the roster check where it already lives (`validate_ids`, called at the
+composition root against the real ids).
+
+**A strict no-op for every shipped model.** `Comm` does not override the hook, so `initial_state()`
+returns the same `CommState()` the call site built literally before — which is why the golden
+anchors (22/200, IPR 0.89) and the fleet↔pairwise bit-for-bit reductions all hold unchanged.
+
+- **Files:** `opencdarr/cns/base.py`, `opencdarr/cns/stack.py`, `opencdarr/fleet.py` (one call
+  site), `opencdarr/loop.py` (the other)
+- **Verify:** suite **396 passed** (+3), `tests/test_cns_communication.py` 13 → 16; `ruff` and
+  `mypy` clean on the touched files. `scripts/ips_validate.py --pos 40` still **PASS** — MC
+  `P(LoS)=0.03025 [0.02538, 0.03603]` against IPS `0.028452 [0.026179, 0.030574]`, `collapsed=0/8`.
+  The load-bearing test drives a toy stateful model through a
+  whole `run_fleet` and reads its own field **unguarded** — `assert isinstance(state,
+  _TickCountState)` inside `step` rather than an isinstance *fallback*, so a model written the
+  honest way fails loudly if the seam regresses instead of quietly working around it. Its counter
+  is checked at `t = 0` (zero, i.e. present before anything is offered) and at termination.
 
 Two notes for whoever writes such a model: draw the latch from the **existing** `streams.comm`
 generator — do not add a fourth substream, since ADR 0006 §6 requires the stream tree stay
@@ -599,6 +620,176 @@ Experiment 3's whole point is the shape of the error.
 - **Verify:** re-derive the calibration constants in the paper's `tab:noise_sigmas`
   (σ = 4.085, σ₁ = 2.776, σ_c = 1.675, …) numerically from the new signatures. Those numbers come
   from *outside* the code, which is what `design-philosophy.md` #15 asks of a test.
+
+## 10. A stateful comm model: independent transmitter and receiver outages — **done 2026-07-30**
+
+- [x] `TransceiverComm` — a `Comm` subclass whose per-aircraft **transmitter** and **receiver**
+      fail and recover on their own, threading a `RadioState` (`tx_down`, `rx_down`, `t_prev`).
+      The first real user of item 7's seam.
+
+`Comm` loses *messages* — every tick is an independent draw, so it is the channel and has no
+memory. `TransceiverComm` loses *radios*. Four rates in 1/s (`tx_fail_rate`, `rx_fail_rate`,
+`tx_recover_rate`, `rx_recover_rate`), separate rather than shared because a transmitter and a
+receiver have no reason to share a reliability figure — and separate reads better at the call site
+too: `TransceiverComm(rx_fail_rate=1e-3)` says exactly what it does.
+
+Settled with the user (2026-07-30), five decisions:
+
+- **Two subsystems, not one "comm down" flag.** A transmitter and a receiver are separate hardware.
+  An aircraft whose *receiver* fails flies blind while its transmitter keeps squittering, so the
+  rest of the fleet still sees it perfectly — which is the asymmetric case worth studying and is
+  invisible to a single flag. State is two per-aircraft sets, `tx_down` / `rx_down`, both keyed by
+  id and both starting empty (item 7: absent ⇒ nothing has happened to that radio yet).
+- **Two-state, recovery optional.** `recover_rate` defaults to `0`, which *is* the permanent latch
+  item 7 was written for; set it and the radio comes back. One class covers both.
+- **Rates (per second), not probabilities per broadcast.** A per-broadcast probability makes the
+  mean time to failure a function of the cadence, so sweeping 1 Hz → 2 Hz would halve it and a
+  cadence sweep would be measuring two things at once. Per step the model converts
+  `1 − exp(−rate·Δt)` from the elapsed time it reads off its own state, so it is correct under
+  offset phases and jitter too, where the gap between `step` calls is not the interval.
+- **Gate at offer time.** A down receiver is simply not offered the broadcast, so nothing is
+  enqueued for it and it keeps holding stale data (`LastKnown`) — the interesting behaviour.
+  Messages *already* in flight still deliver: at the default `latency=0` the two rules coincide
+  exactly, and gating delivery as well would mean reaching into `Comm.step`'s delivery loop.
+- **Its own class, not a parameter on `Comm`.** An outage draw added inside `Comm` would have to be
+  unconditional to keep the stream config-invariant (item 3's rule), which would move **every**
+  published number. A subclass draws only what it needs, so `Comm`'s draw sequence stays
+  bit-identical and every existing golden anchor holds.
+
+Do not expect IPS to reach a small failure rate: that is the discrete-jump pathway
+[[important-ips-gap]] measured collapsing 8/8 replications, because `min_sep` carries no
+information about whether the radio failed. Condition on the failure time and reweight instead.
+
+**The one claim above that turned out to be wrong.** This item was planned with "at `fail_rate=0`
+the model must be bit-identical to `Comm`". It cannot be, and *should* not be: the outage draws are
+made every step whatever the rates, so a zero-rate `TransceiverComm` sits two draws per aircraft
+ahead of `Comm` in the stream. Bit-identity to `Comm` and a rate sweep sharing one reception stream
+are mutually exclusive, and the sweep matters more — the alternative puts the `fail_rate=0` cell of
+every sweep on a different noise stream from its neighbours, which is item 3's mistake exactly.
+What survives is the weaker, true statement: with no radio down the *deliveries* are `Comm`'s
+(`test_a_working_radio_delivers_exactly_like_comm`). Both directions are now pinned, and the second
+test is what stops the first passing vacuously — if the draws were skipped, both would pass.
+
+**Measured, end to end.** A four-level rate sweep through `run_experiment` at `dpsi=8`,
+`pos_ci95=20`, n=300, MVP + Past-CPA:
+
+| `fail_rate` [1/s] | P(LoS) | 95% CI |
+|---|---|---|
+| 0 | 0.060 | [0.038, 0.093] |
+| 0.02 | 0.280 | [0.232, 0.333] |
+| 0.05 | 0.347 | [0.295, 0.402] |
+| 0.20 | 0.437 | [0.382, 0.493] |
+
+Monotone and saturating, as it should be — past a point the radios are down essentially all the
+time (measured: a radio is out on **99.7%** of ticks at 0.2/s) and more rate cannot hurt further.
+The axis needs no new runner code: `Sweep(..., build=…, name="fail_rate")` puts the rate in the
+table as a plottable numeric column, and `identity()` keys each rate distinctly, so a sweep writes
+one cache entry per condition rather than colliding.
+
+**A trap worth recording, because it cost half an hour.** The first sweep returned P(LoS) = 0 at
+*every* rate, with identical intervals — which reads exactly like "the model is not wired". It was
+wired (a spy counted 18 000 `step` calls and outages on 99.7% of ticks); the declaration was simply
+missing `navigation`, and `estimate_ipr` defaults it to `None` = **exact self-fixes**. So
+`pos_ci95=20` was declared and did nothing, and with perfect data a frozen stale fix still resolves
+cleanly. Three different comm models producing bit-identical results is the signature to watch for,
+and the lesson is that `pos_ci95` without a `navigation` model is silently inert — a real sharp
+edge in the declaration surface, and a candidate for a fail-fast check of its own.
+
+- **Files:** `opencdarr/cns/communication.py`, `opencdarr/cns/__init__.py`, `opencdarr/__init__.py`,
+  `tests/test_cns_transceiver.py` (new)
+- **Verify:** suite **410 passed** (+14); `ruff` and `mypy` clean on the new files (the 17
+  tree-wide ruff findings are the pre-existing catalogue). The tests split into the **hazard** and
+  the **gate**, because a model with one right and the other wrong still produces plausible
+  numbers. Gate tests construct the health they want on a `RadioState` with every rate at zero, so
+  a deterministic assertion is not fighting a random draw. The load-bearing measurement is mean
+  time to failure at two cadences: **10.32 s at 1 Hz vs 10.23 s at 2 Hz** for `rate=0.1` (theory
+  `dt/(1-exp(-rate·dt))` = 10.51 / 10.25), where a probability quoted per broadcast would have given
+  **5.25 s** at 2 Hz — a 2× separation, so the test genuinely discriminates the two
+  parameterisations rather than just passing. `scripts/ips_validate.py --pos 40` still **PASS** and
+  **bit-identical** to the pre-item-10 run (MC 0.03025, IPS 0.028452, same per-shell survival) —
+  the check that a new subclass left `Comm` and every existing path alone.
+
+## 11. Broadcast cadence: a Hz spelling, and phase/jitter from a declaration — **done 2026-07-30**
+
+- [x] `BroadcastSchedule.at_rate(hz)`, `broadcast_jitter` / `broadcast_random_phase` as config
+      fields and declarable axes, and — the thing this item turned out to be really about — the
+      transmit schedule now reaches **IPS**, which it never did.
+
+**The defect the item uncovered.** `_run_ips` called `build_env` **without `schedule=`**, so it
+silently took the 1 s default while MC honoured `config.simulation.broadcast_interval`. A declared
+cadence therefore meant two different things depending on the backend — the same shape as item 2's
+defect, and the same consequence: an IPS sweep over the cadence returns a confident null result.
+Measured at `dpsi=45`, `pos_ci95=40`, n=300 / 60 particles × 2 reps:
+
+| `broadcast_interval` | MC P(LoS) | IPS before | IPS after |
+|---|---|---|---|
+| 1.0 | 0.0333 | 0.015842 | 0.015842 |
+| 3.0 | 0.0267 | **0.015842** | 0.049964 |
+| 6.0 | 0.0767 | **0.015842** | 0.028521 |
+
+IPS was returning *the same number to six digits* for every cadence. Note the `interval=1.0` cell
+does not move: 1 s is the one value the accidental default happened to get right, which is exactly
+why this survived — every config in `configs/` uses it.
+
+Both backends now build their schedule through one function, `broadcast.schedule_for`, so they
+cannot drift apart again by one call site being updated and the other not.
+
+**Two things that differ from the plan above, both deliberate:**
+
+- **`at_rate` is a classmethod, not a `rate=` field.** The plan said to accept both and raise on
+  `BroadcastSchedule(interval=1.0, rate=2.0)`. A named constructor makes that contradiction
+  *unrepresentable* instead — one stored spelling, so equality, `repr` and the cache identity see
+  one number however it was written. Same argument as `MC`/`IPS` carrying only their own
+  estimator's parameters.
+- **A config file stays seconds-only.** Two YAML keys for one physical quantity is worse in a
+  committable file than in Python, where a second constructor is unambiguous.
+
+**Why the new MC substream is free.** Jitter needs a broadcast generator, and `estimate_ipr` span
+exactly three children per encounter (geometry, navigation, communication). It now spawns four —
+and a `SeedSequence`'s *i*-th child depends only on `i` and its parent, so the first three come out
+**bit-identical** to the three-child tree every published number came from. Verified directly, and
+then end to end: the MC column above is unchanged to the last count (10 / 8 / 23 LoS) across the
+change. The broadcast child was added *last* for exactly this reason.
+
+The random phase draws from the generator the **geometry** was sampled from, after
+`sample_pairwise` has finished with it and where nothing else reads. So enabling the phase *appends*
+draws rather than shifting existing ones, and a fixed-phase run is unmoved. This is the same
+"append, never insert" property the 4-child spawn relies on, one level down.
+
+`BroadcastSchedule` owns the transmit cadence and stays the single owner — putting an interval on
+the comm model too would give one physical quantity two spellings and force `run_fleet` to pick a
+winner. What is actually missing is smaller than that:
+
+- **no Hz spelling anywhere.** "2 Hz" has to be hand-converted to `interval=0.5`. Mutually
+  exclusive with `interval`, so `BroadcastSchedule(interval=1.0, rate=2.0)` must raise rather than
+  silently prefer one.
+- **`phase` and `jitter` are unreachable from a declaration or a config file.** `experiment.py`
+  declares `broadcast_interval` (it is in `_SIMULATION_FIELDS`) and `estimator.py:189` builds
+  `BroadcastSchedule(interval=…)` and nothing else — so the unsynchronised-transmitter model
+  (`random_broadcast_phase`) and ADS-B slot dithering are Python-only today, reachable through
+  `run_fleet` but not through the runner the v1 audience is pointed at.
+
+**`phase` is declared as a boolean, not a list.** It needs one entry per aircraft, so it cannot be
+a literal in a declaration that does not know `n`; `broadcast_random_phase: bool` asks for the draw
+and `schedule_for` performs it per encounter, from that encounter's own seeded generator. A literal
+phase vector remains available through `run_fleet(schedule=…)`, which is where a user who wants
+specific offsets already is.
+
+**Found on the way, not fixed here:** a declared parameter bypasses **every** config constraint —
+`_config_for` builds its `Config` with `dataclasses.replace` and never calls `_validate`. Harmless
+for the transmit fields (a bad jitter is still caught loudly by `BroadcastSchedule`), a wrong number
+for others. See [[todo-might-be-a-bug]] entry 6; it is a behaviour change and deserves its own item.
+
+- **Files:** `opencdarr/cns/broadcast.py` (`at_rate`, `schedule_for`), `opencdarr/config.py`
+  (two fields + two constraints), `opencdarr/estimator.py` (4th substream, schedule per encounter),
+  `opencdarr/experiment.py` (the `schedule=` fix, two declarable keys),
+  `tests/test_broadcast_schedule.py` (new)
+- **Verify:** suite **422 passed** (+12); `ruff` and `mypy` clean on the touched files. Jitter and
+  phase had **no tests at all** before this. The regression for the defect is white-box on purpose
+  — it captures the `FleetEnv` the IPS backend actually builds and asserts on its schedule, rather
+  than inferring the wiring from a statistical difference between two runs, which would be slower
+  and flakier. `scripts/ips_validate.py --pos 40` unchanged (its config transmits at 1 s, the one
+  cadence the old default got right).
 
 ---
 

@@ -1,7 +1,7 @@
 # Might be a bug
 
 Suspected defects and smells found while reviewing [[run-experiment-design]] and building
-[[run-experiment-todo]] items 1–4a. Each is *unconfirmed unless marked otherwise* — written down so a
+[[run-experiment-todo]] items 1–10. Each is *unconfirmed unless marked otherwise* — written down so a
 measured, logged issue stays a decision rather than neglect (`design-philosophy.md` #13). Ordered by
 how badly it could corrupt a number.
 
@@ -166,16 +166,77 @@ The orientation question is a physics question, not a code question, and is bein
 separately. The signature widening is unblocked either way (the latency models need ψ and `g`
 regardless) — [[run-experiment-todo]] item 9.
 
-## 6. Smaller things, noted in passing
+## 6. A declared parameter bypasses every config constraint
+
+**Status: confirmed by measurement (2026-07-30). Not yet fixed — found while building
+[[run-experiment-todo]] item 11.**
+
+`config.load_config` validates thirteen constraints, but `experiment._config_for` builds a
+condition's `Config` with `dataclasses.replace` and **never calls `_validate`**. So every
+constraint holds for a config *file* and none of them hold for a `Fixed`/`Sweep` declaration —
+which is the surface the v1 audience is actually pointed at.
+
+Measured against the invariant item 4a added:
+
+```python
+run_experiment({"dcpa_max": Fixed(500.0)}, ...)   # base config has rpz = 50
+# -> runs, with dcpa_max = 500 > rpz = 50
+```
+
+`_validate` on that same built config raises `scenario.dcpa_max <= conflict.rpz`. That constraint
+exists precisely so every sampled encounter *is* a conflict and P(LoS)'s denominator needs no
+filtering; bypassed, a fraction of encounters are silently non-conflicts and **P(LoS) is reported
+over a mixed population** — a wrong number, reported confidently, with no warning. The other
+constraints (`rpz > 0`, `t_lookahead > 0`, `margin >= 1`, `dt > 0`, `broadcast_interval >= dt`) are
+equally unenforced.
+
+Not every field fails silently: a declared `broadcast_jitter >= broadcast_interval` is caught
+downstream by `BroadcastSchedule.__post_init__`, loudly, because that value reaches a constructor
+that checks it. The hazard is the fields whose only check lives in `_validate`.
+
+The fix looks like one line — call `_validate` at the end of `_config_for` — and the reason to do
+it deliberately rather than in passing is that it is a **behaviour change**: any existing
+declaration that violates a constraint starts raising. Worth a quick sweep of the repo's own
+scripts and notebooks before it lands. Fixing it would also let item 11's transmit fields fail at
+declaration time in the config's vocabulary rather than part-way into a run.
+
+## 7. `pos_ci95` is silently inert without a navigation model
+
+**Status: confirmed by reading and by measurement (2026-07-30). No wrong published number, but it
+can produce a confidently wrong *new* one.**
+
+`pos_ci95` / `vel_ci95` are read by exactly two consumers in the package: `cns/navigation.py`
+(`GnssNavigation`, which draws the error) and `crr/probabilistic_ftr.py` (`ProbabilisticFTR`, which
+sizes its uncertainty). With neither in the stack the fields are stamped onto every
+`AircraftState`, carried through the whole run, and **never read**. `estimate_ipr` defaults
+`navigation=None`, so the default MC path is exactly that case.
+
+The failure mode is quiet and plausible-looking: declare `pos_ci95=Sweep([0, 10, 20, 40])` without
+declaring `navigation`, and four cells run **bit-identical**, so the table reads "navigation
+accuracy has no effect on safety" — a publishable-looking null result produced by a no-op. Found
+while building [[run-experiment-todo]] item 10, where a comm-outage sweep returned P(LoS) = 0 at
+every rate and looked for all the world like the new model was unwired; it was wired, and the
+declaration was missing `navigation`. Adding it turned the same sweep into 0.060 → 0.437.
+
+Neither field can simply *imply* a navigation model — `pos_ci95` is a declared accuracy, and
+`ProbabilisticFTR` legitimately reads it with no noise model present, so a non-zero value with
+`navigation=None` is a valid (if unusual) configuration rather than a mistake per se. The
+fail-fast candidate is narrower: warn or raise when a **declaration** carries a non-zero
+`pos_ci95` / `vel_ci95` while neither consumer is in the stack, since at that layer it is
+certainly not what the caller meant. Worth checking the other declarable keys for the same
+property before fixing just this one.
+
+## 8. Smaller things, noted in passing
 
 - **`test_every_sampled_encounter_is_a_conflict` passed by accident** of its config
   (`tlos < t_lookahead`), not by construction. Re-documented and given an explicit precondition
   assertion in item 4a; it would have failed under the papers' own spawn rule.
-- **`CommState` is a closed frozen dataclass** (`held`, `in_flight` only), so a user-contributed
-  stateful communication model has nowhere to keep its state. Subclassing survives the round trip
-  through `CNS.sense`, but `CnsState.initial(n)` hands the model a plain `CommState()` on the first
-  tick, so every such model must detect and upgrade it by hand. Not a bug in current behaviour — a
-  gap in the contribution surface. [[run-experiment-todo]] item 7.
+- **`CommState` was a closed frozen dataclass** (`held`, `in_flight` only) — **FIXED (item 7,
+  2026-07-30)**. Subclassing already survived the round trip through `CNS.sense`, but
+  `CnsState.initial(n)` handed the model a plain `CommState()` on the first tick, so every stateful
+  model had to detect and upgrade it by hand. `CommunicationModel.initial_state()` now supplies that
+  first value, so a model's own subclass is in place from `t = 0`. Never a bug in current behaviour
+  — a gap in the contribution surface. [[run-experiment-todo]] item 7.
 - **Per-tick comm-stream consumption is data-dependent** — one reception draw per directed link, and
   a latency draw only if received. Harmless for correctness (per-particle streams isolate clones)
   but it means the comm stream position is not a function of tick count alone. Already noted in
@@ -190,7 +251,8 @@ regardless) — [[run-experiment-todo]] item 9.
 ## Related
 
 - [[segment-min-separation]] — entry 1's measurements, fix and remaining gaps
-- [[run-experiment-todo]] — the build order these were found in; items 4a (fixed), 4b, 7, 9 touch them
+- [[run-experiment-todo]] — the build order these were found in; items 4a and 7 (both fixed), 4b,
+  10 and 9 touch them
 - [[important-ips-gap]] — the discrete-jump coordinate problem, and the comm-stream note
 - [[0017-ips-level-and-splitting]] — the shells that entry 1 could cause to be missed
 - [[TODO]] — item 5 (lint/type scoping), item 9 (typed `Performance`)
