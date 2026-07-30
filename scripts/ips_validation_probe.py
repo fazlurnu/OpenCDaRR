@@ -44,10 +44,14 @@ from opencdarr.performance import M600
 
 @dataclass(frozen=True)
 class Cell:
-    """One (pos, seed) result: the LoS count over its conflict encounters."""
+    """One (pos, seed) result: the LoS count over its encounters.
+
+    The denominator is the *encounter* count, matching ``estimate_ipr`` and IPS's all-N denominator
+    (``opencdarr.estimator.IPRResult``) — not the detected-conflict count, which moves with the
+    resolver."""
 
     pos: float
-    n_conflict: int
+    n_encounters: int
     n_los: int
 
 
@@ -85,7 +89,7 @@ def _cell(pos: float, seed: int, cfg: argparse.Namespace) -> Cell:
         _config(pos, seed, cfg), M600, StateBased(), resolver, recovery,
         navigation=GnssNavigation(),
     )
-    return Cell(pos=pos, n_conflict=r.n_conflict, n_los=r.n_los)
+    return Cell(pos=pos, n_encounters=r.n_encounters, n_los=r.n_los)
 
 
 def main() -> None:
@@ -121,7 +125,7 @@ def main() -> None:
     )
     print(f"{'pos_ci95':>9} {'LoS':>10} {'P(LoS)':>10} {'95% CI':>22}")
     for pos in cfg.pos:
-        n = sum(c.n_conflict for c in results if c.pos == pos)
+        n = sum(c.n_encounters for c in results if c.pos == pos)
         k = sum(c.n_los for c in results if c.pos == pos)
         prob, lo, hi = wilson(k, n)
         print(f"{pos:9.0f} {f'{k}/{n}':>10} {prob:10.5f}   [{lo:.5f}, {hi:.5f}]")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import math
 
 from opencdarr import geo
 from opencdarr.cd import StateBased
@@ -18,7 +19,7 @@ from opencdarr.cr import MVP
 from opencdarr.crr import PastCPA
 from opencdarr.dynamics import Dynamics, MotionCommand
 from opencdarr.dynamics.base import odometry_update
-from opencdarr.estimator import combine_ipr, estimate_ipr
+from opencdarr.estimator import IPRResult, combine_ipr, estimate_ipr, wilson_interval
 from opencdarr.performance import M600, Performance
 from opencdarr.rng import children, root_seed_sequence
 from opencdarr.state import AircraftState
@@ -55,10 +56,21 @@ def test_ipr_is_reproducible() -> None:
     assert r1 == r2
 
 
-def test_every_sampled_encounter_is_a_conflict() -> None:
+def test_every_sampled_encounter_is_detected_in_this_config() -> None:
+    """``detection_rate == 1`` here — but that is a property of *this config*, not of the sampler.
+
+    Every sampled encounter is a genuine conflict by construction (``create_conflict``, and the
+    ``dcpa_max <= rpz`` config check). Whether the *detector* also flags it depends on the
+    lookahead: with ``tlos=60 < t_lookahead=120`` the conflict is inside the horizon from ``t =
+    0``, so all of them are. Spawn outside the horizon and this legitimately drops below 1 — which
+    is exactly why ``n_conflict`` is a diagnostic and not the denominator of ``p_los``.
+    """
     cfg = _config()
+    assert cfg.scenario.tlos < cfg.conflict.t_lookahead  # the precondition doing the work here
     result = estimate_ipr(cfg, M600, StateBased(), MVP(1.05), PastCPA())
     assert result.n_conflict == cfg.n_encounters
+    assert result.detection_rate == 1.0
+    assert result.n_encounters == cfg.n_encounters
 
 
 def test_chunked_run_pools_back_to_the_serial_estimate() -> None:
@@ -81,14 +93,12 @@ def test_chunked_run_pools_back_to_the_serial_estimate() -> None:
 
 
 def test_combine_ipr_recomputes_the_ratio_from_pooled_counts() -> None:
-    """IPR is a ratio, so chunks pool by counts — not by averaging their per-chunk ratios."""
-    from opencdarr.estimator import IPRResult
-
-    pooled = combine_ipr([IPRResult(ipr=0.5, n_conflict=2, n_los=1),
-                          IPRResult(ipr=1.0, n_conflict=98, n_los=0)])
-    assert pooled.n_conflict == 100
+    """The rates are ratios, so chunks pool by counts — not by averaging their per-chunk ratios."""
+    pooled = combine_ipr([IPRResult(n_encounters=2, n_los=1, n_conflict=2),
+                          IPRResult(n_encounters=98, n_los=0, n_conflict=98)])
+    assert pooled.n_encounters == 100
     assert pooled.n_los == 1
-    assert pooled.ipr == 0.99  # not (0.5 + 1.0) / 2 = 0.75
+    assert pooled.ipr == 0.99  # not (0.5 + 1.0) / 2 = 0.75, the per-chunk average
 
 
 def test_resolution_raises_ipr_far_above_baseline() -> None:
@@ -115,6 +125,61 @@ def test_golden_ipr_at_midrange_noise() -> None:
     )
     assert (result.n_los, result.n_conflict) == (22, 200)
     assert result.ipr == 0.89
+
+
+def test_denominator_does_not_move_with_the_resolver() -> None:
+    """**The 4a regression.** ``p_los`` divides by the encounter count, so CDR cannot move it.
+
+    Spawned outside the detection horizon (``tlos = 1.5 x t_lookahead``, the published spawn rule),
+    a working resolver grows the predicted miss distance past ``rpz`` before the horizon catches
+    the conflict — and ``StateBased`` then reports *no conflict* for the rest of the run. The old
+    denominator was that count, so a resolver deleted its own successes from it: measured, it fell
+    from 300/300 with no resolver to 178/300 with MVP.
+
+    Now the denominator is ``n_encounters``, identical in both runs, and the detection shortfall
+    shows up where it belongs — as ``detection_rate``, a diagnostic.
+    """
+    cfg = dataclasses.replace(
+        _noisy_config(n=120),
+        scenario=dataclasses.replace(_noisy_config().scenario, tlos=180.0, pos_ci95=10.0,
+                                     vel_ci95=1.0),
+    )
+    assert cfg.scenario.tlos > cfg.conflict.t_lookahead  # spawned outside the horizon
+
+    resolved = estimate_ipr(cfg, M600, StateBased(), MVP(1.05), PastCPA(), GnssNavigation())
+    unresolved = estimate_ipr(cfg, M600, StateBased(), None, None, GnssNavigation())
+
+    # the denominator is the same in both, whatever CDR did
+    assert resolved.n_encounters == unresolved.n_encounters == cfg.n_encounters
+    # ... while detection genuinely differs, which is the diagnostic's job to report
+    assert unresolved.detection_rate == 1.0
+    assert resolved.detection_rate < 1.0
+    # and the safety comparison is still the right way round, on a denominator neither run chose
+    assert resolved.p_los < unresolved.p_los
+    assert resolved.ipr == 1.0 - resolved.p_los
+
+
+def test_wilson_interval_brackets_the_estimate_and_survives_zero_events() -> None:
+    """The CI is valid because ``n`` is design-fixed, and says something useful at zero events.
+
+    ``k = 0`` is the ordinary case for a safety metric, and the textbook normal interval collapses
+    to ``(0, 0)`` there — false certainty. Wilson still returns a positive upper bound, which is
+    the honest reading of "no events observed in n trials".
+    """
+    lo, hi = wilson_interval(22, 200)
+    assert lo < 22 / 200 < hi
+    assert 0.0 < lo and hi < 1.0
+
+    zero_lo, zero_hi = wilson_interval(0, 200)
+    assert zero_lo == 0.0
+    assert 0.0 < zero_hi < 0.05  # a real bound, not (0, 0)
+
+    # more encounters at the same rate must tighten it
+    wide = wilson_interval(10, 100)
+    tight = wilson_interval(100, 1000)
+    assert (tight[1] - tight[0]) < (wide[1] - wide[0])
+
+    assert all(math.isnan(b) for b in wilson_interval(0, 0))  # nothing observed at all
 
 
 class _Ballistic(Dynamics):

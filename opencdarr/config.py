@@ -82,6 +82,12 @@ def _validate(cfg: Config) -> None:
         "n_encounters > 0": cfg.n_encounters > 0,
         "scenario.speed > 0": cfg.scenario.speed > 0,
         "scenario.dcpa_max >= 0": cfg.scenario.dcpa_max >= 0,
+        # every sampled encounter must be a genuine conflict, so that P(LoS)'s denominator (the
+        # encounter count) needs no filtering: create_conflict only breaches the protected zone
+        # when the miss distance is inside it, so dcpa drawn from U(0, dcpa_max) must stay within
+        # rpz. Above it, a fraction of encounters would silently be non-conflicts and P(LoS) would
+        # be reported over a mixed population (opencdarr.estimator.IPRResult).
+        "scenario.dcpa_max <= conflict.rpz": cfg.scenario.dcpa_max <= cfg.conflict.rpz,
         "scenario.tlos > 0": cfg.scenario.tlos > 0,
         "scenario.pos_ci95 >= 0": cfg.scenario.pos_ci95 >= 0,
         "scenario.vel_ci95 >= 0": cfg.scenario.vel_ci95 >= 0,

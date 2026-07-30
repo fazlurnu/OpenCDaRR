@@ -182,16 +182,15 @@ def _mc_chunk(scn: Scenario, n: int, seed: int, lo: int, hi: int) -> tuple[int, 
     """
     seqs = children(root_seed_sequence(seed), lo, hi)
     if scn.dpsi is None:
-        # sampled geometry: estimate_ipr conditions on a detected conflict (its IPR denominator).
-        # That coincides with the unconditional P(LoS) only when lookahead >= tlos (detection at
-        # t=0), which the default satisfies; IPS's denominator is all N particles either way.
+        # sampled geometry: estimate_ipr's denominator is the encounter count, which is IPS's
+        # all-N denominator, so the two halves are comparable at any lookahead/tlos ratio. (It used
+        # to divide by *detected* conflicts, which drifted below N whenever the resolver deflected
+        # early — hence the fixed-geometry branch below, and a warning that is now gone.)
         r = estimate_ipr(scn.mc_config(n, seed), M600, StateBased(), MVP(margin=scn.margin),
                          PastCPA(bouncing_guard=True), navigation=GnssNavigation(),
                          communication=scn.comm(), seqs=seqs)
-        return r.n_conflict, r.n_los
-    # fixed geometry: P(LoS) is unconditional over all n encounters (denominator n, not
-    # n_conflict), to match IPS's "reachers / N". With lookahead < tlos, noise can let the resolver
-    # deflect early so a true conflict never registers (n_conflict < n) — conditioning would drift.
+        return r.n_encounters, r.n_los
+    # fixed geometry: one pinned pair, only the noise streams vary. Same unconditional denominator.
     own, intr = scn.fixed_pair()
     comm = scn.comm()
     n_los = 0
@@ -273,9 +272,6 @@ def main() -> None:
     if a.pos == 0.0 and vel_ci95 == 0.0 and a.dpsi is not None and scn.comm() is None:
         print("  WARNING: no nav noise (pos & vel = 0) on a fixed geometry with perfect comms -> "
               "degenerate estimate. Set --pos/--vel > 0, or --reception < 1.")
-    if a.dpsi is None and scn.lookahead < scn.tlos:
-        print("  WARNING: lookahead < tlos in sampled mode -> MC conditions on n_conflict, which "
-              "drifts below IPS's all-N denominator. Prefer --dpsi, or set lookahead >= tlos.")
 
     if a.mc_ref is not None:
         # anchor carried over from an earlier run: the MC half is the expensive one and does not

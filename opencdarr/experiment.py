@@ -95,7 +95,10 @@ def _write_card(config: Config, result: IPRResult, card_dir: Path) -> Path:
         f"# Experiment {stamp}\n\n"
         f"- seed: {config.seed}\n"
         f"- n_encounters: {config.n_encounters}\n"
-        f"- IPR: {result.ipr:.6f}  ({result.n_los}/{result.n_conflict} LoS)\n"
+        f"- P(LoS): {result.p_los:.6f}  95% CI [{result.ci95[0]:.6f}, {result.ci95[1]:.6f}]\n"
+        f"- IPR: {result.ipr:.6f}  ({result.n_los}/{result.n_encounters} LoS)\n"
+        f"- detection_rate: {result.detection_rate:.6f}  "
+        f"({result.n_conflict}/{result.n_encounters} predicted; diagnostic, not the denominator)\n"
         f"- code_hash: {cache.code_fingerprint()}\n\n"
         f"## Config\n\n```yaml\n{config_yaml}```\n"
     )

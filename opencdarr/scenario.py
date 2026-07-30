@@ -4,12 +4,18 @@
 angle, miss distance, and time-to-loss-of-separation — the horizontal part of BlueSky's
 `creconfs`, re-derived in our convention (relative velocity = intr − own; no wind; 2D).
 
+Two levels, deliberately: `create_conflict` builds **one named geometry**, while `sample_pairwise`
+turns **one seed into one encounter** — drawing whichever of the crossing angle, miss distance,
+passing side and intruder speed the caller has not pinned. Between them they cover the range from a
+single fixed crossing to a fully sampled encounter distribution without a second code path.
+
 Governing equations: ``vault/derivations/conflict-geometry.md``.
 """
 
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 
 import numpy as np
 
@@ -80,6 +86,23 @@ def create_conflict(
     )
 
 
+Draw = Callable[[np.random.Generator], float]
+"""A per-encounter draw of one geometry parameter from that encounter's generator."""
+
+
+def _resolve(spec: float | Draw | None, rng: np.random.Generator, drawn: float) -> float:
+    """One geometry slot's value: the built-in draw, a pinned constant, or a custom distribution.
+
+    ``drawn`` has *already* been taken from ``rng`` by the caller, whether or not it is used — see
+    :func:`sample_pairwise` on why a pinned slot still consumes its draw.
+    """
+    if spec is None:
+        return drawn
+    if callable(spec):
+        return float(spec(rng))
+    return float(spec)
+
+
 def sample_pairwise(
     rng: np.random.Generator,
     *,
@@ -87,27 +110,71 @@ def sample_pairwise(
     dcpa_max: float,
     tlos: float,
     rpz: float,
+    dpsi: float | Draw | None = None,
+    dcpa: float | Draw | None = None,
+    side: int | Draw | None = None,
+    gs_intr: float | Draw | None = None,
     own_id: str = "OWN",
     intr_id: str = "INT",
     pos_ci95: float = 0.0,
     vel_ci95: float = 0.0,
 ) -> tuple[AircraftState, AircraftState]:
-    """Draw one random pairwise encounter from the seeded generator.
+    """Draw one pairwise encounter from the seeded generator.
 
-    Ownship flies north from a fixed origin at ``speed``; the intruder crosses at a random
-    angle ``dpsi`` (uniform over the full range, excluding a near-0/360 band), miss distance
-    ``dcpa`` ~ U(0, dcpa_max), and random side. This is the encounter distribution the plain-MC
-    estimator samples. ``pos_ci95``/``vel_ci95`` set both aircraft's declared measurement
-    accuracy (default 0 = perfect); the intruder inherits the ownship's via ``create_conflict``.
+    Ownship flies north from a fixed origin at ``speed``; the intruder crosses at ``dpsi`` degrees
+    with miss distance ``dcpa``, passing on ``side``, at ``gs_intr``. Left alone, every one of
+    those four is **drawn** — the encounter distribution the plain-MC estimator integrates over:
+    ``dpsi`` uniform over the full range bar a near-0/360 band, ``dcpa`` ~ U(0, ``dcpa_max``),
+    either side equally likely, and the intruder matching the ownship's speed.
+
+    Each of the four also takes an override, so one call expresses a whole family of scenarios:
+
+    - **a constant** — ``dpsi=90.0`` pins a 90° crossing, the single-geometry case a rare-event run
+      or a per-angle response curve needs (and what ``scripts/ipr_angle_sweep.py`` open-coded);
+    - **a callable** ``(rng) -> float`` — a custom distribution for that parameter, drawn per
+      encounter from this encounter's own generator (e.g. a von Mises crossing angle rather
+      than the uniform one).
+
+    A *list* of values is deliberately not accepted: sweeping a parameter means several independent
+    estimates, each with its own counts, interval and cache entry, so it belongs to the caller that
+    fans conditions out — not to a function whose job is one encounter from one seed.
+
+    **Why a pinned slot still consumes its draw.** The three built-in draws are taken in a fixed
+    order (``dpsi``, ``dcpa``, ``side``) *before* any override is applied, and a custom
+    distribution draws only afterwards. So pinning the crossing angle cannot shift the miss
+    distance or the passing side, and the all-default call is bit-identical to the pre-override
+    one. This is the same config-invariant-stream discipline the per-encounter substream fan-out
+    follows one level up (ADR 0006 §6, ``estimator.estimate_ipr``): draw the same things in the
+    same order regardless of which are used, so the tree never moves. The cost is a couple of
+    discarded ``uniform`` calls.
+
+    ``pos_ci95``/``vel_ci95`` set both aircraft's declared measurement accuracy (default 0 =
+    perfect); the intruder inherits the ownship's via :func:`create_conflict`.
+
+    Note that the near-0/360 exclusion band (``_DPSI_MIN``) constrains only the *built-in* angle
+    draw, which avoids near-parallel geometries whose closing speed is degenerate. A pinned or
+    custom ``dpsi`` is passed through as given, so a deliberate shallow-crossing study (the
+    published sweeps start at 2°) is not silently clamped — a genuinely unconstructable geometry
+    fails in :func:`create_conflict` instead.
     """
-    dpsi = float(rng.uniform(_DPSI_MIN, 360.0 - _DPSI_MIN))
-    dcpa = float(rng.uniform(0.0, dcpa_max))
-    side = 1 if rng.random() < 0.5 else -1
+    # every built-in draw happens, in this order, whether or not its value survives the override
+    dpsi_drawn = float(rng.uniform(_DPSI_MIN, 360.0 - _DPSI_MIN))
+    dcpa_drawn = float(rng.uniform(0.0, dcpa_max))
+    side_drawn = 1.0 if rng.random() < 0.5 else -1.0
+
+    dpsi_v = _resolve(dpsi, rng, dpsi_drawn)
+    dcpa_v = _resolve(dcpa, rng, dcpa_drawn)
+    side_v = int(_resolve(side, rng, side_drawn))
+    # the intruder's speed has no built-in draw — it defaults to the ownship's inside
+    # ``create_conflict`` — so an absent override consumes nothing and appends no draw
+    gs_intr_v = None if gs_intr is None else _resolve(gs_intr, rng, float("nan"))
+
     own = AircraftState(
         id=own_id, lat=52.0, lon=4.0, trk=0.0, gs=speed, pos_ci95=pos_ci95, vel_ci95=vel_ci95
     )
     intr = create_conflict(
-        own, intr_id=intr_id, dpsi=dpsi, dcpa=dcpa, tlos=tlos, rpz=rpz, side=side
+        own, intr_id=intr_id, dpsi=dpsi_v, dcpa=dcpa_v, tlos=tlos, rpz=rpz, side=side_v,
+        gs_intr=gs_intr_v,
     )
     return own, intr
 
