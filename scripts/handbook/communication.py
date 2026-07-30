@@ -19,6 +19,8 @@ Handbook plot style: no suptitle, concise titles. Writes into the site repo.
 
 from __future__ import annotations
 
+import math
+from dataclasses import replace
 from pathlib import Path
 
 import matplotlib
@@ -30,7 +32,14 @@ import matplotlib.pyplot as plt  # noqa: E402
 from opencdarr import rng  # noqa: E402
 from opencdarr.cns.base import CommState, LatencyDistribution, Message  # noqa: E402
 from opencdarr.cns.broadcast import BroadcastSchedule  # noqa: E402
-from opencdarr.cns.communication import Comm, constant_latency, lognormal_latency  # noqa: E402
+from opencdarr.cns.communication import (  # noqa: E402
+    Comm,
+    TransceiverComm,
+    constant_latency,
+    lognormal_latency,
+    radio_health,
+)
+from opencdarr.cns.surveillance import LastKnown  # noqa: E402
 from opencdarr.state import AircraftState  # noqa: E402
 
 IMG = Path.home() / "Projects/opencdarr.github.io/docs/assets/img"
@@ -198,11 +207,86 @@ def jitter_figure(out: Path) -> None:
     print("wrote", out)
 
 
+_FLEET = ("AC1", "AC2", "AC3")
+_T_FAIL, _T_MAX = 15.0, 40.0
+# "from -> to": AC1's broadcasts reach AC2 over a good link and AC3 over a poor one; the return
+# links match, so AC1's own picture of AC2 is the good one and of AC3 the poor one.
+_LINKS = {("AC1", "AC2"): 0.9, ("AC2", "AC1"): 0.9,
+          ("AC1", "AC3"): 0.5, ("AC3", "AC1"): 0.5}
+
+
+def _gs(aid: str, t: float) -> float:
+    """Neither period divides the 40 s window, so a frozen belief cannot coincide with the truth
+    at the readout time and hide the effect the figure is drawn to show."""
+    if aid == "AC1":
+        return 15.0 + 5.0 * math.sin(2.0 * math.pi * t / 18.0)
+    return 11.0 + 4.0 * math.sin(2.0 * math.pi * t / 31.0 + 1.2)
+
+
+def _outage(subsystem: str) -> np.ndarray:
+    """AC1's transmitter or receiver fails at ``_T_FAIL``; every rate is 0, so the failure lands on
+    the tick we name rather than on a draw. Columns: t, AC1 truth, AC2 truth, the four beliefs."""
+    comm = TransceiverComm(reception_prob=_LINKS)
+    generator = rng.generator(rng.root_seed_sequence(11))
+    state, rows, t = comm.initial_state(), [], 0.0
+    while t <= _T_MAX + 1e-9:
+        if t >= _T_FAIL:  # impose the outage on the RadioHealth gate's own state
+            down = {f"{subsystem}_down": frozenset({"AC1"})}
+            state = replace(state, gates=(replace(radio_health(state), **down),))
+        broadcasts = [
+            Message(a, AircraftState(id=a, lat=52.0, lon=4.0, trk=0.0, gs=_gs(a, t)), t)
+            for a in _FLEET
+        ]
+        state = comm.step(state, broadcasts, _FLEET, t, generator)
+
+        def seen(receiver: str, source: str, state: CommState = state, t: float = t) -> float:
+            held = LastKnown().perceived(state, receiver, source, t)
+            return float("nan") if held is None else held.gs
+
+        rows.append((t, _gs("AC1", t), _gs("AC2", t),
+                     seen("AC2", "AC1"), seen("AC3", "AC1"),
+                     seen("AC1", "AC2"), seen("AC1", "AC3")))
+        t += INTERVAL
+    return np.array(rows)
+
+
+def radio_failure_figure(out: Path) -> None:
+    """The two halves of a failed radio. A down transmitter silences AC1 for everyone; a down
+    receiver blinds AC1 to everyone. Three aircraft, because at two the failures are identical."""
+    panels = [
+        ("tx", "AC1's transmitter fails: nobody hears AC1", 1, "AC1 true", "lower left",
+         [(3, BLUE, "AC2's view of AC1 (link AC1->AC2, p 0.9)"),
+          (4, RED, "AC3's view of AC1 (link AC1->AC3, p 0.5)")]),
+        ("rx", "AC1's receiver fails: AC1 hears nobody", 2, "AC2 / AC3 true", "upper right",
+         [(5, BLUE, "AC1's view of AC2 (link AC2->AC1, p 0.9)"),
+          (6, RED, "AC1's view of AC3 (link AC3->AC1, p 0.5)")]),
+    ]
+    fig, axes = plt.subplots(1, 2, figsize=(12.0, 5.2), sharey=True)
+    for ax, (subsystem, title, truth_col, truth_label, loc, series) in zip(axes, panels,
+                                                                          strict=True):
+        d = _outage(subsystem)
+        ax.plot(d[:, 0], d[:, truth_col], color="0.55", lw=2.2, label=truth_label, zorder=2)
+        for col, colour, label in series:
+            ax.step(d[:, 0], d[:, col], where="post", color=colour, lw=1.7, label=label, zorder=3)
+        ax.axvline(_T_FAIL, color="0.75", ls=":", lw=1.2)
+        ax.set_xlabel("time [s]")
+        ax.set_title(title, fontsize=10)
+        ax.legend(fontsize=7.5, loc=loc)
+        ax.set_box_aspect(1)
+        err = abs(d[-1, series[0][0]] - d[-1, truth_col])
+        print(f"        [{subsystem}] at {_T_MAX:.0f}s the good link is off by {err:.1f} m/s")
+    axes[0].set_ylabel("ground speed [m/s]")
+    fig.tight_layout()
+    fig.savefig(out, dpi=130)
+    print("wrote", out)
+
+
 def main() -> None:
     IMG.mkdir(parents=True, exist_ok=True)
     plot(IMG / "comm-update-interval.png")
     latency_figure(IMG / "comm-latency.png")
     jitter_figure(IMG / "comm-jitter.png")
+    radio_failure_figure(IMG / "comm-radio-failure.png")
 
 
 if __name__ == "__main__":
