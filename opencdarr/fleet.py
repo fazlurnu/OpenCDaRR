@@ -59,7 +59,7 @@ from opencdarr.cns.stack import CNS, CnsState, CnsStreams
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr.base import RecoveryCriterion
 from opencdarr.dynamics import Dynamics, MotionCommand
-from opencdarr.kinematics import relative_enu
+from opencdarr.kinematics import Relative, relative_enu, segment_min_range
 from opencdarr.loop import _DEFAULT_DYNAMICS, _setpoint_adapter
 from opencdarr.performance import Performance
 from opencdarr.separation import INACTIVE, FleetMemory, SeparationManager, SetpointAdapter
@@ -178,13 +178,50 @@ class FleetStreams:
 
 
 def _pairwise_min_sep(states: tuple[AircraftState, ...] | list[AircraftState]) -> float:
-    """Smallest separation over all unordered pairs [m]."""
+    """Smallest separation over all unordered pairs [m], at this instant."""
     smallest = float("inf")
     for i in range(len(states)):
         for j in range(i + 1, len(states)):
             _, dist = geo.qdrdist(states[i].lat, states[i].lon, states[j].lat, states[j].lon)
             smallest = min(smallest, dist)
     return smallest
+
+
+def _pairwise_relative(
+    states: tuple[AircraftState, ...] | list[AircraftState]
+) -> tuple[Relative, ...]:
+    """Relative position of every unordered pair, in the fixed ``i < j`` order [m].
+
+    The vector form of :func:`_pairwise_min_sep` — same one ``geo.qdrdist`` per pair, so it costs
+    essentially the same, but it returns the geometry rather than only its magnitude. That is what
+    :func:`_segment_min_sep` needs to close the gap *between* two sampled instants.
+    """
+    return tuple(
+        relative_enu(states[i], states[j])
+        for i in range(len(states))
+        for j in range(i + 1, len(states))
+    )
+
+
+def _segment_min_sep(pre: tuple[Relative, ...], post: tuple[Relative, ...]) -> float:
+    """Smallest separation over all pairs across a whole ``dt`` step, endpoints included [m].
+
+    Interpolates each pair's relative position linearly between the two ends of the step and takes
+    the closed-form minimum of that segment. Sampling separation only at the step *endpoints*
+    misses a pass that dips inside a threshold and back out within one step, and the miss is
+    one-sided — it can only report *more* separation than there was. The bias is negligible against
+    ``rpz`` but severe at the small radii IPS splits on: the relative error in
+    ``P(min_sep <= d)`` goes as ``(v_rel*dt)^2 / (24 d^2)``, i.e. it grows as the target tightens.
+    See ``vault/observations/segment-min-separation.md`` for the measurements.
+
+    The per-pair algebra is :func:`~opencdarr.kinematics.segment_min_range`, shared with
+    :func:`~opencdarr.loop.run_encounter` so the two runners cannot drift apart on the n = 2
+    reduction.
+    """
+    return min(
+        (segment_min_range(r0, r1) for r0, r1 in zip(pre, post, strict=True)),
+        default=float("inf"),
+    )
 
 
 def level(state: FleetState) -> float:
@@ -255,7 +292,7 @@ class FleetEnv:
             mems=tuple(INACTIVE for _ in range(n)),
             cmds=tuple(cmds),
             next_bc=tuple(self.schedule.initial(n)),
-            cns_state=CnsState.initial(n),
+            cns_state=CnsState.initial(n, self.cns.communication),
             t=0.0,
             done_timer=0.0,
             conflict=False,
@@ -310,10 +347,10 @@ class FleetEnv:
         cns_state = state.cns_state
         t = state.t
 
-        # measure on the true states, before any decision or step (top of the old loop)
-        cur = _pairwise_min_sep(states)
-        min_sep = min(state.min_sep, cur)
-        los = state.los or cur < self.rpz
+        # detect on the true states, before any decision or step (top of the old loop). The
+        # separation measurement needs both ends of the step, so it is taken *after* integrating;
+        # only the pre-step geometry is captured here.
+        rel_pre = _pairwise_relative(states)
         conflict = state.conflict or any(
             i != j and self.detector.detect(states[i], states[j], self.rpz, self.t_lookahead)
             for i in range(n)
@@ -347,6 +384,14 @@ class FleetEnv:
         states = [self.dyns[i].step(states[i], cmds[i], self.perfs[i], self.dt, self.wind)
                   for i in range(n)]
         t += self.dt
+
+        # measure separation over the whole step just flown, not only at its ends — consecutive
+        # segments share an endpoint, so the running minimum covers the trajectory continuously
+        # from t=0 (the first segment's left end) rather than at a comb of sampled instants
+        cur = _segment_min_sep(rel_pre, _pairwise_relative(states))
+        min_sep = min(state.min_sep, cur)
+        los = state.los or cur < self.rpz
+
         clear = _all_clear(states, tuple(mems), self.rpz)
         done_timer = state.done_timer + self.dt if clear else 0.0
 

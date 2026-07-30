@@ -29,7 +29,6 @@ from dataclasses import dataclass, replace
 
 import numpy as np
 
-from opencdarr import geo
 from opencdarr.autopilot import Autopilot, CruiseAutopilot, GuidanceMemory, nominal_velocity
 from opencdarr.cd.base import ConflictDetector
 from opencdarr.cns.base import (
@@ -41,7 +40,7 @@ from opencdarr.cns.stack import CNS, CnsState, CnsStreams
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr.base import RecoveryCriterion
 from opencdarr.dynamics import Dynamics, FixedWing, MotionCommand, Multirotor
-from opencdarr.kinematics import relative_enu
+from opencdarr.kinematics import relative_enu, segment_min_range
 from opencdarr.performance import Performance
 from opencdarr.separation import (
     INACTIVE,
@@ -232,7 +231,7 @@ def run_encounter(
     mem_own = mem_intr = INACTIVE  # per-direction resopairs membership + inferred-intent memory
     cmd_own, gm_own = ap_own.step(own, gm_own, perf_own)
     cmd_intr, gm_intr = ap_intr.step(intr, gm_intr, perf_intr)
-    cns_state = CnsState.initial(2)
+    cns_state = CnsState.initial(2, communication)
 
     conflict = los = False
     min_sep = float("inf")
@@ -242,10 +241,10 @@ def run_encounter(
     eps = 1e-9  # float guard so a tick lands on t = k*broadcast_interval reached by dt steps
 
     while t < t_max:
-        _, sep = geo.qdrdist(own.lat, own.lon, intr.lat, intr.lon)
-        min_sep = min(min_sep, sep)
-        if sep < rpz:
-            los = True
+        # the pre-step geometry; separation itself is measured across the whole step, after
+        # integrating, so a pass that dips inside rpz and back out within one dt is not missed
+        # (``kinematics.segment_min_range``)
+        rel_pre = relative_enu(own, intr)
         if detector.detect(own, intr, rpz, t_lookahead) or detector.detect(
             intr, own, rpz, t_lookahead
         ):
@@ -296,6 +295,14 @@ def run_encounter(
         t += dt
 
         rel = relative_enu(own, intr)
+
+        # separation over the step just flown; consecutive segments share an endpoint, so the
+        # running minimum covers the trajectory continuously rather than at sampled instants
+        sep = segment_min_range(rel_pre, rel)
+        min_sep = min(min_sep, sep)
+        if sep < rpz:
+            los = True
+
         diverging = rel.rx * rel.vx + rel.ry * rel.vy > 0.0  # past CPA
         clear = diverging and rel.dist >= rpz and not mem_own.resolving and not mem_intr.resolving
         done_timer = done_timer + dt if clear else 0.0

@@ -96,9 +96,15 @@ def test_advance_is_pure_and_deterministic() -> None:
     )
 
 
-def test_level_is_the_running_minimum_the_outcome_accumulates() -> None:
-    """level(state) is the fleet's current minimum pairwise separation, measured at each pre-step
-    instant; the final outcome's min_sep is the minimum over those — the quantity IPS splits on."""
+def test_segment_minimum_never_exceeds_the_sampled_comb() -> None:
+    """``level(state)`` is the fleet's separation *at an instant*; the accumulated ``min_sep`` is the
+    minimum over each whole step. So the accumulator is bounded **above** by the comb of sampled
+    instants and is generally strictly tighter — the property IPS's shell crossings rest on.
+
+    This replaces an assertion that the two were *equal*, which pinned the defect it was meant to
+    guard: equality is exactly what a per-``dt`` sample-and-compare gives, and it is wrong whenever
+    a pair's closest approach falls between two steps (``kinematics.segment_min_range``).
+    """
     agents = _ring(4)
     env = _env(agents)
     state = env.initial_state(agents)
@@ -107,6 +113,11 @@ def test_level_is_the_running_minimum_the_outcome_accumulates() -> None:
 
     seen: list[float] = []
     while not env.is_terminal(state):
-        seen.append(level(state))  # the pre-step instant the accumulator measures on
+        seen.append(level(state))
         state = env.advance(state, FleetStreams())
-    assert state.min_sep == min(seen)
+    seen.append(level(state))  # the terminal instant, now covered by the last segment's right end
+
+    assert state.min_sep <= min(seen)
+    # and on this converging ring it is strictly tighter: a 4-way superconflict at 10 m/s closes
+    # far enough within one 0.5 s step that no sampled instant lands on the true closest approach
+    assert state.min_sep < min(seen)

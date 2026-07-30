@@ -38,15 +38,16 @@ _DPSI = 90.0
 _TLOS = 60.0
 
 # Deterministic (noiseless) min_sep anchors — a moved bit means the mixed-fleet physics changed.
-_ANCHOR_MIXED_MVP = 95.88552098523046
-_ANCHOR_MIXED_VO = 96.1341634173678
+# All six moved **down** for the segment-minimum measurement (see ``test_loop.py``'s anchor block).
+_ANCHOR_MIXED_MVP = 95.87550302578735
+_ANCHOR_MIXED_VO = 96.11937007400364
 # Seeded noisy anchors (seed 0, single substream) through the full GPS-noise self-fix path.
-_ANCHOR_MIXED_NOISY_MVP = 116.6801776651861
-_ANCHOR_MIXED_NOISY_VO = 118.32565406140854
+_ANCHOR_MIXED_NOISY_MVP = 116.6778697599543
+_ANCHOR_MIXED_NOISY_VO = 118.31313341407984
 # Fixed-wing MVP/VO re-anchor (both aircraft fixed-wing), noiseless: two slow-turning fixed-wings
 # clear the same crossing by a tighter margin than the mixed/multirotor case.
-_ANCHOR_FW_MVP = 53.5791250988019
-_ANCHOR_FW_VO = 53.409145945952126
+_ANCHOR_FW_MVP = 53.43304097492288
+_ANCHOR_FW_VO = 53.287583586957155
 
 
 def _mixed(

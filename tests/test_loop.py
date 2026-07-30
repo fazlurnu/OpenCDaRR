@@ -121,10 +121,17 @@ def test_dynamics_is_pluggable() -> None:
 # coupled-heading model (the turn-rate limit never bound there), the noisy ones moved (Multirotor
 # sidesteps cleanly where that turn-rate limit used to bind). The MVP/VO IPR on the *fixed-wing*
 # airframe re-anchors in Phase 4e (it needs the velocity->course/airspeed projection).
-_ANCHOR_NOISELESS_MVP = 109.49370533404944
-_ANCHOR_NOISELESS_VO = 110.03070025405336
-_ANCHOR_NOISY_MVP = 267.74240154935825
-_ANCHOR_NOISY_VO = 261.9742439798254
+#
+# Re-anchored again for the segment-minimum measurement (``kinematics.segment_min_range``): min_sep
+# is now the minimum over each *step* rather than at its endpoints, so every anchor moved **down**,
+# by 1.8e-5 m to 0.20 m here. The direction is guaranteed, not observed — a segment minimum can
+# never exceed the minimum of its own endpoints — and ``test_segment_minimum_never_exceeds_the_
+# sampled_comb`` pins that as a property so a future change cannot move one of these *up*
+# unnoticed. The trajectories themselves are untouched: nothing in the decision path reads min_sep.
+_ANCHOR_NOISELESS_MVP = 109.29398339330471
+_ANCHOR_NOISELESS_VO = 109.82844921479813
+_ANCHOR_NOISY_MVP = 267.74238306504367
+_ANCHOR_NOISY_VO = 261.9739565914773
 
 
 def test_bit_for_bit_noiseless_mvp() -> None:

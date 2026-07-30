@@ -107,3 +107,38 @@ def relative_enu(own: AircraftState, intr: AircraftState) -> Relative:
     vox, voy = velocity_enu(own)
     vix, viy = velocity_enu(intr)
     return Relative(rx=dist * math.sin(q), ry=dist * math.cos(q), vx=vix - vox, vy=viy - voy)
+
+
+def segment_min_range(r0: Relative, r1: Relative) -> float:
+    """Closest range [m] reached over one integration step, endpoints included.
+
+    Takes a pair's relative position at both ends of a ``dt`` step and returns the minimum of the
+    straight segment between them. This is a **measurement** helper, not a CDR algorithm — it lives
+    here rather than beside the CPA equations in ``cd/`` because both encounter runners
+    (:mod:`~opencdarr.fleet` and :mod:`~opencdarr.loop`) must measure separation *identically* for
+    the n = 2 reduction to hold, and the one thing worse than sharing this algebra would be two
+    copies of it drifting apart.
+
+    Reading separation only at step endpoints under-reports it: a pass that dips inside a threshold
+    and back out within one step leaves no sampled point inside, and the error is one-sided — the
+    reported minimum can only ever be too *large*. Harmless next to ``rpz``, severe at the small
+    radii a rare-event estimator splits on, where the relative error in ``P(min_sep <= d)`` scales
+    as ``(v_rel*dt)^2 / (24 d^2)``.
+
+    Interpolates **positions**; it does not extrapolate ``r0``'s velocity. A velocity extrapolation
+    would leave the flown path whenever an aircraft is turning and can report a range at a point
+    the aircraft never occupied — measured inventing losses of separation that never were. Every
+    range returned here lies on the segment between two states the simulation actually produced.
+    Velocities on ``r0`` / ``r1`` are therefore unused.
+    """
+    dx, dy = r1.rx - r0.rx, r1.ry - r0.ry
+    d2 = dx * dx + dy * dy
+    if d2 <= 0.0:
+        return r0.dist  # no relative displacement over the step
+    # s parameterises the step over [0, 1]; the unconstrained minimum sits at s
+    s = -(r0.rx * dx + r0.ry * dy) / d2
+    if s <= 0.0:
+        return r0.dist  # already past closest approach at the step's start
+    if s >= 1.0:
+        return r1.dist  # still closing at the step's end
+    return math.hypot(r0.rx + s * dx, r0.ry + s * dy)

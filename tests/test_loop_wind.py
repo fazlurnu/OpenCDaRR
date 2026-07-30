@@ -30,11 +30,13 @@ _LOOKAHEAD = 120.0
 _WIND = WindField.from_met(270.0, 6.0)  # 6 m/s from the west — a crosswind on the north-bound OWN
 
 # Deterministic (noiseless) min_sep anchors in the west wind; a moved bit means the wind coupling
-# changed. VO clears by only ~1 m — the wind pushes this geometry close to the rpz limit.
-_ANCHOR_WIND_MVP = 54.898044526517275
-_ANCHOR_WIND_VO = 51.02865852313175
+# changed. VO clears by only ~0.9 m — the wind pushes this geometry close to the rpz limit, and the
+# segment-minimum measurement (see ``test_loop.py``'s anchor block) took another 0.17 m off it: this
+# is the case where reading separation only at step endpoints most flatters the result.
+_ANCHOR_WIND_MVP = 54.839298823969486
+_ANCHOR_WIND_VO = 50.85881790533006
 # Seeded noisy anchor (seed 0, single substream) through the full GPS-noise self-fix path.
-_ANCHOR_WIND_NOISY_MVP = 335.00927541159706
+_ANCHOR_WIND_NOISY_MVP = 335.00445769084274
 
 
 def _mixed(
