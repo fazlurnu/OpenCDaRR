@@ -60,7 +60,16 @@ from opencdarr.dynamics.base import Dynamics, MotionCommand
 from opencdarr.dynamics.fixedwing import FixedWing
 from opencdarr.dynamics.multirotor import Multirotor
 from opencdarr.estimator import IPRResult, combine_ipr, estimate_ipr, wilson_interval
-from opencdarr.experiment import run_one_experiment
+from opencdarr.experiment import (
+    IPS,
+    MC,
+    ExperimentResult,
+    Fixed,
+    Methods,
+    Sweep,
+    run_experiment,
+    run_one_experiment,
+)
 from opencdarr.fleet import Agent, run_fleet
 from opencdarr.ips import estimate_rare_prob
 from opencdarr.loop import run_encounter
@@ -68,7 +77,6 @@ from opencdarr.performance import M600, SMALL_FIXEDWING, Performance
 from opencdarr.rng import generator, root_seed_sequence, spawn
 from opencdarr.scenario import create_conflict, sample_pairwise
 from opencdarr.state import AircraftState, create_aircraft
-from opencdarr.study import IPS, MC, Fixed, Methods, StudyResult, Sweep, run_study
 from opencdarr.viz import extract_tracks, plot_pairwise
 from opencdarr.wind import NO_WIND, WindField
 
@@ -90,6 +98,7 @@ __all__ = [
     "ConflictDetector",
     "ConflictResolver",
     "Dynamics",
+    "ExperimentResult",
     "Fixed",
     "FixedWing",
     "GnssNavigation",
@@ -106,7 +115,6 @@ __all__ = [
     "ProbabilisticFTR",
     "RecoveryCriterion",
     "StateBased",
-    "StudyResult",
     "Sweep",
     "SurveillanceModel",
     "WindField",
@@ -124,8 +132,8 @@ __all__ = [
     "root_seed_sequence",
     "run_encounter",
     "run_fleet",
+    "run_experiment",
     "run_one_experiment",
-    "run_study",
     "sample_pairwise",
     "spawn",
     "wilson_interval",
