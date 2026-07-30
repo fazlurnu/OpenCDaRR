@@ -241,18 +241,26 @@ class Comm(CommunicationModel):
         return CommState(held=held, in_flight=still_flying, gates=gate_states, t_prev=t)
 
 
-def _hazard(rate: float, elapsed: float) -> float:
-    """Probability of at least one event in ``elapsed`` seconds at constant ``rate`` [1/s].
+_SECONDS_PER_HOUR = 3600.0
 
-    ``1 - exp(-rate * elapsed)``, the exponential (memoryless) failure law — so the parameter is a
-    **rate** and the mean time to the event is ``1 / rate`` *whatever the broadcast cadence*.
-    Quoting a probability per broadcast instead would tie that mean to the interval, and a cadence
-    sweep would then be moving two things at once. Written with ``expm1`` because ``1 - exp(-x)``
-    loses every significant digit for the small ``x`` a rare failure actually uses.
+
+def _hazard(rate: float, elapsed: float) -> float:
+    """Probability of at least one event in ``elapsed`` **seconds** at constant ``rate`` [1/h].
+
+    ``1 - exp(-rate * elapsed / 3600)``, the exponential (memoryless) failure law — so the
+    parameter is a **rate** and the mean time to the event is ``1 / rate`` hours *whatever the
+    broadcast cadence*. Quoting a probability per broadcast instead would tie that mean to the
+    interval, and a cadence sweep would then be moving two things at once.
+
+    The rate is per **hour** because that is the unit reliability is quoted in: a mean time between
+    failures of 28 hours is readable where ``1e-5`` per second is not. ``elapsed`` stays in
+    seconds, the simulation's own unit, and the conversion happens here. Written with ``expm1``
+    because
+    ``1 - exp(-x)`` loses every significant digit for the small ``x`` a rare failure uses.
     """
     if rate <= 0.0 or elapsed <= 0.0:
         return 0.0
-    return -math.expm1(-rate * elapsed)
+    return -math.expm1(-rate * elapsed / _SECONDS_PER_HOUR)
 
 
 def _toggle(
@@ -296,14 +304,16 @@ class RadioHealth(LinkGate):
     tick; it has no memory, so a radio that is *out* for a stretch of time cannot be expressed with
     it. This gate adds that: each subsystem of each aircraft fails at ``tx_fail_rate`` /
     ``rx_fail_rate`` and comes back at ``tx_recover_rate`` / ``rx_recover_rate``, all in **events
-    per second** (mean time to failure = ``1 / rate``). Reception and latency are untouched and
-    apply to whatever the working radios still carry, so the two effects compose.
+    per hour** — the unit reliability is quoted in — so the mean time to failure is ``1 / rate``
+    hours. ``RadioHealth(rx_fail_rate=2.0)`` is a receiver that dies every half hour on average;
+    ``0.036`` is one that lasts about 28 hours. Reception and latency are untouched and apply to
+    whatever the working radios still carry, so the two effects compose.
 
     The recover rates default to ``0``, which makes a failure **permanent** for the rest of the
     encounter — the latching radio. Give them a value and the radio is intermittent instead. All
     four are separate parameters because a transmitter and a receiver are separate hardware with no
     reason to share a reliability figure; pass only the ones you need
-    (``RadioHealth(rx_fail_rate=1e-3)`` fails receivers and nothing else).
+    (``RadioHealth(rx_fail_rate=3.6)`` fails receivers and nothing else).
 
     **What an outage does.** A down *transmitter* means that aircraft's broadcast is not offered to
     anyone, so it goes silent while still seeing everyone. A down *receiver* means it is offered
@@ -340,7 +350,7 @@ class RadioHealth(LinkGate):
         for name in ("tx_fail_rate", "rx_fail_rate", "tx_recover_rate", "rx_recover_rate"):
             rate = getattr(self, name)
             if rate < 0.0 or not math.isfinite(rate):
-                raise ValueError(f"{name} must be a finite rate >= 0 [1/s], got {rate}")
+                raise ValueError(f"{name} must be a finite rate >= 0 [1/h], got {rate}")
 
     def initial(self) -> RadioHealthState:
         """Every radio working."""

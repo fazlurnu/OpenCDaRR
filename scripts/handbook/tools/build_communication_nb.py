@@ -32,14 +32,14 @@ publishes one measurement; the channel offers it to every other aircraft over an
 directed link; each receiver keeps the latest message it actually got. Six effects act on that
 path, and this notebook covers all of them:
 
-| Effect | Where it lives | Parameter |
-|---|---|---|
-| Broadcast interval | `BroadcastSchedule` | `interval`, or `at_rate` in Hz |
-| Off-phasing | `BroadcastSchedule` | `phase` |
-| Jitter | `BroadcastSchedule` | `jitter` |
-| Reception probability | `Comm` | `reception_prob` |
-| Latency | `Comm` | `latency` |
-| Transmitter / receiver failure | `RadioHealth` gate | `tx_fail_rate`, `rx_fail_rate` |
+| Effect | Where it lives | Parameter | Unit |
+|---|---|---|---|
+| Broadcast interval | `BroadcastSchedule` | `interval` (or `at_rate`) | s (or Hz) |
+| Off-phasing | `BroadcastSchedule` | `phase` | s |
+| Jitter | `BroadcastSchedule` | `jitter` | s |
+| Reception probability | `Comm` | `reception_prob` | probability |
+| Latency | `Comm` | `latency` | s |
+| Transmitter / receiver failure | `RadioHealth` | `tx_fail_rate`, `rx_fail_rate` | **per hour** |
 
 The last section shows how to extend each of these: your own broadcast rate, latency model, link
 gate, or a whole channel of your own.
@@ -649,7 +649,7 @@ for k in range(12):
 print("duty cycle 1 s on / 4 s period:", " ".join(offered))
 
 # two gates composed -- impossible to express as a single subclass
-both = Comm(reception_prob=1.0, gates=(RadioHealth(rx_fail_rate=0.05), DutyCycle()))
+both = Comm(reception_prob=1.0, gates=(RadioHealth(rx_fail_rate=180.0), DutyCycle()))
 state = both.initial_state()
 names = [f"{type(g).__name__}(gate {i})" for i, g in enumerate(state.gates)]
 print("\ntwo gates, two independent states threaded side by side:", names)

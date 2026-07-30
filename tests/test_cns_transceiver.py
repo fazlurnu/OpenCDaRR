@@ -92,14 +92,15 @@ def _time_to_first_failure(
 
 
 def test_mean_time_to_failure_is_the_same_at_two_cadences() -> None:
-    """The load-bearing property: ``rx_fail_rate`` is per **second**, so 1 Hz and 2 Hz agree.
+    """The load-bearing property: ``rx_fail_rate`` is per **hour**, so 1 Hz and 2 Hz agree.
 
     A probability quoted per broadcast instead would halve the mean time to failure when the
     cadence doubles, and a cadence sweep would then be moving reliability at the same time. The
     residual gap between the two is discretisation only — failures are seen at tick boundaries, so
-    the mean is ``dt / (1 - exp(-rate*dt))``, i.e. ``1/rate + dt/2`` to first order.
+    the mean is ``dt / (1 - exp(-rate*dt))``, i.e. ``1/rate + dt/2`` to first order. The rate is
+    per hour, so 360/h is one failure per 10 s and the two cadences must agree on that.
     """
-    rate, trials = 0.1, 600  # 1/rate = 10 s
+    rate, trials = 360.0, 600  # 360 per hour = 0.1 per second, so MTTF = 10 s
     means = {}
     for dt in (1.0, 0.5):
         model = TransceiverComm(rx_fail_rate=rate)
@@ -115,7 +116,7 @@ def test_mean_time_to_failure_is_the_same_at_two_cadences() -> None:
 
 def test_nothing_fails_before_any_time_has_elapsed() -> None:
     """At ``t = 0`` no time has passed, so no hazard has accrued however large the rate."""
-    model = TransceiverComm(tx_fail_rate=1e6, rx_fail_rate=1e6)
+    model = TransceiverComm(tx_fail_rate=1e9, rx_fail_rate=1e9)
     first = model.step(model.initial_state(), [], _RECEIVERS, 0.0, _rng())
     assert radio_health(first).tx_down == frozenset()
     assert radio_health(first).rx_down == frozenset()
@@ -132,13 +133,13 @@ def test_a_failure_latches_unless_recovery_is_asked_for() -> None:
     latched = TransceiverComm().step(down, [], ("OWN",), 1000.0, _rng())
     assert radio_health(latched).rx_down == frozenset({"OWN"})  # 1000 s later, still out
 
-    healed = TransceiverComm(rx_recover_rate=10.0).step(down, [], ("OWN",), 1000.0, _rng())
+    healed = TransceiverComm(rx_recover_rate=36000.0).step(down, [], ("OWN",), 1000.0, _rng())
     assert radio_health(healed).rx_down == frozenset()
 
 
 def test_the_two_subsystems_fail_independently() -> None:
     """A transmitter rate does not fail receivers, and vice versa."""
-    tx_only = TransceiverComm(tx_fail_rate=1e6)
+    tx_only = TransceiverComm(tx_fail_rate=1e9)
     state = tx_only.step(tx_only.initial_state(), [], _RECEIVERS, 0.0, _rng())
     state = tx_only.step(state, [], _RECEIVERS, 1.0, _rng())
     assert radio_health(state).tx_down == frozenset(_RECEIVERS)
@@ -253,7 +254,7 @@ def test_sweeping_a_rate_does_not_move_the_reception_draws() -> None:
     """
     quiet = _delivery_trace(TransceiverComm(reception_prob=0.5), seed=3)
     tiny = _delivery_trace(
-        TransceiverComm(reception_prob=0.5, tx_fail_rate=1e-15, rx_fail_rate=1e-15), seed=3
+        TransceiverComm(reception_prob=0.5, tx_fail_rate=3.6e-12, rx_fail_rate=3.6e-12), seed=3
     )
     assert quiet == tiny
     assert any(links for links in quiet)  # the trace actually has deliveries to compare
@@ -299,8 +300,8 @@ def test_the_outage_draws_come_from_the_existing_comm_substream() -> None:
             rpz=50.0, t_lookahead=120.0, dt=0.5, detector=StateBased(),
             resolver=MVP(margin=1.05), recovery=PastCPA(bouncing_guard=True),
             navigation=GnssNavigation(), rng=generator(nav_seq),
-            communication=TransceiverComm(reception_prob=0.95, rx_fail_rate=0.03,
-                                          tx_fail_rate=0.03),
+            communication=TransceiverComm(reception_prob=0.95, rx_fail_rate=108.0,
+                                          tx_fail_rate=108.0),
             comm_rng=generator(comm_seq),
             schedule=BroadcastSchedule(interval=1.0), broadcast_rng=generator(bc_seq),
             record=True,
@@ -344,7 +345,7 @@ def test_the_seeded_comm_stream_is_unchanged() -> None:
     break by accident. If it fails, the numbers moved: either fix the ordering or re-run and
     re-publish deliberately, never edit the literals to match.
     """
-    model = TransceiverComm(reception_prob=0.5, tx_fail_rate=0.03, rx_fail_rate=0.03)
+    model = TransceiverComm(reception_prob=0.5, tx_fail_rate=108.0, rx_fail_rate=108.0)
     rng = np.random.default_rng(3)
     state = model.initial_state()
     deliveries, tx_down, rx_down = "", "", ""
