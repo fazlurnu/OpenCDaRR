@@ -29,7 +29,7 @@ import numpy as np
 
 from opencdarr.cd.base import ConflictDetector
 from opencdarr.cns.base import CommunicationModel, NavigationModel, SurveillanceModel
-from opencdarr.cns.broadcast import BroadcastSchedule
+from opencdarr.cns.broadcast import schedule_for
 from opencdarr.config import Config
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr.base import RecoveryCriterion
@@ -183,16 +183,16 @@ def estimate_ipr(
     encounters = (
         spawn(root_seed_sequence(config.seed), config.n_encounters) if seqs is None else seqs
     )
-    # the pairwise runner's ``broadcast_interval`` as the fleet's transmit schedule: aligned phase,
-    # no jitter, so both aircraft share one clock and nothing draws from a broadcast stream — the
-    # aligned default *is* the single-clock pair (:class:`BroadcastSchedule`)
-    schedule = BroadcastSchedule(interval=config.simulation.broadcast_interval)
     for seq in encounters:
-        # always 3 substreams (geometry, navigation, communication), regardless of which CNS
-        # layers are enabled for this run — the stream tree stays config-invariant (ADR 0006 §6)
-        geom_seq, nav_seq, comm_seq = spawn(seq, 3)
+        # always 4 substreams (geometry, navigation, communication, broadcast), regardless of which
+        # CNS layers or transmit-timing options are enabled — the stream tree stays
+        # config-invariant (ADR 0006 §6). The broadcast child was added last precisely so it could
+        # be: a SeedSequence's i-th child depends only on i and its parent, so spawning four leaves
+        # the first three bit-identical to the three-child tree every published number came from.
+        geom_seq, nav_seq, comm_seq, bc_seq = spawn(seq, 4)
+        geom_rng = generator(geom_seq)
         own, intr = sample_pairwise(
-            generator(geom_seq),
+            geom_rng,
             speed=config.scenario.speed,
             dcpa_max=config.scenario.dcpa_max,
             tlos=config.scenario.tlos,
@@ -203,6 +203,16 @@ def estimate_ipr(
             dcpa=dcpa,
             side=side,
             gs_intr=gs_intr,
+        )
+        # the transmit timing, built the same way IPS builds it (:func:`schedule_for`). The phase
+        # draws from ``geom_rng`` — which the geometry has finished with — so switching it on
+        # appends draws instead of shifting the ones already there.
+        schedule = schedule_for(
+            2,
+            config.simulation.broadcast_interval,
+            geom_rng,
+            jitter=config.simulation.broadcast_jitter,
+            random_phase=config.simulation.broadcast_random_phase,
         )
         outcome = run_fleet(
             [Agent(own, perf, dynamics=dynamics), Agent(intr, perf, dynamics=dynamics)],
@@ -220,6 +230,7 @@ def estimate_ipr(
             t_max=config.simulation.t_max,
             done_timeout=config.simulation.done_timeout,
             schedule=schedule,
+            broadcast_rng=generator(bc_seq),
             wind=wind,
             share_intent=share_intent,
         )

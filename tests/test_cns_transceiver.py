@@ -5,11 +5,14 @@ break independently — the **hazard** (how often a subsystem fails, and whether
 per-broadcast coin) and the **gate** (what a failed subsystem actually stops) — because a model
 that got either one right and the other wrong would still produce plausible-looking numbers.
 
-Gate tests construct a ``RadioState`` with the health they want and set every rate to zero, so a
+Gate tests construct a state with the health they want and set every rate to zero, so a
 deterministic assertion is not fighting a random draw.
 """
 
 from __future__ import annotations
+
+from collections.abc import Iterable
+from typing import Any
 
 import numpy as np
 import pytest
@@ -21,9 +24,10 @@ from opencdarr.cns import (
     CommState,
     GnssNavigation,
     Message,
-    RadioState,
+    RadioHealthState,
     TransceiverComm,
     constant_latency,
+    radio_health,
 )
 from opencdarr.cr import MVP
 from opencdarr.crr import PastCPA
@@ -49,6 +53,23 @@ def _rng() -> np.random.Generator:
     return np.random.default_rng(0)
 
 
+def _radio(
+    *,
+    tx_down: Iterable[str] = (),
+    rx_down: Iterable[str] = (),
+    **comm_state: Any,
+) -> CommState:
+    """A comm state carrying one :class:`RadioHealth` gate at the health asked for.
+
+    The gate states are positional and opaque to ``CommState``, so building one by hand is the
+    verbose part of a gate test; this keeps the tests reading as "a fleet with OWN's receiver out".
+    """
+    return CommState(
+        gates=(RadioHealthState(tx_down=frozenset(tx_down), rx_down=frozenset(rx_down)),),
+        **comm_state,
+    )
+
+
 # --- the hazard: a rate, not a probability per broadcast ---------------------------------------
 
 
@@ -64,7 +85,7 @@ def _time_to_first_failure(
     t = 0.0
     while t <= t_max:
         state = model.step(state, [], ("OWN",), t, rng)
-        if state.rx_down:
+        if radio_health(state).rx_down:
             return t
         t += dt
     return None
@@ -96,23 +117,23 @@ def test_nothing_fails_before_any_time_has_elapsed() -> None:
     """At ``t = 0`` no time has passed, so no hazard has accrued however large the rate."""
     model = TransceiverComm(tx_fail_rate=1e6, rx_fail_rate=1e6)
     first = model.step(model.initial_state(), [], _RECEIVERS, 0.0, _rng())
-    assert first.tx_down == frozenset()
-    assert first.rx_down == frozenset()
+    assert radio_health(first).tx_down == frozenset()
+    assert radio_health(first).rx_down == frozenset()
     assert first.t_prev == 0.0
     # ... and one second later, at that rate, both radios of both aircraft are certainly gone
     second = model.step(first, [], _RECEIVERS, 1.0, _rng())
-    assert second.tx_down == frozenset(_RECEIVERS)
-    assert second.rx_down == frozenset(_RECEIVERS)
+    assert radio_health(second).tx_down == frozenset(_RECEIVERS)
+    assert radio_health(second).rx_down == frozenset(_RECEIVERS)
 
 
 def test_a_failure_latches_unless_recovery_is_asked_for() -> None:
     """``recover_rate`` defaults to 0 — the permanent failure item 7 was written for."""
-    down = RadioState(rx_down=frozenset({"OWN"}), t_prev=0.0)
+    down = _radio(rx_down={"OWN"}, t_prev=0.0)
     latched = TransceiverComm().step(down, [], ("OWN",), 1000.0, _rng())
-    assert latched.rx_down == frozenset({"OWN"})  # 1000 s later, still out
+    assert radio_health(latched).rx_down == frozenset({"OWN"})  # 1000 s later, still out
 
     healed = TransceiverComm(rx_recover_rate=10.0).step(down, [], ("OWN",), 1000.0, _rng())
-    assert healed.rx_down == frozenset()
+    assert radio_health(healed).rx_down == frozenset()
 
 
 def test_the_two_subsystems_fail_independently() -> None:
@@ -120,8 +141,8 @@ def test_the_two_subsystems_fail_independently() -> None:
     tx_only = TransceiverComm(tx_fail_rate=1e6)
     state = tx_only.step(tx_only.initial_state(), [], _RECEIVERS, 0.0, _rng())
     state = tx_only.step(state, [], _RECEIVERS, 1.0, _rng())
-    assert state.tx_down == frozenset(_RECEIVERS)
-    assert state.rx_down == frozenset()
+    assert radio_health(state).tx_down == frozenset(_RECEIVERS)
+    assert radio_health(state).rx_down == frozenset()
 
 
 # --- the gate: what a failed subsystem stops ---------------------------------------------------
@@ -131,7 +152,7 @@ def test_a_down_receiver_goes_blind_while_the_fleet_still_sees_it() -> None:
     """The asymmetry the two sets exist for: OWN's receiver is out, its transmitter is fine."""
     comm = TransceiverComm(reception_prob=1.0, latency=0.0)  # no failures: only the gate is live
     state = comm.step(
-        RadioState(rx_down=frozenset({"OWN"})),
+        _radio(rx_down={"OWN"}),
         [_msg("OWN", 0.0), _msg("INT", 0.0)],
         _RECEIVERS,
         0.0,
@@ -139,13 +160,14 @@ def test_a_down_receiver_goes_blind_while_the_fleet_still_sees_it() -> None:
     )
     assert ("OWN", "INT") not in state.held  # OWN hears nothing about INT
     assert ("INT", "OWN") in state.held  # but INT still sees OWN — its transmitter is fine
-    assert state.rx_down == frozenset({"OWN"})  # every rate is 0, so the health is unchanged
+    # every rate is 0, so the health is unchanged
+    assert radio_health(state).rx_down == frozenset({"OWN"})
 
 
 def test_a_down_transmitter_goes_silent_while_still_seeing_everyone() -> None:
     comm = TransceiverComm(reception_prob=1.0, latency=0.0)
     state = comm.step(
-        RadioState(tx_down=frozenset({"OWN"})),
+        _radio(tx_down={"OWN"}),
         [_msg("OWN", 0.0), _msg("INT", 0.0)],
         _RECEIVERS,
         0.0,
@@ -162,11 +184,11 @@ def test_an_outage_holds_stale_data_rather_than_clearing_it() -> None:
     long as the outage lasts (``LastKnown``), instead of dropping the neighbour and flying nominal.
     """
     comm = TransceiverComm(reception_prob=1.0, latency=0.0)
-    fresh = comm.step(RadioState(), [_msg("INT", 0.0, gs=10.0)], _RECEIVERS, 0.0, _rng())
+    fresh = comm.step(_radio(), [_msg("INT", 0.0, gs=10.0)], _RECEIVERS, 0.0, _rng())
     assert fresh.held[("OWN", "INT")].state.gs == 10.0
 
     blind = comm.step(
-        RadioState(held=fresh.held, rx_down=frozenset({"OWN"})),
+        _radio(held=fresh.held, rx_down={"OWN"}),
         [_msg("INT", 5.0, gs=99.0)],
         _RECEIVERS,
         5.0,
@@ -179,11 +201,11 @@ def test_an_outage_holds_stale_data_rather_than_clearing_it() -> None:
 def test_a_message_already_in_flight_still_arrives() -> None:
     """The gate is applied when a broadcast is *offered*, not when it is delivered."""
     comm = TransceiverComm(reception_prob=1.0, latency=constant_latency(2.0))
-    sent = comm.step(RadioState(), [_msg("INT", 0.0)], _RECEIVERS, 0.0, _rng())
+    sent = comm.step(_radio(), [_msg("INT", 0.0)], _RECEIVERS, 0.0, _rng())
     assert len(sent.in_flight) == 1  # accepted, due at t = 2
 
     later = comm.step(
-        RadioState(in_flight=sent.in_flight, rx_down=frozenset({"OWN"}), t_prev=0.0),
+        _radio(in_flight=sent.in_flight, rx_down={"OWN"}, t_prev=0.0),
         [],
         _RECEIVERS,
         2.0,
@@ -198,7 +220,7 @@ def test_a_working_radio_delivers_exactly_like_comm() -> None:
     msgs = [_msg("OWN", 0.0), _msg("INT", 0.0)]
     plain = Comm(reception_prob=1.0, latency=0.0).step(CommState(), msgs, _RECEIVERS, 0.0, _rng())
     radio = TransceiverComm(reception_prob=1.0, latency=0.0).step(
-        RadioState(), msgs, _RECEIVERS, 0.0, _rng()
+        _radio(), msgs, _RECEIVERS, 0.0, _rng()
     )
     assert dict(radio.held) == dict(plain.held)
     assert radio.in_flight == plain.in_flight
@@ -210,7 +232,7 @@ def test_a_working_radio_delivers_exactly_like_comm() -> None:
 def _delivery_trace(model: TransceiverComm, seed: int, ticks: int = 40) -> list[set[str]]:
     """Which links delivered a *fresh* message each tick — the observable draw pattern."""
     rng = np.random.default_rng(seed)
-    state: RadioState = model.initial_state()
+    state = model.initial_state()
     trace: list[set[str]] = []
     for k in range(ticks):
         t = float(k)
@@ -285,8 +307,8 @@ def test_the_outage_draws_come_from_the_existing_comm_substream() -> None:
         )
         assert out.frames is not None
         final = out.frames[-1].cns_state.comm
-        assert isinstance(final, RadioState)
-        return out.min_sep, final.tx_down, final.rx_down
+        assert radio_health(final) is not None
+        return out.min_sep, radio_health(final).tx_down, radio_health(final).rx_down
 
     first, again = once(7), once(7)
     assert first == again  # same seed, same radios down, same trajectory
@@ -324,7 +346,7 @@ def test_the_seeded_comm_stream_is_unchanged() -> None:
     """
     model = TransceiverComm(reception_prob=0.5, tx_fail_rate=0.03, rx_fail_rate=0.03)
     rng = np.random.default_rng(3)
-    state: RadioState = model.initial_state()
+    state = model.initial_state()
     deliveries, tx_down, rx_down = "", "", ""
     for k in range(len(_PINNED_DELIVERIES)):
         t = float(k)
@@ -334,8 +356,8 @@ def test_the_seeded_comm_stream_is_unchanged() -> None:
             frozenset({"OWN"} if "OWN->INT" in fresh else set())
             | frozenset({"INT"} if "INT->OWN" in fresh else set())
         )
-        tx_down += _code(state.tx_down)
-        rx_down += _code(state.rx_down)
+        tx_down += _code(radio_health(state).tx_down)
+        rx_down += _code(radio_health(state).rx_down)
 
     assert deliveries == _PINNED_DELIVERIES
     assert tx_down == _PINNED_TX_DOWN

@@ -70,14 +70,97 @@ class CommState:
     value — but ``held`` is a plain mapping, so *frozen* stops the attribute being rebound, not the
     mapping being mutated. :meth:`CommunicationModel.step` therefore always builds a **new**
     mapping rather than mutating in place, so an IPS clone can never write through to its parent.
+
+    ``gates`` is one opaque state per :class:`LinkGate` the model was built with, positionally
+    aligned with that model's gate tuple — the composable way to add an effect to the standard
+    channel. ``t_prev`` is when the model last stepped (``None`` before the first call), so a gate
+    can be told how much time really elapsed rather than assuming the nominal cadence.
+
+    A model needing to remember something the gates cannot express **subclasses** this and returns
+    its subclass from :meth:`CommunicationModel.initial_state`; see that method for the contract.
+    That is the seam for replacing the channel wholesale; ``gates`` is the seam for adding one
+    effect to it (ADR 0019 §3, §5).
     """
 
     held: Mapping[tuple[str, str], Message] = field(default_factory=dict)
     in_flight: tuple[InFlight, ...] = ()
+    gates: tuple[object, ...] = ()
+    t_prev: float | None = None
+
+
+class LinkGate(ABC):
+    """A stateful effect that can veto a directed link *before* the channel draws for it.
+
+    The composable alternative to subclassing a communication model. A gate answers one question —
+    "may this broadcast be offered on this directed link right now?" — and carries whatever state
+    it needs to answer it across ticks. Several gates compose: a link is offered only if **every**
+    gate admits it, so radio failure and terrain masking are two gates rather than a fourth class
+    (ADR 0019 §3).
+
+    **A veto is not ``reception_prob = 0``, and that distinction is load-bearing.** A denied link
+    consumes *no* randomness at all: :meth:`admits` is consulted ahead of the reception draw and
+    skips it entirely. Returning a zero probability instead would spend one draw per suppressed
+    link and shift every number after it. This is why the contract is a boolean, not a multiplier —
+    an effect that *modulates* the probability leaves the draw in place and belongs in
+    ``Comm._reception_for``, not here (ADR 0019 §4).
+
+    All three methods take the gate's **own** state rather than reading it off ``self``: the gate
+    object is immutable shared configuration (one instance serves every IPS particle), while the
+    state is a threaded value that clones with the particle — the same split
+    :class:`~opencdarr.cns.stack.CNS` makes against :class:`~opencdarr.cns.stack.CnsState`.
+
+    Implementations should be frozen dataclasses so ``experiment.identity`` can key a cache on them
+    structurally; a plain object's ``repr`` carries a memory address and is not stable across
+    processes.
+    """
+
+    @abstractmethod
+    def initial(self) -> object:
+        """This gate's state before anything happens — no roster needed, as for `CommState`."""
+
+    @abstractmethod
+    def evolve(
+        self,
+        own: object,
+        receivers: Sequence[str],
+        elapsed: float,
+        rng: np.random.Generator,
+    ) -> object:
+        """Advance this gate's state over ``elapsed`` seconds, before the channel runs.
+
+        Called once per step at a fixed offset from the start, in gate-registration order, so the
+        draws a gate makes sit at a predictable place in the stream and do not move with how the
+        reception draws happened to fall. A gate that draws should draw a **constant** number of
+        times whatever its state and whatever its parameters — including when a rate is zero — so
+        that sweeping a parameter moves this gate's outcomes without shifting the reception and
+        latency draws underneath them (ADR 0006 §6).
+        """
+
+    @abstractmethod
+    def admits(self, own: object, source: str, receiver: str) -> bool:
+        """Whether ``source``'s broadcast may be offered to ``receiver``. Must not draw."""
 
 
 class CommunicationModel(ABC):
     """How broadcasts reach receivers (reception + latency) — the contribution surface."""
+
+    def initial_state(self) -> CommState:
+        """The comm state at ``t = 0``: nothing delivered, nothing en route.
+
+        The seam for a **stateful** model. :class:`CommState` is closed — exactly ``held`` and
+        ``in_flight`` — so a model that must remember something across ticks (a failed radio that
+        stays failed, a duty cycle, a queue) subclasses it and returns that subclass here.
+        :meth:`step` then receives its own state type on **every** tick including the first,
+        because :class:`~opencdarr.cns.stack.CNS` threads whatever ``step`` returns straight back
+        in. Without this hook the first tick arrives as a plain :class:`CommState` and every such
+        model has to detect and upgrade it by hand. A stateless model wants the default.
+
+        Takes no arguments on purpose: per-aircraft state keys by id the way :attr:`CommState.held`
+        does — absent means "nothing has happened to that aircraft yet" — so a model never needs
+        the roster before the first tick. Configuration that *must* name real aircraft is checked
+        by :meth:`validate_ids` instead.
+        """
+        return CommState()
 
     @abstractmethod
     def step(

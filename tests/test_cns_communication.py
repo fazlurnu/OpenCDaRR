@@ -5,10 +5,16 @@ Each test pins one decision from ``vault/decisions/0006-communication-model-desi
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from dataclasses import dataclass
+
 import numpy as np
 import pytest
 
+from opencdarr.cd import StateBased
 from opencdarr.cns import (
+    BroadcastSchedule,
+    CnsState,
     Comm,
     CommState,
     Message,
@@ -16,6 +22,11 @@ from opencdarr.cns import (
     lognormal_latency,
     uniform_latency,
 )
+from opencdarr.cr import MVP
+from opencdarr.crr import PastCPA
+from opencdarr.fleet import Agent, run_fleet
+from opencdarr.performance import M600
+from opencdarr.scenario import create_conflict
 from opencdarr.state import AircraftState
 
 _RECEIVERS = ("OWN", "INT")
@@ -182,3 +193,118 @@ def test_invalid_parameters_raise() -> None:
         uniform_latency(0.5, 0.1)
     with pytest.raises(ValueError):
         lognormal_latency(0.0, 0.5)
+
+
+# --- the seeded channel stream ------------------------------------------------------------------
+
+# One seeded run of the plain channel -- no radio gates, so this is `Comm._offer` / `Comm._deliver`
+# alone, the path almost every published number actually runs through. Read one column per tick,
+# ticks 0..39.
+#   ages  -- how many seconds old the message that slot holds is; '.' = never heard, so that pair
+#            flies nominal (ADR 0006 §5). Moves with the *reception* draw.
+#   queue -- tenths digit of the latest deliver_t still in flight; '.' = queue empty. Moves with
+#            the *latency* draw, which whole-second ages cannot resolve on their own.
+# The run is live in all three: ages reach 4 s where drops run together, the first two ticks are
+# cold because a 0.4 s median latency delivers into the *next* tick, and the queue is non-empty on
+# 37 of 40 ticks.
+_PINNED_AGE_INT_OF_OWN = "..11121111111231112111123411211111123111"
+_PINNED_AGE_OWN_OF_INT = "..11121234111112111112121111112321211211"
+_PINNED_QUEUE_LATENCY = ".599.35544275442568543.22582330243302550"
+
+
+def test_the_seeded_channel_stream_is_unchanged() -> None:
+    """A golden trace of the channel core, so restructuring it cannot silently re-base a number.
+
+    The statistical tests above would still pass if the draw *order* moved -- a different but
+    equally-Bernoulli stream is still 70% reception. This pins the realised sequence instead, which
+    is what ADR 0006 §6 actually protects and what a refactor of ``_offer`` / ``_deliver`` is most
+    likely to disturb by accident. The companion pin over ``TransceiverComm`` in
+    ``test_cns_transceiver.py`` covers the gated path; this one covers the ungated one.
+
+    On failure the numbers moved: fix the ordering, or re-run and re-publish deliberately. Never
+    edit the literals to match.
+    """
+    comm = Comm(reception_prob=0.7, latency=lognormal_latency(0.4, 0.5))
+    rng = np.random.default_rng(5)
+    state = CommState()
+    age_int_of_own, age_own_of_int, queue = "", "", ""
+
+    def held_age(state: CommState, receiver: str, source: str, t: float) -> str:
+        message = state.held.get((receiver, source))
+        return "." if message is None else str(min(int(round(t - message.t_meas)), 9))
+
+    for k in range(len(_PINNED_QUEUE_LATENCY)):
+        t = float(k)
+        state = comm.step(state, [_msg("OWN", t), _msg("INT", t)], _RECEIVERS, t, rng)
+        age_int_of_own += held_age(state, "INT", "OWN", t)
+        age_own_of_int += held_age(state, "OWN", "INT", t)
+        latest = max((f.deliver_t for f in state.in_flight), default=None)
+        queue += "." if latest is None else str(int(round(latest * 10)) % 10)
+
+    assert age_int_of_own == _PINNED_AGE_INT_OF_OWN
+    assert age_own_of_int == _PINNED_AGE_OWN_OF_INT
+    assert queue == _PINNED_QUEUE_LATENCY
+
+
+# --- the stateful-model seam (CommunicationModel.initial_state) --------------------------------
+
+
+@dataclass(frozen=True)
+class _TickCountState(CommState):
+    """A user model's own state: one field the closed ``CommState`` has nowhere to put."""
+
+    ticks: int = 0
+
+
+class _TickCountingComm(Comm):
+    """A stateful model that reads its **own** state field on every tick, upgrading nothing."""
+
+    def initial_state(self) -> CommState:
+        return _TickCountState()
+
+    def step(
+        self,
+        state: CommState,
+        broadcasts: Sequence[Message],
+        receivers: Sequence[str],
+        t: float,
+        rng: np.random.Generator,
+    ) -> CommState:
+        # the seam under test: never a bare CommState, not even on the first tick. Asserting it
+        # here (rather than upgrading with an isinstance fallback) is the point — a model written
+        # this way is broken by a missing initial_state instead of quietly working around it.
+        assert isinstance(state, _TickCountState)
+        base = super().step(state, broadcasts, receivers, t, rng)
+        return _TickCountState(held=base.held, in_flight=base.in_flight, ticks=state.ticks + 1)
+
+
+def test_a_stateless_model_gets_the_plain_default() -> None:
+    """The base hook is what ``Comm`` and every other stateless model wants."""
+    assert Comm().initial_state() == CommState()
+    assert CnsState.initial(2).comm == CommState()  # no model at all: the perfect-delivery path
+
+
+def test_the_model_supplies_the_comm_layer_s_initial_value() -> None:
+    comm = _TickCountingComm()
+    assert CnsState.initial(2, comm).comm == _TickCountState(ticks=0)
+
+
+def test_a_subclassed_comm_state_survives_a_whole_run() -> None:
+    """A stateful model's own state is in place at t=0 and threaded to termination by run_fleet."""
+    own = AircraftState(id="OWN", lat=52.0, lon=4.0, trk=0.0, gs=10.0)
+    intr = create_conflict(own, intr_id="INT", dpsi=90.0, dcpa=0.0, tlos=90.0, rpz=50.0)
+    out = run_fleet(
+        [Agent(own, M600), Agent(intr, M600)],
+        rpz=50.0, t_lookahead=120.0, dt=1.0, detector=StateBased(),
+        resolver=MVP(margin=1.05), recovery=PastCPA(bouncing_guard=True),
+        communication=_TickCountingComm(reception_prob=1.0, latency=0.0),
+        comm_rng=np.random.default_rng(0),
+        schedule=BroadcastSchedule(interval=1.0), record=True,
+    )
+    assert out.frames is not None
+    assert all(isinstance(f.cns_state.comm, _TickCountState) for f in out.frames)
+    first, last = out.frames[0].cns_state.comm, out.frames[-1].cns_state.comm
+    assert isinstance(first, _TickCountState) and isinstance(last, _TickCountState)
+    assert first.ticks == 0  # the model's own state, before anything has been offered
+    # dt == interval, so every step is a broadcast tick: one per frame after the initial one
+    assert last.ticks == len(out.frames) - 1 > 5

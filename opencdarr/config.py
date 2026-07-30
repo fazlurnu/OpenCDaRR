@@ -46,6 +46,8 @@ class SimulationConfig:
     t_max: float  # max encounter time [s]
     done_timeout: float  # sustained-divergence time to terminate [s]
     broadcast_interval: float = 1.0  # CDR/measurement cadence [s] (ADS-L rate); held between ticks
+    broadcast_jitter: float = 0.0  # per-transmission slot dither U(-j, +j) [s]; 0 = fixed gaps
+    broadcast_random_phase: bool = False  # draw each aircraft's start offset in [0, interval)
 
 
 @dataclass(frozen=True)
@@ -99,6 +101,13 @@ def _validate(cfg: Config) -> None:
         "simulation.done_timeout >= 0": cfg.simulation.done_timeout >= 0,
         "simulation.broadcast_interval >= dt": (
             cfg.simulation.broadcast_interval >= cfg.simulation.dt
+        ),
+        "simulation.broadcast_jitter >= 0": cfg.simulation.broadcast_jitter >= 0,
+        # a gap of interval + U(-j, +j) must stay positive, so the dither cannot reach the period.
+        # BroadcastSchedule enforces this too; failing here reports it in the config's vocabulary,
+        # at load time, rather than part-way into a run.
+        "simulation.broadcast_jitter < broadcast_interval": (
+            cfg.simulation.broadcast_jitter < cfg.simulation.broadcast_interval
         ),
     }
     failed = [name for name, ok in checks.items() if not ok]

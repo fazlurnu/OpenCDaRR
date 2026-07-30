@@ -99,7 +99,7 @@ def run_fleet_traced(
     sep = SeparationManager()
     cns = CNS(navigation=navigation)  # perfect delivery, intent private
     cns_streams = CnsStreams(nav=rng)
-    cns_state = CnsState.initial(n)
+    cns_state = CnsState.initial(n, cns.communication)
     cmds = [aps[i].step(states[i], gms[i], perfs[i])[0] for i in range(n)]
 
     tr = FleetTrace(tracks=[[] for _ in range(n)])

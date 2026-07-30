@@ -138,7 +138,7 @@ def run_recorded(own0, intr0, own_ap, intr_ap, resolver, recovery,
     min_sep = float("inf")
     t = 0.0
     next_bc = schedule.initial(n)
-    cns_state = CnsState.initial(n)
+    cns_state = CnsState.initial(n, cns.communication)
     eps = 1e-9
     ts: list[float] = []
     tracks: list[list[tuple[float, float]]] = [[], []]

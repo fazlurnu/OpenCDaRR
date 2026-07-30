@@ -13,7 +13,7 @@ level exports what a contributor needs to *write* one and *run* it against the b
   ``NoiseDistribution``;
 - **reference implementations** to compare against — ``StateBased``, ``MVP``, ``VO``, ``PastCPA``,
   ``FTR``, ``ProbabilisticFTR``, ``Multirotor``, ``FixedWing``, ``GnssNavigation``, ``Comm``,
-  ``LastKnown``;
+  ``TransceiverComm``, ``LastKnown``;
 - **runners and estimators** — ``run_encounter``, ``run_fleet``, ``estimate_ipr``,
   ``estimate_rare_prob``, ``run_one_experiment``;
 - **the values you construct** — ``AircraftState``, ``MotionCommand``, ``Performance``, ``Agent``,
@@ -45,7 +45,7 @@ from opencdarr.cns.base import (
     NoiseDistribution,
     SurveillanceModel,
 )
-from opencdarr.cns.communication import Comm
+from opencdarr.cns.communication import Comm, TransceiverComm
 from opencdarr.cns.navigation import GnssNavigation
 from opencdarr.cns.surveillance import LastKnown
 from opencdarr.config import Config, load_config
@@ -117,6 +117,7 @@ __all__ = [
     "StateBased",
     "Sweep",
     "SurveillanceModel",
+    "TransceiverComm",
     "WindField",
     "__version__",
     "combine_ipr",

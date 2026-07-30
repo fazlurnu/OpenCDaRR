@@ -71,9 +71,17 @@ class CnsState:
     last_tx: tuple[AircraftState | None, ...] = ()
 
     @staticmethod
-    def initial(n: int) -> CnsState:
-        """The state at ``t = 0``: nothing delivered, nobody has transmitted yet."""
-        return CnsState(comm=CommState(), last_tx=(None,) * n)
+    def initial(n: int, communication: CommunicationModel | None = None) -> CnsState:
+        """The state at ``t = 0``: nothing delivered, nobody has transmitted yet.
+
+        The comm layer's own starting value comes from the *model*
+        (:meth:`~opencdarr.cns.base.CommunicationModel.initial_state`), so a stateful model finds
+        its own :class:`~opencdarr.cns.base.CommState` subclass already in place on the first tick.
+        Omitting the model (or running without one) gives the plain default, which is what the
+        perfect-delivery path uses.
+        """
+        comm = communication.initial_state() if communication is not None else CommState()
+        return CnsState(comm=comm, last_tx=(None,) * n)
 
 
 @dataclass(frozen=True)

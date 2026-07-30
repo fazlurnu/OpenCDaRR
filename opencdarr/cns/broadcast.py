@@ -7,10 +7,16 @@ broadcast clock the fleet loop threads. This mirrors the ADS-B reception model's
 transmission timing (period + jitter) from the reception probability (the channel). The clock is a
 plain ``list[float]`` so it clones with the rest of the run state (ADR 0001). See
 ``vault/observations/broadcast-phase-offset.md`` and ``broadcast-jitter.md``.
+
+The cadence has one stored spelling — ``interval``, in seconds — with
+:meth:`BroadcastSchedule.at_rate` as the Hz-facing constructor, and :func:`schedule_for` as the
+single place both estimators turn a :class:`~opencdarr.config.Config`'s transmit settings into a
+schedule.
 """
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -59,6 +65,23 @@ class BroadcastSchedule:
                 f"jitter must be < interval ({self.interval}), got {self.jitter}"
             )
 
+    @classmethod
+    def at_rate(
+        cls, rate: float, *, phase: Sequence[float] | None = None, jitter: float = 0.0
+    ) -> BroadcastSchedule:
+        """The same schedule written as a **rate in Hz**: ``at_rate(2.0)`` transmits every 0.5 s.
+
+        A named constructor rather than a second field, so ``interval`` stays the one stored
+        spelling of the cadence and the contradiction ``BroadcastSchedule(interval=1.0, rate=2.0)``
+        is **unrepresentable** rather than validated — the same reason
+        :class:`~opencdarr.experiment.MC` and :class:`~opencdarr.experiment.IPS` each carry only
+        their own estimator's parameters. Equality, ``repr`` and the cache identity therefore see
+        one number however it was written.
+        """
+        if not math.isfinite(rate) or rate <= 0.0:
+            raise ValueError(f"rate must be a finite frequency > 0 [Hz], got {rate}")
+        return cls(interval=1.0 / rate, phase=phase, jitter=jitter)
+
     def initial(self, n: int) -> list[float]:
         """The per-aircraft broadcast clock at ``t = 0``: the phase offsets, or aligned at 0."""
         if self.phase is None:
@@ -84,3 +107,27 @@ class BroadcastSchedule:
                 )
             step += float(rng.uniform(-self.jitter, self.jitter))
         return clock_i + step
+
+
+def schedule_for(
+    n: int,
+    interval: float,
+    rng: np.random.Generator,
+    *,
+    jitter: float = 0.0,
+    random_phase: bool = False,
+) -> BroadcastSchedule:
+    """One encounter's transmit schedule, drawing the phase offsets if they are asked for.
+
+    The single place both estimators build a schedule from a :class:`~opencdarr.config.Config`, so
+    plain MC and IPS agree on the transmit timing **by construction** rather than by two call sites
+    staying in step — the asymmetry that let ``broadcast_interval`` reach one backend and not the
+    other (see ``vault/run-experiment-todo.md`` item 11).
+
+    ``rng`` is drawn from **only** when ``random_phase`` is set, and then only after the caller has
+    finished with it — both estimators pass the generator their geometry was sampled from, whose
+    remaining stream nothing else uses. So turning the phase on appends draws rather than shifting
+    any that already existed, and every number from a fixed-phase run is unmoved.
+    """
+    phase = random_broadcast_phase(n, interval, rng) if random_phase else None
+    return BroadcastSchedule(interval=interval, phase=phase, jitter=jitter)

@@ -57,6 +57,7 @@ from opencdarr import cache, registry
 from opencdarr.cache import DEFAULT_CACHE_DIR
 from opencdarr.cd.base import ConflictDetector
 from opencdarr.cns.base import CommunicationModel, NavigationModel, SurveillanceModel
+from opencdarr.cns.broadcast import schedule_for
 from opencdarr.config import Config
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr.base import RecoveryCriterion
@@ -76,7 +77,10 @@ from opencdarr.scenario import sample_pairwise
 
 _SCENARIO_FIELDS = frozenset({"speed", "dcpa_max", "tlos", "pos_ci95", "vel_ci95"})
 _CONFLICT_FIELDS = frozenset({"rpz", "t_lookahead"})
-_SIMULATION_FIELDS = frozenset({"dt", "t_max", "done_timeout", "broadcast_interval"})
+_SIMULATION_FIELDS = frozenset(
+    {"dt", "t_max", "done_timeout", "broadcast_interval", "broadcast_jitter",
+     "broadcast_random_phase"}
+)
 _GEOMETRY_SLOTS = frozenset({"dpsi", "dcpa", "side", "gs_intr"})
 _COMPONENTS = frozenset(
     {"detector", "resolver", "recovery", "navigation", "communication", "surveillance",
@@ -312,8 +316,9 @@ def _run_ips(condition: Condition, base: Config, methods: Methods, backend: IPS,
     perf = m.perf if m.perf is not None else _require_perf()
 
     def build_initial(seq: np.random.SeedSequence) -> Particle:
+        geom_rng = generator(seq)
         own, intr = sample_pairwise(
-            generator(seq),
+            geom_rng,
             speed=cfg.scenario.speed, dcpa_max=cfg.scenario.dcpa_max, tlos=cfg.scenario.tlos,
             rpz=cfg.conflict.rpz, pos_ci95=cfg.scenario.pos_ci95,
             vel_ci95=cfg.scenario.vel_ci95, **geometry,
@@ -324,6 +329,15 @@ def _run_ips(condition: Condition, base: Config, methods: Methods, backend: IPS,
             dt=cfg.simulation.dt, detector=m.detector, resolver=m.resolver, recovery=m.recovery,
             navigation=m.navigation, communication=m.communication, surveillance=m.surveillance,
             t_max=cfg.simulation.t_max, done_timeout=cfg.simulation.done_timeout,
+            # the transmit timing, which this call omitted entirely: build_env then fell back to
+            # the 1 s default, so a declared broadcast_interval reached MC and was silently
+            # dropped by IPS. Built through the same schedule_for MC uses, so the two cannot
+            # drift apart again (the particle's broadcast stream comes from ips._streams).
+            schedule=schedule_for(
+                len(agents), cfg.simulation.broadcast_interval, geom_rng,
+                jitter=cfg.simulation.broadcast_jitter,
+                random_phase=cfg.simulation.broadcast_random_phase,
+            ),
         )
         return Particle(env=env, state=env.initial_state(agents))
 

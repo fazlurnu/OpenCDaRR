@@ -15,9 +15,10 @@ Two figures, answering two different questions:
   transmitter died" and "OWN's receiver died" sever the *same single link* and are
   indistinguishable in the state; at ``n = 3`` they separate.
 
-All four hazard rates are zero and the outage is imposed on the :class:`~opencdarr.cns.RadioState`
-directly, so the failure lands on the tick we name rather than on a lucky draw — the same trick the
-gate tests in ``tests/test_cns_transceiver.py`` use. Reproduce::
+All four hazard rates are zero and the outage is imposed on the
+:class:`~opencdarr.cns.RadioHealth` gate's state directly, so the failure lands on the tick we name
+rather than on a lucky draw — the same trick the gate tests in
+``tests/test_cns_transceiver.py`` use. Reproduce::
 
     PYTHONPATH=. python scripts/transceiver_outage_demo.py
 
@@ -42,7 +43,9 @@ from opencdarr.cns import (  # noqa: E402
     CnsStreams,
     GnssNavigation,
     LastKnown,
+    RadioHealthState,
     TransceiverComm,
+    radio_health,
 )
 from opencdarr.cns.surveillance import age  # noqa: E402
 from opencdarr.rng import children, generator, root_seed_sequence  # noqa: E402
@@ -73,9 +76,17 @@ def _stack(n: int, noisy: bool) -> tuple[CNS, CnsState, CnsStreams]:
 
 
 def _fail(state: CnsState, aid: str, subsystem: str) -> CnsState:
-    """Put ``aid``'s transmitter or receiver down, leaving the rest of the comm state alone."""
+    """Put ``aid``'s transmitter or receiver down, leaving the rest of the comm state alone.
+
+    The health lives in the `RadioHealth` gate's own state, which rides positionally in
+    ``CommState.gates`` -- so this rebuilds that one gate state and threads the rest through.
+    """
     down = {"tx_down": frozenset({aid})} if subsystem == "tx" else {"rx_down": frozenset({aid})}
-    return replace(state, comm=replace(state.comm, **down))
+    healthy = replace(radio_health(state.comm), **down)
+    gates = tuple(
+        healthy if isinstance(own, RadioHealthState) else own for own in state.comm.gates
+    )
+    return replace(state, comm=replace(state.comm, gates=gates))
 
 
 def _truth(aid: str, t: float) -> AircraftState:
