@@ -44,8 +44,17 @@ from opencdarr.state import AircraftState  # noqa: E402
 
 IMG = Path.home() / "Projects/opencdarr.github.io/docs/assets/img"
 INTERVAL, N_TICKS, SEED = 1.0, 4000, 20260725
-BLUE, RED, ORANGE, PURPLE = "#1f77b4", "#d62728", "#ff7f0e", "#9467bd"
+BLUE, RED, ORANGE, PURPLE, GREY = "#1f77b4", "#d62728", "#ff7f0e", "#9467bd", "0.55"
 SRC = AircraftState(id="SRC", lat=52.0, lon=4.0, trk=0.0, gs=10.0)
+
+# One latency shape across every figure, matching examples/handbook/communication.ipynb.
+LAT_MEDIAN, LAT_SIGMA = 0.2, 0.3
+# The two figures need *different* reception probabilities to say what they say. The latency figure
+# wants the geometric structure visible, so it runs lossy; the jitter figure wants the one-interval
+# bump to dominate, because jitter's effect is the *spread* of that bump — at 0.6 the geometric
+# spread (std ~1.0 s) swamps a ±0.1 s dither entirely and the figure would show nothing.
+RECEPTION_LOSSY, RECEPTION_TIGHT = 0.6, 0.9
+JITTER = 0.1
 
 
 def update_intervals(
@@ -84,7 +93,8 @@ def simulate(reception: float, seed: int) -> tuple[list[float], list[float], lis
     """Run one directed link at ``reception`` probability, broadcasting every ``INTERVAL`` with a
     lognormal delay: per-tick (time, time-since-last-update) and the update intervals between
     successive received messages."""
-    comm = Comm(reception_prob={("SRC", "RCV"): reception}, latency=lognormal_latency(0.1, 0.25))
+    comm = Comm(reception_prob={("SRC", "RCV"): reception},
+                latency=lognormal_latency(LAT_MEDIAN, LAT_SIGMA))
     generator = rng.generator(rng.root_seed_sequence(seed))
     state = CommState()
     times, since_update, received = [], [], []
@@ -149,29 +159,46 @@ def plot(out: Path) -> None:
 
 
 def latency_figure(out: Path) -> None:
-    """The time between messages received by the receiver, with a lognormal(median 0.1 s, σ 0.25)
-    latency at reception 0.9. Left: the full distribution — geometric bumps at multiples of the
-    interval, set by dropped messages. Right: zoomed to the one-interval bump, where the sub-second
-    latency only smears it around one interval, never lengthening it."""
-    ui = update_intervals(0.9, lognormal_latency(0.1, 0.25), BroadcastSchedule(interval=INTERVAL),
-                          SEED)
-    w = np.full(ui.size, 1.0 / ui.size)
-    print(f"        latency ~ lognormal(0.1, 0.25): mean {ui.mean():.3f} s, std {ui.std():.3f} s")
+    """The delay distribution beside what it does downstream. Left: the lognormal itself. Right:
+    the update interval with and without it — without latency every gap is exactly k x interval,
+    so that case is drawn as reference lines rather than three spikes that would flatten the
+    smeared distribution beside them."""
+    schedule = BroadcastSchedule(interval=INTERVAL)
+    sharp = update_intervals(RECEPTION_LOSSY, constant_latency(0.0), schedule, SEED)
+    smeared = update_intervals(RECEPTION_LOSSY,
+                               lognormal_latency(LAT_MEDIAN, LAT_SIGMA), schedule, SEED)
+    generator = rng.generator(rng.root_seed_sequence(SEED))
+    draws = np.array([float(generator.lognormal(np.log(LAT_MEDIAN), LAT_SIGMA))
+                      for _ in range(20000)])
+    print(f"        no latency:  mean update interval {sharp.mean():.3f} s, "
+          f"std {sharp.std():.3f} s")
+    print(f"        lognormal({LAT_MEDIAN}, {LAT_SIGMA}): mean {smeared.mean():.3f} s, "
+          f"std {smeared.std():.3f} s "
+          f"(mean moves {abs(smeared.mean() - sharp.mean()):.3f} s, "
+          f"std +{100 * (smeared.std() / sharp.std() - 1):.0f}%)")
 
-    fig, (a_full, a_zoom) = plt.subplots(1, 2, figsize=(12.0, 5.0))
-    a_full.hist(ui, bins=np.arange(0.5, 4.5, 0.05), weights=w, color=ORANGE)
-    a_full.set_xlabel("time between received messages [s]")
-    a_full.set_ylabel("fraction")
-    a_full.set_xticks(range(1, 5))
-    a_full.set_title("Time between received messages (reception 0.9)", fontsize=10)
-    a_full.set_box_aspect(1)
+    fig, (a_dist, a_gap) = plt.subplots(1, 2, figsize=(12.0, 5.0))
+    a_dist.hist(draws, bins=np.arange(0.0, 1.2, 0.015),
+                weights=np.full(draws.size, 1.0 / draws.size), color=PURPLE)
+    a_dist.axvline(LAT_MEDIAN, color="0.4", ls=":", lw=1.2, label=f"median {LAT_MEDIAN} s")
+    a_dist.set_xlabel("link delay [s]")
+    a_dist.set_ylabel("fraction")
+    a_dist.set_title(f"The delay: lognormal(median {LAT_MEDIAN}, sigma {LAT_SIGMA})", fontsize=10)
+    a_dist.legend(fontsize=8)
+    a_dist.set_box_aspect(1)
 
-    a_zoom.hist(ui, bins=np.arange(0.80, 1.42, 0.01), weights=w, color=ORANGE)
-    a_zoom.axvline(INTERVAL, color="0.6", ls=":", lw=1.2, label="one interval")
-    a_zoom.set_xlabel("time between received messages [s]")
-    a_zoom.set_title("Zoom on the one-interval bump: latency smears it", fontsize=10)
-    a_zoom.legend(fontsize=8)
-    a_zoom.set_box_aspect(1)
+    for k in range(1, 5):
+        a_gap.axvline(k * INTERVAL, color=GREY, ls="--", lw=1.2,
+                      label="no latency: exactly k x interval" if k == 1 else None)
+    a_gap.hist(smeared, bins=np.arange(0.5, 4.5, 0.04),
+               weights=np.full(smeared.size, 1.0 / smeared.size), color=PURPLE,
+               label="with the delay above")
+    a_gap.set_xlabel("update interval [s]")
+    a_gap.set_ylabel("fraction")
+    a_gap.set_xticks(range(1, 5))
+    a_gap.set_title(f"Effect on the update interval (reception {RECEPTION_LOSSY})", fontsize=10)
+    a_gap.legend(fontsize=8)
+    a_gap.set_box_aspect(1)
 
     fig.tight_layout()
     fig.savefig(out, dpi=130)
@@ -182,11 +209,11 @@ def jitter_figure(out: Path) -> None:
     """Broadcast jitter's effect on the update interval, in two panels: jitter alone spreads each
     geometric bump around its multiple of the interval; adding the realistic latency on top changes
     it negligibly (the spread is jitter's, not the channel's)."""
-    jit = BroadcastSchedule(interval=INTERVAL, jitter=0.1)
-    panels = [("jitter ±0.1 s", constant_latency(0.0), PURPLE),
-              ("jitter ±0.1 s + latency ~ lognormal(0.1, 0.25)", lognormal_latency(0.1, 0.25),
-               ORANGE)]
-    runs = [update_intervals(0.9, latency, jit, SEED) for _, latency, _ in panels]
+    jit = BroadcastSchedule(interval=INTERVAL, jitter=JITTER)
+    panels = [(f"jitter ±{JITTER} s", constant_latency(0.0), PURPLE),
+              (f"jitter ±{JITTER} s + latency ~ lognormal({LAT_MEDIAN}, {LAT_SIGMA})",
+               lognormal_latency(LAT_MEDIAN, LAT_SIGMA), ORANGE)]
+    runs = [update_intervals(RECEPTION_TIGHT, latency, jit, SEED) for _, latency, _ in panels]
     for (label, _, _), ui in zip(panels, runs, strict=True):
         print(f"        [{label}]: mean {ui.mean():.2f} s, std {ui.std():.2f} s")
 
