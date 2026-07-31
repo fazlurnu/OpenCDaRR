@@ -290,7 +290,54 @@ wrong object.
 Found while writing `examples/handbook/resolver_comparison.ipynb`, by an assertion that a cached
 re-run of a sweep reproduces the uncached one. Worth keeping that assertion in the notebook.
 
-## 9. Smaller things, noted in passing
+## 9. Three docstrings name `level` as the importance function; IPS never calls it
+
+**Documentation defect, not a behaviour bug — the right quantity is being used.** But it
+misdescribes the extension interface, which is exactly the surface the v1 contributor audience is
+pointed at.
+
+Three places describe the estimator seam as `advance` / `level` / `is_terminal`:
+
+- `fleet.py:26` — "`level` is the importance function (minimum pairwise separation)"
+- `ips.py:3` — "multilevel splitting over the fleet estimator interface (`advance / level /
+  is_terminal`)"
+- `fleet.py:511` — "IPS replaces this loop with resample-and-split over the *same* `advance` /
+  `level` / `is_terminal`"
+
+`ips.py` calls **none** of them. `_evolve_to_shell` reads `state.min_sep` directly, and
+`resample_level` selects on `p.state.min_sep <= target`. Grepping the tree, `fleet.level` has no
+production caller at all — only `tests/test_fleet_interface.py` exercises it.
+
+**The two are different quantities, and the difference is the whole point of ADR 0017.**
+`level(state)` returns `_pairwise_min_sep(state.states)`, the separation **at that instant**.
+`state.min_sep` is the **running minimum** over the run so far. ADR 0017 §"running-min level
+function" chose the running minimum deliberately: the instantaneous separation is *non-monotone*, so
+a particle would cross a shell going in and cross it again coming out — ambiguous for splitting.
+The running minimum is monotone non-increasing by construction, so a crossing is permanent.
+
+So the docstrings name the function ADR 0017 explicitly **rejected**. A contributor writing a custom
+environment against that stated interface would implement `level` faithfully, find IPS ignoring it,
+and have no way to know their importance function was never consulted.
+
+Two candidate fixes, not yet chosen:
+
+- **Re-document.** Say the interface is `advance` / `is_terminal` plus the `min_sep` accumulator on
+  the state, and demote `level` to what it is — an instantaneous read used by tests. Smallest change,
+  but it leaves a public function with no caller.
+- **Make `level` the real seam.** Have `ips.py` call it, redefined to return the running minimum, so
+  the importance function is genuinely pluggable — which is what a Phase-8 refinement to a
+  look-ahead coordinate would need anyway (`scripts/ips_unified_validate.py` already prototypes
+  exactly that with its own `LookaheadCoord.in_level`). Larger, and it must not move any number.
+
+The second is the better shape if the importance function is ever going to be swappable, and
+[[important-ips-gap]] argues it will need to be. `tests/test_fleet_interface.py:100` already
+documents the instant-vs-accumulated distinction correctly, so the test suite is not part of the
+problem.
+
+Found 2026-07-31 while tracing what the environment actually hands back to IPS for the handbook's
+architecture diagram.
+
+## 10. Smaller things, noted in passing
 
 - **`test_every_sampled_encounter_is_a_conflict` passed by accident** of its config
   (`tlos < t_lookahead`), not by construction. Re-documented and given an explicit precondition

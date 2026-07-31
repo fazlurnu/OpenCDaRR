@@ -1,7 +1,7 @@
 # observations
 
 Research observations — one note per finding, each linked to the experiment that demonstrates it.
-32 notes so far, with their figures in `img/`.
+34 notes so far, with their figures in `img/`.
 
 This directory replaced `my-observation.md`, a single running file from the previous effort. That
 file is gone; where a note refers to a numbered item from it (the signed-tCPA / balanced-criteria
