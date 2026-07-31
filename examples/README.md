@@ -64,6 +64,11 @@ above — one module per notebook — and several of them generate the figures t
 - [`handbook/communication.ipynb`](handbook/communication.ipynb) — the **C** of CNS: broadcast
   cadence, phase and jitter; reception probability and the update interval it produces; latency
   shapes; and the two seams for extending the channel.
+- [`handbook/resolver_comparison.ipynb`](handbook/resolver_comparison.ipynb) — MVP against VO as
+  the crossing gets shallow and the position fix gets worse, declared as one `run_experiment` sweep
+  over sixteen conditions. Builds up from a single encounter to the full grid, and reports two
+  metrics rather than one: P(LoS) for how often separation was lost, and the median achieved
+  minimum separation for how much room was left when it was not.
 - [`handbook/rare_event_ips.ipynb`](handbook/rare_event_ips.ipynb) — running the interacting
   particle system (IPS) estimator in `opencdarr.ips` on a loss of separation too rare for plain
   Monte Carlo, parallelised across replications and particles with `opencdarr.parallel`.
