@@ -199,6 +199,8 @@ def estimate_ipr(
             rpz=config.conflict.rpz,
             pos_ci95=config.scenario.pos_ci95,
             vel_ci95=config.scenario.vel_ci95,
+            pos_ci95_declared=config.scenario.pos_ci95_declared,
+            vel_ci95_declared=config.scenario.vel_ci95_declared,
             dpsi=dpsi,
             dcpa=dcpa,
             side=side,

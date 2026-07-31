@@ -21,8 +21,12 @@ class ScenarioConfig:
     speed: float  # ground speed [m/s]
     dcpa_max: float  # miss distance sampled in [0, dcpa_max] [m]
     tlos: float  # time to loss of separation [s]
-    pos_ci95: float = 0.0  # declared position measurement accuracy, 95% radial [m] (0 = perfect)
-    vel_ci95: float = 0.0  # declared velocity measurement accuracy, 95% radial [m/s] (0 = perfect)
+    pos_ci95: float = 0.0  # actual position measurement accuracy, 95% radial [m] (0 = perfect)
+    vel_ci95: float = 0.0  # actual velocity measurement accuracy, 95% radial [m/s] (0 = perfect)
+    # what the broadcast claims instead; None (default) = claim the truth. Sweep against the two
+    # above to study an over- or under-confident declaration (AircraftState's docstring).
+    pos_ci95_declared: float | None = None
+    vel_ci95_declared: float | None = None
 
 
 @dataclass(frozen=True)

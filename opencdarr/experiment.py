@@ -60,6 +60,7 @@ from opencdarr.cns.base import CommunicationModel, NavigationModel, Surveillance
 from opencdarr.cns.broadcast import schedule_for
 from opencdarr.config import Config
 from opencdarr.cr.base import ConflictResolver
+from opencdarr.crr import ProbabilisticFTR
 from opencdarr.crr.base import RecoveryCriterion
 from opencdarr.estimator import IPRResult, estimate_ipr
 from opencdarr.fleet import Agent, build_env
@@ -75,7 +76,10 @@ from opencdarr.scenario import sample_pairwise
 # actually thread today, not an aspiration. An unknown key fails immediately with this list in the
 # message, which is a better contributor experience than a silently ignored keyword.
 
-_SCENARIO_FIELDS = frozenset({"speed", "dcpa_max", "tlos", "pos_ci95", "vel_ci95"})
+_SCENARIO_FIELDS = frozenset(
+    {"speed", "dcpa_max", "tlos", "pos_ci95", "vel_ci95",
+     "pos_ci95_declared", "vel_ci95_declared"}
+)
 _CONFLICT_FIELDS = frozenset({"rpz", "t_lookahead"})
 _SIMULATION_FIELDS = frozenset(
     {"dt", "t_max", "done_timeout", "broadcast_interval", "broadcast_jitter",
@@ -286,6 +290,60 @@ def _resolved_methods(condition: Condition, methods: Methods) -> Methods:
     return dataclasses.replace(methods, **overrides) if overrides else methods
 
 
+def _reads_declared_accuracy(recovery: RecoveryCriterion | None) -> bool:
+    """Whether ``recovery`` sizes anything from an aircraft's declared ``pos_ci95``/``vel_ci95``.
+
+    Only :class:`~opencdarr.crr.ProbabilisticFTR` does today (it builds a covariance from them,
+    ``crr/probabilistic_ftr.py``); :class:`~opencdarr.crr.FTR` and
+    :class:`~opencdarr.crr.PastCPA` are certain-kinematics and ignore both. Kept as one named
+    predicate rather than an inline ``isinstance`` so a contributed ci95-reading criterion has a
+    single place to be added — the honest limit being that until it is added, such a criterion
+    trips :func:`_validate_declared_accuracy_is_read` and has to declare its accuracy some other
+    way.
+    """
+    return isinstance(recovery, ProbabilisticFTR)
+
+
+def _validate_declared_accuracy_is_read(
+    conditions: Sequence[Condition], base: Config, methods: Methods
+) -> None:
+    """Raise if any condition declares an accuracy that nothing in its stack will read.
+
+    ``pos_ci95``/``vel_ci95`` have exactly two consumers: a
+    :class:`~opencdarr.cns.base.NavigationModel`, which draws the error from them, and
+    :class:`~opencdarr.crr.ProbabilisticFTR`, which sizes its uncertainty from them. With neither
+    in the stack the fields are stamped onto every :class:`~opencdarr.state.AircraftState`, carried
+    through the whole run, and never read — so ``pos_ci95=Sweep([0, 10, 20, 40])`` returns four
+    **bit-identical** cells and the table reads "navigation accuracy has no effect on safety". That
+    is a publishable-looking null result produced by a no-op, and it has already happened once
+    (``vault/todo-might-be-a-bug.md`` §7: a comm-outage sweep flat at P(LoS) = 0 because the
+    declaration was missing ``navigation``; adding it turned the same sweep into 0.060 -> 0.437).
+
+    Deliberately a *contradiction* check and not an implication: a declared accuracy read only by
+    :class:`~opencdarr.crr.ProbabilisticFTR`, with no noise model present, is a valid — if unusual
+    — configuration, so neither field may quietly imply a navigation model (§7's own ruling).
+
+    Checked per condition after :func:`expand`, because ``pos_ci95``, ``navigation`` and
+    ``recovery`` can each be swept independently: a sweep over navigation models that includes
+    ``None`` is legitimate everywhere except where the accuracy is non-zero.
+    """
+    for condition in conditions:
+        scenario = _config_for(condition, base, base.n_encounters).scenario
+        if scenario.pos_ci95 == 0.0 and scenario.vel_ci95 == 0.0:
+            continue
+        resolved = _resolved_methods(condition, methods)
+        if resolved.navigation is not None or _reads_declared_accuracy(resolved.recovery):
+            continue
+        where = f" at {condition.label}" if condition.levels else ""
+        raise ValueError(
+            f"pos_ci95={scenario.pos_ci95}, vel_ci95={scenario.vel_ci95} declared{where}, but "
+            "nothing reads them: this condition has no navigation model to draw the error and no "
+            "ci95-reading recovery criterion. Every cell would come out identical. Pass "
+            "methods=Methods(..., navigation=GnssNavigation()), or set the accuracy to 0.0 if a "
+            "perfect sensor is what you meant."
+        )
+
+
 def _run_mc(condition: Condition, base: Config, methods: Methods, backend: MC,
             seed: int) -> IPRResult:
     """One MC cell: ``estimate_ipr`` over this condition's config, components and geometry pins."""
@@ -321,7 +379,9 @@ def _run_ips(condition: Condition, base: Config, methods: Methods, backend: IPS,
             geom_rng,
             speed=cfg.scenario.speed, dcpa_max=cfg.scenario.dcpa_max, tlos=cfg.scenario.tlos,
             rpz=cfg.conflict.rpz, pos_ci95=cfg.scenario.pos_ci95,
-            vel_ci95=cfg.scenario.vel_ci95, **geometry,
+            vel_ci95=cfg.scenario.vel_ci95,
+            pos_ci95_declared=cfg.scenario.pos_ci95_declared,
+            vel_ci95_declared=cfg.scenario.vel_ci95_declared, **geometry,
         )
         agents = [
             Agent(own, perf, kinematics=m.kinematics),
@@ -786,6 +846,7 @@ def run_experiment(
     ``card_dir`` writes one provenance card for the run; ``None`` (default) writes nothing.
     """
     conditions = expand(independent_vars)
+    _validate_declared_accuracy_is_read(conditions, base_config, methods)
     axes = tuple(
         (axis.name or key)
         for key, axis in independent_vars.items()

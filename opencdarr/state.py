@@ -149,14 +149,31 @@ class AircraftState:
         :class:`DesiredVelocity` documents its privacy. Intent-based recovery reads it; the
         certain-kinematics algorithms (detection, resolution, past-CPA) ignore it.
     pos_ci95, vel_ci95:
-        The aircraft's own **declared measurement accuracy** (95% radial position [m] / velocity
-        [m/s]) — a property of *this* aircraft's sensor, not a fixed simulation-wide constant.
-        It lives here, not on the navigation model, for the same reason ``bank`` does: it can
-        differ per aircraft and evolve over a run (e.g. degrading GPS coverage), so it must travel
-        with the state to clone correctly. :class:`~opencdarr.cns.GnssNavigation` reads these off
-        the aircraft being measured and copies them onto the broadcast — accuracy is declared
+        The aircraft's **actual measurement accuracy** (95% radial position [m] / velocity [m/s])
+        — a property of *this* aircraft's sensor, not a fixed simulation-wide constant. It lives
+        here, not on the navigation model, for the same reason ``bank`` does: it can differ per
+        aircraft and evolve over a run (e.g. degrading GPS coverage), so it must travel with the
+        state to clone correctly. :class:`~opencdarr.cns.GnssNavigation` draws its error from
+        these. Zero (default) means a perfect, noiseless sensor.
+
+        On a state that came off the wire these hold the *declared* accuracy instead — a broadcast
+        carries one number, the sender's claim, which is what a receiver reads and what
+        :class:`~opencdarr.crr.ProbabilisticFTR` sizes its covariance from. Accuracy is declared
         metadata a receiver gets *with* the message, not something it has to be told separately.
-        Zero (default) means a perfect, noiseless sensor.
+    pos_ci95_declared, vel_ci95_declared:
+        What this aircraft's broadcast **claims** its accuracy is, or ``None`` (default) to claim
+        the truth — so an honest transmitter needs no second number and every existing scenario is
+        unchanged. Set them to something other than ``pos_ci95``/``vel_ci95`` to study the
+        mismatch: an over-confident declaration is the integrity failure RAIM exists to catch (the
+        fix is worse than advertised and nothing downstream knows), an under-confident one is a
+        transmitter derating itself. Only a *true* state ever needs both numbers; the measured
+        state :class:`~opencdarr.cns.GnssNavigation` broadcasts carries just the claim, in
+        ``pos_ci95``/``vel_ci95``.
+
+        A single scalar can carry *scale* but never *shape*, so a declaration already fails to
+        describe an anisotropic or heavy-tailed error even when it is perfectly honest
+        (``cns/noise_distributions.py``). These fields are about the scale disagreeing on purpose,
+        which is a different thing and independently sweepable.
     flight_time:
         Seconds this aircraft has been advanced (odometry accumulator, ADR 0010). Every
         :class:`~opencdarr.kinematics.Kinematics` step adds ``dt``. A diagnostic (no kinematics
@@ -179,6 +196,8 @@ class AircraftState:
     desired: DesiredVelocity | None = None
     pos_ci95: float = 0.0
     vel_ci95: float = 0.0
+    pos_ci95_declared: float | None = None
+    vel_ci95_declared: float | None = None
     flight_time: float = 0.0
     distance_flown: float = 0.0
 
@@ -194,6 +213,8 @@ def create_aircraft(
     bank: float = 0.0,
     pos_ci95: float = 0.0,
     vel_ci95: float = 0.0,
+    pos_ci95_declared: float | None = None,
+    vel_ci95_declared: float | None = None,
 ) -> AircraftState:
     """Create an :class:`AircraftState`, validating it against the flight envelope.
 
@@ -216,7 +237,14 @@ def create_aircraft(
         )
     if pos_ci95 < 0.0 or vel_ci95 < 0.0:
         raise ValueError(f"pos_ci95/vel_ci95 must be >= 0; got {pos_ci95=}, {vel_ci95=}")
+    # a declaration may disagree with the truth in either direction, but not be negative --
+    # `None` is how an honest transmitter says "the same", not a sentinel for "unset"
+    declared = {"pos_ci95_declared": pos_ci95_declared, "vel_ci95_declared": vel_ci95_declared}
+    negative = {k: v for k, v in declared.items() if v is not None and v < 0.0}
+    if negative:
+        raise ValueError(f"declared accuracy must be >= 0; got {negative}")
     return AircraftState(
         id=id, lat=lat, lon=lon, trk=trk, gs=gs, bank=bank,
         pos_ci95=pos_ci95, vel_ci95=vel_ci95,
+        pos_ci95_declared=pos_ci95_declared, vel_ci95_declared=vel_ci95_declared,
     )

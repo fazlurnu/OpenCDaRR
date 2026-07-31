@@ -29,6 +29,11 @@ class GnssNavigation(NavigationModel):
     ``(east, north)`` error. Position and velocity are separate quantities from the same receiver
     (pseudorange vs Doppler), so they take independent distributions
     (see ``vault/derivations/gps-noise.md``).
+
+    The error is drawn from the aircraft's **actual** accuracy and the broadcast carries its
+    **declared** one. They are the same number unless the aircraft sets
+    ``pos_ci95_declared``/``vel_ci95_declared``, which is how a mismatch between what a sensor
+    delivers and what its transponder claims is expressed — see :meth:`measure`.
     """
 
     def __init__(
@@ -53,9 +58,14 @@ class GnssNavigation(NavigationModel):
         trk = math.degrees(math.atan2(ve, vn)) % 360.0
         gs = math.hypot(ve, vn)
 
-        # the broadcast declares the same accuracy the sensor had when it took this measurement
+        # The broadcast declares *one* accuracy -- the sender's claim, which is what a receiver
+        # reads. That is the accuracy the sensor actually had unless the aircraft says otherwise
+        # (`pos_ci95_declared`/`vel_ci95_declared`, `None` = honest), so the error above is drawn
+        # from the truth while the message carries the claim. The two agreeing is the default and
+        # the ordinary case; them disagreeing is the integrity failure RAIM exists to catch.
         measured = AircraftState(
             id=true.id, lat=lat, lon=lon, trk=trk, gs=gs,
-            pos_ci95=true.pos_ci95, vel_ci95=true.vel_ci95,
+            pos_ci95=true.pos_ci95 if true.pos_ci95_declared is None else true.pos_ci95_declared,
+            vel_ci95=true.vel_ci95 if true.vel_ci95_declared is None else true.vel_ci95_declared,
         )
         return Message(source=true.id, state=measured, t_meas=t)

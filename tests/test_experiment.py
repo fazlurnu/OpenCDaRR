@@ -34,13 +34,15 @@ from opencdarr.config import (
 )
 from opencdarr.cr import MVP, VO
 from opencdarr.cr.base import ConflictResolver
-from opencdarr.crr import PastCPA
+from opencdarr.crr import PastCPA, ProbabilisticFTR
 from opencdarr.estimator import IPRResult
 from opencdarr.experiment import (
     IPS,
     MC,
+    Axis,
     CacheConfig,
     CacheIdentityError,
+    ExperimentResult,
     Fixed,
     Methods,
     Sweep,
@@ -504,3 +506,83 @@ def test_run_one_experiment_rejects_an_unknown_component_name() -> None:
     )
     with pytest.raises(ValueError, match="unknown detector"):
         run_one_experiment(cfg, card_dir=None)
+
+
+# --- a declared accuracy nothing reads ---------------------------------------------------------
+# `pos_ci95` / `vel_ci95` are read only by a NavigationModel (which draws the error) and by
+# ProbabilisticFTR (which sizes uncertainty). With neither present they are inert, every cell of a
+# sweep comes out bit-identical, and the table reads "accuracy does not affect safety" -- a
+# publishable-looking null result produced by a no-op (vault/todo-might-be-a-bug.md §7).
+
+
+def _mc(ivars: dict[str, Axis], methods: Methods) -> ExperimentResult:
+    return run_experiment(
+        ivars, methods=methods, backend=MC(n_encounters=1), base_config=_base(), seed=0
+    )
+
+
+def test_an_accuracy_sweep_with_nothing_to_read_it_is_rejected() -> None:
+    """The exact declaration that produced §7's flat sweep, and the reason this check exists."""
+    with pytest.raises(ValueError, match="nothing reads them"):
+        _mc({"pos_ci95": Sweep([0.0, 10.0, 40.0])}, _methods(navigation=None))
+
+
+def test_the_rejection_names_the_offending_condition() -> None:
+    """A sweep is rejected per *cell*, so the message says which one -- the zero cell is fine."""
+    with pytest.raises(ValueError, match=r"pos_ci95=10\.0.*\{'pos_ci95': 10\.0\}"):
+        _mc({"pos_ci95": Sweep([0.0, 10.0])}, _methods(navigation=None))
+
+
+def test_velocity_accuracy_alone_is_enough_to_be_rejected() -> None:
+    with pytest.raises(ValueError, match="nothing reads them"):
+        _mc({"vel_ci95": Fixed(2.0)}, _methods(navigation=None))
+
+
+def test_an_accuracy_from_the_base_config_is_checked_too() -> None:
+    """The accuracy need not be declared as an axis to be inert -- base_config counts."""
+    base = dataclasses.replace(
+        _base(), scenario=ScenarioConfig("M600", 10.2889, 50.0, 90.0, pos_ci95=40.0)
+    )
+    with pytest.raises(ValueError, match="nothing reads them"):
+        run_experiment(
+            {}, methods=_methods(navigation=None), backend=MC(n_encounters=1),
+            base_config=base, seed=0,
+        )
+
+
+def test_a_navigation_model_makes_the_accuracy_legitimate() -> None:
+    assert len(_mc({"pos_ci95": Sweep([0.0, 40.0])}, _methods(navigation=GnssNavigation()))) == 2
+
+
+def test_probabilistic_ftr_alone_makes_the_accuracy_legitimate() -> None:
+    """Not an implication: a declared accuracy read only by ProbabilisticFTR, with no noise model,
+    is a valid configuration rather than a mistake (§7's own ruling)."""
+    result = _mc({"pos_ci95": Fixed(40.0)}, _methods(navigation=None, recovery=ProbabilisticFTR()))
+    assert len(result) == 1
+
+
+def test_only_the_conditions_missing_a_consumer_are_rejected() -> None:
+    """Why the check runs per condition: navigation is itself sweepable, so a sweep that includes
+    ``None`` is legitimate everywhere the accuracy is zero and a mistake only where it is not."""
+    with pytest.raises(ValueError, match=r"\{'navigation': None\}"):
+        _mc(
+            {"pos_ci95": Fixed(40.0), "navigation": Sweep([GnssNavigation(), None])},
+            _methods(navigation=None),
+        )
+
+
+def test_a_zero_accuracy_needs_no_consumer() -> None:
+    """A perfect sensor declared with no navigation model is the default MC path, not a mistake."""
+    assert len(_mc({"pos_ci95": Fixed(0.0)}, _methods(navigation=None))) == 1
+
+
+def test_the_declaration_is_a_declarable_axis() -> None:
+    """``pos_ci95_declared`` reaches ``sample_pairwise`` like any other scenario field, so the
+    mismatch is swept with the existing machinery rather than a special path. The end-to-end
+    consequence is pinned in ``test_cns_navigation.py``, which is far cheaper than an MC sweep."""
+    result = _mc(
+        {"pos_ci95": Fixed(40.0), "pos_ci95_declared": Sweep([5.0, 200.0])},
+        _methods(navigation=GnssNavigation()),
+    )
+    assert len(result) == 2
+    assert result.axes == ("pos_ci95_declared",)

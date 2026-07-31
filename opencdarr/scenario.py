@@ -82,7 +82,14 @@ def create_conflict(
     ci95_p = own.pos_ci95 if pos_ci95 is None else pos_ci95
     ci95_v = own.vel_ci95 if vel_ci95 is None else vel_ci95
     return AircraftState(
-        id=intr_id, lat=lat, lon=lon, trk=psi_i, gs=gs_i, pos_ci95=ci95_p, vel_ci95=ci95_v
+        id=intr_id, lat=lat, lon=lon, trk=psi_i, gs=gs_i, pos_ci95=ci95_p, vel_ci95=ci95_v,
+        # The intruder always inherits the ownship's *declaration policy*, with no override
+        # parameter of its own: ``None`` already means "declare honestly" on the state, so it
+        # cannot double as the "inherit from own" sentinel the two above use. An asymmetric study
+        # -- one aircraft over-declaring while the other is honest -- would need a real sentinel,
+        # and there is no second implementation asking for one yet.
+        pos_ci95_declared=own.pos_ci95_declared,
+        vel_ci95_declared=own.vel_ci95_declared,
     )
 
 
@@ -118,6 +125,8 @@ def sample_pairwise(
     intr_id: str = "INT",
     pos_ci95: float = 0.0,
     vel_ci95: float = 0.0,
+    pos_ci95_declared: float | None = None,
+    vel_ci95_declared: float | None = None,
 ) -> tuple[AircraftState, AircraftState]:
     """Draw one pairwise encounter from the seeded generator.
 
@@ -148,8 +157,12 @@ def sample_pairwise(
     same order regardless of which are used, so the tree never moves. The cost is a couple of
     discarded ``uniform`` calls.
 
-    ``pos_ci95``/``vel_ci95`` set both aircraft's declared measurement accuracy (default 0 =
+    ``pos_ci95``/``vel_ci95`` set both aircraft's **actual** measurement accuracy (default 0 =
     perfect); the intruder inherits the ownship's via :func:`create_conflict`.
+    ``pos_ci95_declared``/``vel_ci95_declared`` set what their broadcasts claim instead, ``None``
+    (default) claiming the truth — swept against the two above, that is the over- or
+    under-confident-declaration experiment. Both aircraft share one declaration policy, for the
+    reason :func:`create_conflict` records.
 
     Note that the near-0/360 exclusion band (``_DPSI_MIN``) constrains only the *built-in* angle
     draw, which avoids near-parallel geometries whose closing speed is degenerate. A pinned or
@@ -170,7 +183,8 @@ def sample_pairwise(
     gs_intr_v = None if gs_intr is None else _resolve(gs_intr, rng, float("nan"))
 
     own = AircraftState(
-        id=own_id, lat=52.0, lon=4.0, trk=0.0, gs=speed, pos_ci95=pos_ci95, vel_ci95=vel_ci95
+        id=own_id, lat=52.0, lon=4.0, trk=0.0, gs=speed, pos_ci95=pos_ci95, vel_ci95=vel_ci95,
+        pos_ci95_declared=pos_ci95_declared, vel_ci95_declared=vel_ci95_declared,
     )
     intr = create_conflict(
         own, intr_id=intr_id, dpsi=dpsi_v, dcpa=dcpa_v, tlos=tlos, rpz=rpz, side=side_v,

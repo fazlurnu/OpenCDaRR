@@ -13,6 +13,16 @@ percentile of the 2D radial error equals ``ci95``. The calibrating scale is
 solved once per ``ci95`` by bisection and cached in the factory's closure, so the
 per-sample calls the navigation layer makes stay cheap.
 
+Every distribution here also draws a **constant** number of times, whatever
+``ci95`` is -- including zero, where the error is exactly ``(0.0, 0.0)`` but the
+draws still happen. ``pos_ci95 = Sweep([0, 10, 20, 40])`` would otherwise run its
+first cell on a different stream from the rest, so the cells would stop being
+comparable (ADR 0006 §6 -- the same rule
+:meth:`~opencdarr.cns.base.LinkGate.evolve` states for the channel, and the one
+``sample_pairwise``'s pinned slots exist to keep). Sigma only scales the output,
+so drawing unconditionally costs nothing at ``ci95 = 0`` and leaves the generator
+in the same place it would reach for any other value.
+
 The anisotropic distributions are **axis-aligned** — the larger-variance axis is
 North, the smaller East. GPS position-error anisotropy comes from satellite
 geometry, not the vehicle's heading, so the error ellipse is not oriented by
@@ -77,9 +87,9 @@ def make_mixture_gaussian(tail_ratio: float = 3.0, tail_weight: float = 0.1):
         return _cache[key]
 
     def mixture_gaussian(rng: np.random.Generator, ci95: float) -> tuple[float, float]:
-        if ci95 <= 0.0:
-            return 0.0, 0.0
-        s1 = _sigma1(float(ci95))
+        # The bisection is only defined for a positive ci95, but the draws happen
+        # **unconditionally** -- see this module's docstring on the constant draw count.
+        s1 = _sigma1(float(ci95)) if ci95 > 0.0 else 0.0
         sigma = s1 * k if rng.random() < tail_weight else s1
         return float(rng.normal(0.0, sigma)), float(rng.normal(0.0, sigma))
 
@@ -135,9 +145,8 @@ def make_anisotropic_gaussian(var_ratio: float = 3.0):
         return _cache[key]
 
     def anisotropic_gaussian(rng: np.random.Generator, ci95: float) -> tuple[float, float]:
-        if ci95 <= 0.0:
-            return 0.0, 0.0
-        sigma_cross = _sigma_cross(float(ci95))
+        # Draws are unconditional -- see this module's docstring on the constant draw count.
+        sigma_cross = _sigma_cross(float(ci95)) if ci95 > 0.0 else 0.0
         sigma_along = std_ratio * sigma_cross
         east = float(rng.normal(0.0, sigma_cross))
         north = float(rng.normal(0.0, sigma_along))
@@ -190,9 +199,8 @@ def make_anisotropic_mixture_gaussian(
     def anisotropic_mixture_gaussian(
         rng: np.random.Generator, ci95: float
     ) -> tuple[float, float]:
-        if ci95 <= 0.0:
-            return 0.0, 0.0
-        s1 = _sigma_cross(float(ci95))
+        # Draws are unconditional -- see this module's docstring on the constant draw count.
+        s1 = _sigma_cross(float(ci95)) if ci95 > 0.0 else 0.0
         sigma_cross = s1 * k if rng.random() < tail_weight else s1
         sigma_along = std_ratio * sigma_cross
         east = float(rng.normal(0.0, sigma_cross))
