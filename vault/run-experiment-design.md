@@ -282,10 +282,12 @@ res = run_experiment(
 Two constraints the reviewer should weigh:
 
 - **`NoiseDistribution` cannot see heading or ground speed** — its signature is strictly
-  `(rng, ci95) → (east, north)`. So a *heading-dependent* position model (along/cross-track
-  anisotropy, a latency bias `−ℓ·g`) **cannot be expressed** without widening the Protocol to
-  `(rng, ci95, heading, gs)`. This is the same gap that blocks 3 of the JRESS Experiment-3 noise
-  models. Widen it, or accept that track-oriented models are out of scope for v1?
+  `(rng, ci95) → (east, north)`, and **stays that way** (resolved 2026-07-31,
+  [[run-experiment-todo]] §9). The latency bias `−ℓ·g` is not missing: it is already produced by
+  `LatencyDistribution` plus hold-as-is surveillance, so adding it to the error would double-count
+  the staleness. Track-oriented anisotropy is rejected on the physics — GPS error anisotropy comes
+  from satellite geometry, not heading. Experiment 3's Latency models run as `constant_latency(ℓ)`
+  in the comm layer instead, which will not reproduce the paper's lumped numbers exactly.
 - **Any override can also be a `Sweep` axis** — e.g. `resolver = Sweep([BrakeResolver(0.6),
   MVP(1.05), VO(1.05)])` or `dynamics = Sweep([InstantTurnRotor(), Multirotor()])` fan out as a
   categorical axis (a hue/facet), so a contributor benchmarks their model against the built-ins in

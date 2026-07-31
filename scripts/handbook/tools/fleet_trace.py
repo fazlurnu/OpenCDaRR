@@ -21,7 +21,7 @@ from opencdarr import geo
 from opencdarr.autopilot import CruiseAutopilot, GuidanceMemory
 from opencdarr.cd.base import ConflictDetector
 from opencdarr.cns.base import NavigationModel
-from opencdarr.cns.stack import CNS, CnsState, CnsStreams
+from opencdarr.cns.stack import CNS, CnsStreams
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr.base import RecoveryCriterion
 from opencdarr.fleet import Agent, _all_clear, _pairwise_min_sep
@@ -99,7 +99,7 @@ def run_fleet_traced(
     sep = SeparationManager()
     cns = CNS(navigation=navigation)  # perfect delivery, intent private
     cns_streams = CnsStreams(nav=rng)
-    cns_state = CnsState.initial(n, cns.communication)
+    cns_state = cns.initial_state(n)
     cmds = [aps[i].step(states[i], gms[i], perfs[i])[0] for i in range(n)]
 
     tr = FleetTrace(tracks=[[] for _ in range(n)])

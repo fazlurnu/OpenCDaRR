@@ -4,14 +4,17 @@ The C-N-S layers are pluggable, like cd/cr/crr. **N** (navigation) is how an air
 its own state to broadcast; **C** (communication) is how that broadcast reaches — or fails to
 reach — a receiver, and how late; **S** (surveillance) is what a receiver *holds* as a result.
 Communication design decisions are recorded in
-``vault/decisions/0006-communication-model-design.md``.
+``vault/decisions/0006-communication-model-design.md``; how each layer is *extended* — a
+:class:`LinkGate` for C, a :class:`NavEffect` for N, and why only one of them may veto — in
+``0019-channel-extension-by-link-gates.md`` and
+``0021-navigation-extension-by-quality-effects.md``.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Protocol
 
 import numpy as np
@@ -34,12 +37,158 @@ class NoiseDistribution(Protocol):
     def __call__(self, rng: np.random.Generator, ci95: float) -> tuple[float, float]: ...
 
 
+@dataclass(frozen=True)
+class NavQuality:
+    """How much worse than nominal one aircraft's fix is, and how much of that it admits to.
+
+    ``*_scale`` multiplies the accuracy the error is actually **drawn** from; ``*_declared``
+    multiplies the accuracy stamped on the **broadcast**. Honest degradation sets them equal; an
+    *integrity failure* — the fix degrades while the transponder keeps claiming nominal, the case
+    RAIM exists to catch — is ``declared = 1.0`` with a large ``scale`` (ADR 0021 §2). All four
+    default to ``1.0``, so an effect that has nothing to say about a quantity says nothing.
+
+    Position and velocity are separate fields for the reason
+    :class:`~opencdarr.cns.communication.RadioHealth` gives four separate rates: they come from
+    different measurements (pseudorange vs Doppler) with no reason to degrade together.
+
+    Scales only, no additive offset: a *static* bias is already expressible as a
+    :class:`NoiseDistribution` and needs nothing here, and only a **drifting** bias would justify
+    offset fields (ADR 0021 §1's obligation).
+    """
+
+    pos_scale: float = 1.0
+    vel_scale: float = 1.0
+    pos_declared: float = 1.0
+    vel_declared: float = 1.0
+
+
+@dataclass(frozen=True)
+class NavState:
+    """What the navigation layer holds across ticks — the N-side twin of :class:`CommState`.
+
+    ``effects`` is one opaque state per :class:`NavEffect` the model was built with, positionally
+    aligned with that model's effect tuple. ``t_prev`` is when the layer last ran (``None`` before
+    the first call), so an effect is told how much time really elapsed rather than assuming the
+    nominal cadence.
+
+    Deliberately with no ``held``-analogue: navigation holds nothing between ticks of its own
+    accord — an aircraft measures itself fresh every time — so the only thing to carry is whatever
+    the effects need. A model needing to remember something the effects cannot express
+    **subclasses** this and returns its subclass from :meth:`NavigationModel.initial_state`.
+    """
+
+    effects: tuple[object, ...] = ()
+    t_prev: float | None = None
+
+
+class NavEffect(ABC):
+    """A stateful effect that *modulates* an aircraft's fix quality — never vetoes it.
+
+    The navigation analogue of :class:`LinkGate`, and it diverges in exactly one place: there is no
+    ``admits``. A gate's unit of work is a directed link offer, which can be declined; navigation's
+    is "produce a fix", and an aircraft always produces one — a degraded receiver broadcasts a
+    *worse* position, not no position. The one nav-shaped veto, "this aircraft does not transmit",
+    is already spelled :class:`~opencdarr.cns.communication.RadioHealth`, and a second spelling for
+    one physical event is what ``design-philosophy.md`` #17 forbids (ADR 0021 §1).
+
+    Several effects compose: their :class:`NavQuality` values **multiply**, where a gate's booleans
+    were combined with ``all()``. Identity is ``1.0`` rather than ``True``.
+
+    As with :class:`LinkGate`, all methods take the effect's **own** state rather than reading it
+    off ``self``: the effect object is immutable shared configuration (one instance serves every
+    IPS particle) while the state is a threaded value that clones with the particle.
+    Implementations should be frozen dataclasses so ``experiment.identity`` can key a cache on them
+    structurally.
+    """
+
+    @abstractmethod
+    def initial(self) -> object:
+        """This effect's state before anything happens — no roster needed, as for
+        :class:`NavState`.
+
+        Per-aircraft state keys by id the way :attr:`CommState.held` does: absent means "nothing
+        has happened to that aircraft yet".
+        """
+
+    @abstractmethod
+    def evolve(
+        self,
+        own: object,
+        aircraft: Sequence[AircraftState],
+        elapsed: float,
+        rng: np.random.Generator,
+    ) -> object:
+        """Advance this effect's state over ``elapsed`` seconds, before any aircraft measures.
+
+        Called once per tick over the **whole roster in agent order**, at a fixed offset from the
+        start, in effect-registration order — the discipline :meth:`CommunicationModel.step`
+        applies to its gates. An effect that draws should draw a **constant** number of times
+        whatever its state and whatever its parameters, including when a rate is zero, so that
+        sweeping a
+        parameter moves this effect's outcomes without shifting the measurement draws underneath
+        them (ADR 0006 §6).
+
+        Receives whole :class:`~opencdarr.state.AircraftState` values rather than ids, unlike
+        :meth:`LinkGate.evolve`, because a GNSS environment depends on *where* an aircraft is —
+        urban canyon, terrain masking (ADR 0021 §4). An effect must not read ``desired``: intent is
+        private, and steering on it would be reading another aircraft's intentions.
+        """
+
+    @abstractmethod
+    def quality(self, own: object, aircraft_id: str) -> NavQuality:
+        """This aircraft's degradation right now. Must not draw."""
+
+
 class NavigationModel(ABC):
     """How an aircraft measures its own state to broadcast — the contribution surface."""
 
+    def initial_state(self) -> NavState:
+        """The nav layer's state at ``t = 0``.
+
+        The seam for a **stateful** model, exactly as
+        :meth:`CommunicationModel.initial_state` is for the channel: a model that must remember
+        something across ticks subclasses :class:`NavState` and returns that subclass here, and
+        :meth:`measure` then receives its own state type on **every** tick including the first.
+        ``effects`` is the other, narrower seam — one effect added to the standard model rather
+        than the model replaced (ADR 0021 §5).
+        """
+        return NavState()
+
+    def evolve(
+        self,
+        state: NavState,
+        aircraft: Sequence[AircraftState],
+        t: float,
+        rng: np.random.Generator,
+    ) -> NavState:
+        """Advance the layer's own state to ``t``, before any aircraft measures.
+
+        Non-abstract with a safe default that **draws nothing** and only records the time, so a
+        stateless model is bit-for-bit the pre-seam layer and every existing implementation keeps
+        working untouched (ADR 0021 §3).
+        """
+        return replace(state, t_prev=t)
+
     @abstractmethod
-    def measure(self, true: AircraftState, t: float, rng: np.random.Generator) -> Message:
-        """Return the aircraft's (noisy) self-measurement as a broadcastable :class:`Message`."""
+    def measure(
+        self, state: NavState, true: AircraftState, t: float, rng: np.random.Generator
+    ) -> Message:
+        """Return the aircraft's (noisy) self-measurement as a broadcastable :class:`Message`.
+
+        ``state`` is whatever :meth:`evolve` last returned — read it, do not advance it: all
+        state advance happens in :meth:`evolve`, once per tick, so the draws sit at a predictable
+        place in the stream.
+        """
+
+    def validate_ids(self, ids: frozenset[str]) -> None:
+        """Raise :class:`ValueError` if this model is configured against unknown aircraft ids.
+
+        The navigation twin of :meth:`CommunicationModel.validate_ids`: a model or effect keyed by
+        aircraft id reads an absent key as its default, so a mistyped id is silently ignored rather
+        than applied. The fleet composition root calls this with the actual roster so that mistake
+        fails loudly. The base accepts anything; a model that keys configuration by id overrides
+        it.
+        """
 
 
 class LatencyDistribution(Protocol):

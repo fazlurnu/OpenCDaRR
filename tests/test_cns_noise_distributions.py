@@ -20,6 +20,7 @@ from opencdarr.cns import (
     make_anisotropic_mixture_gaussian,
     make_mixture_gaussian,
 )
+from opencdarr.cns.noise_distributions import _radial_cdf, _trapezoid
 from opencdarr.state import AircraftState
 
 _CI95 = 20.0
@@ -87,6 +88,42 @@ def test_plugs_into_navigation_end_to_end() -> None:
     for dist in (make_mixture_gaussian(), make_anisotropic_gaussian(),
                  make_anisotropic_mixture_gaussian()):
         nav = GnssNavigation(pos_distribution=dist, vel_distribution=dist)
-        msg = nav.measure(true, t=1.0, rng=np.random.default_rng(0))
+        msg = nav.measure(nav.initial_state(), true, t=1.0, rng=np.random.default_rng(0))
         assert msg.source == "A"
         assert math.isfinite(msg.state.lat) and math.isfinite(msg.state.lon)
+
+
+def test_trapezoid_matches_a_closed_form() -> None:
+    """The integrator is ours now (``np.trapz`` was removed in NumPy 2, ``np.trapezoid`` is absent
+    on 1.x), so it needs a check against a number from *outside* the code.
+
+    Half the unit disc: ``int_-1^1 sqrt(1 - x^2) dx == pi / 2``.
+
+    This test passes on either NumPy because it no longer touches either name — but that is the
+    point of the change, so the *other* version has to be exercised deliberately. There is no CI to
+    do it, so run it by hand when this file or ``pyproject.toml``'s numpy pin changes::
+
+        python -m venv /tmp/np2 && /tmp/np2/bin/pip install -q 'numpy>=2' pyyaml pytest
+        PYTHONPATH=. /tmp/np2/bin/python -m pytest tests/
+
+    Last run 2026-07-31 on numpy 2.4.6: 442 passed, 25 skipped (the skips are the optional
+    pandas / joblib / matplotlib extras, absent from that venv by design).
+    """
+    x = np.linspace(-1.0, 1.0, 200_001)
+    y = np.sqrt(np.maximum(1.0 - x**2, 0.0))
+    assert _trapezoid(y, x) == pytest.approx(math.pi / 2, abs=1e-7)
+
+
+def test_the_two_radial_cdf_branches_agree_at_the_boundary() -> None:
+    """``_radial_cdf`` special-cases the isotropic case with an exact Rayleigh form and integrates
+    numerically otherwise. The two must meet where they touch, or the bisection either side of that
+    boundary is solving a discontinuous function.
+
+    They agree to ~1.4e-6, which is the 4001-point grid's own quadrature error against the closed
+    form (the integrand has a square-root singularity at both endpoints), not a defect. Asserting
+    exact equality would be asserting that numerical integration is exact.
+    """
+    sigma = 7.0
+    exact = _radial_cdf(12.0, sigma, sigma)
+    nearly = _radial_cdf(12.0, sigma * (1 + 1e-9), sigma)
+    assert nearly == pytest.approx(exact, abs=1e-5)

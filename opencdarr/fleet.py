@@ -293,7 +293,7 @@ class FleetEnv:
             mems=tuple(INACTIVE for _ in range(n)),
             cmds=tuple(cmds),
             next_bc=tuple(self.schedule.initial(n)),
-            cns_state=CnsState.initial(n, self.cns.communication),
+            cns_state=self.cns.initial_state(n),
             t=0.0,
             done_timer=0.0,
             conflict=False,
@@ -447,8 +447,11 @@ def build_env(
     # re-validate harmlessly — the check is cheap and idempotent).
     for i in range(n):
         kinematics[i].validate_performance(perfs[i])
+    ids = frozenset(a.state.id for a in agents)
     if communication is not None:
-        communication.validate_ids(frozenset(a.state.id for a in agents))
+        communication.validate_ids(ids)
+    if navigation is not None:
+        navigation.validate_ids(ids)
     return FleetEnv(
         kinematics=kinematics,
         perfs=perfs,

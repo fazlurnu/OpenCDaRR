@@ -80,7 +80,7 @@ def simulate(t_end: float = 1000.0, sample_dt: float = 0.5, poll: float = 0.02
     def measured(track: float, speed: float, ac: str, t: float, gen: np.random.Generator):
         lat, lon = _true(track, speed, t)
         src = AircraftState(id=ac, lat=lat, lon=lon, trk=track, gs=speed, pos_ci95=POS_CI95)
-        return nav.measure(src, t, gen)
+        return nav.measure(nav.initial_state(), src, t, gen)
 
     i_tx, j_tx = tx_times(tx_i), tx_times(tx_j)
     state, ni, nj, t, next_sample = CommState(), 0, 0, 0.0, 0.0

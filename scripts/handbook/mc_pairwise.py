@@ -29,7 +29,7 @@ import numpy as np
 from opencdarr import geo
 from opencdarr.autopilot import GuidanceMemory, WaypointAutopilot, nominal_velocity
 from opencdarr.cd import StateBased
-from opencdarr.cns import CNS, CnsState, CnsStreams, Comm, GnssNavigation, lognormal_latency
+from opencdarr.cns import CNS, CnsStreams, Comm, GnssNavigation, lognormal_latency
 from opencdarr.cns.broadcast import BroadcastSchedule
 from opencdarr.cr import MVP, VO
 from opencdarr.crr import FTR, PastCPA
@@ -138,7 +138,7 @@ def run_recorded(own0, intr0, own_ap, intr_ap, resolver, recovery,
     min_sep = float("inf")
     t = 0.0
     next_bc = schedule.initial(n)
-    cns_state = CnsState.initial(n, cns.communication)
+    cns_state = cns.initial_state(n)
     eps = 1e-9
     ts: list[float] = []
     tracks: list[list[tuple[float, float]]] = [[], []]

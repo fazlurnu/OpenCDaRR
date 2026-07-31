@@ -200,10 +200,25 @@ declaration that violates a constraint starts raising. Worth a quick sweep of th
 scripts and notebooks before it lands. Fixing it would also let item 11's transmit fields fail at
 declaration time in the config's vocabulary rather than part-way into a run.
 
-## 7. `pos_ci95` is silently inert without a navigation model
+## 7. `pos_ci95` is silently inert without a navigation model — **fixed 2026-07-31**
 
-**Status: confirmed by reading and by measurement (2026-07-30). No wrong published number, but it
-can produce a confidently wrong *new* one.**
+**Status: fixed on the declaration surface.** `run_experiment` now raises when a resolved condition
+declares a non-zero `pos_ci95`/`vel_ci95` and its stack has neither a navigation model to draw the
+error nor a ci95-reading recovery criterion. Checked **per condition** after `expand()`, because
+`pos_ci95`, `navigation` and `recovery` are each independently sweepable — a navigation sweep that
+includes `None` is legitimate wherever the accuracy is zero and a mistake only where it is not.
+
+Deliberately a *contradiction* check and not an implication, per this note's own ruling below: a
+declared accuracy read only by `ProbabilisticFTR`, with no noise model present, stays valid.
+
+**Two limits worth knowing.** (a) The guard is on `run_experiment` only. The 24 scripts that call
+`run_fleet` directly, and `estimate_ipr` itself, still default `navigation=None` and are not
+covered — pushing it down to `estimate_ipr`/`build_env` is a separate change. (b) The YAML path was
+*not* wired up: `configs/pairwise.yaml` has no readers outside two test modules, `run_one_experiment`
+none outside one, and `registry.py` still has no `make_navigation`, so building one would be
+generality for a surface with no users.
+
+**Original diagnosis (2026-07-30) follows.**
 
 `pos_ci95` / `vel_ci95` are read by exactly two consumers in the package: `cns/navigation.py`
 (`GnssNavigation`, which draws the error) and `crr/probabilistic_ftr.py` (`ProbabilisticFTR`, which

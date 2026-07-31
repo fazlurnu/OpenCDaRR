@@ -57,6 +57,13 @@ above — one module per notebook — and several of them generate the figures t
 - [`handbook/autopilot.ipynb`](handbook/autopilot.ipynb) — why one `WaypointAutopilot` serves both
   airframes: it emits a position setpoint, and each airframe interprets it through its own physics.
   Also covers L1 leg tracking.
+- [`handbook/navigation.ipynb`](handbook/navigation.ipynb) — the **N** of CNS: where measurement
+  accuracy lives, the four built-in error shapes and the containment guarantee they share,
+  declaring an accuracy other than the truth, and receiver degradation that persists across ticks.
+  Ends with your own error distribution and your own `NavEffect`.
+- [`handbook/communication.ipynb`](handbook/communication.ipynb) — the **C** of CNS: broadcast
+  cadence, phase and jitter; reception probability and the update interval it produces; latency
+  shapes; and the two seams for extending the channel.
 - [`handbook/rare_event_ips.ipynb`](handbook/rare_event_ips.ipynb) — running the interacting
   particle system (IPS) estimator in `opencdarr.ips` on a loss of separation too rare for plain
   Monte Carlo, parallelised across replications and particles with `opencdarr.parallel`.

@@ -51,7 +51,7 @@ flowchart TB
     end
 
     COMPS --> EST
-    EST -->|"per encounter: spawn(3)"| SEQS["geom_seq · nav_seq · comm_seq"]
+    EST -->|"per encounter: spawn(4)"| SEQS["geom_seq · nav_seq · comm_seq · bc_seq"]
     EST -. builds .-> ROOT
 
     subgraph scen["scenario.py — encounter geometry"]
@@ -165,7 +165,8 @@ flowchart TB
 
     subgraph bcast["Decision (every broadcast_interval)"]
         SENSE["CNS.sense(states, firing, t,<br/>cns_state, streams)<br/>-> (CnsState, Perception per aircraft)"]
-        MEAS["navigation.measure(true, t, rng)<br/>-> Message (noisy self-fix)"]
+        NEVOLVE["navigation.evolve(nav_state, states, t, nav_rng)<br/>-> NavState (effects age once per tick, before any fix)"]
+        MEAS["navigation.measure(nav_state, true, t, rng)<br/>-> Message (noisy self-fix)"]
         COMM["communication.step(comm_state,<br/>broadcasts, receivers, t, comm_rng)<br/>-> CommState"]
         SURV["surveillance.perceived(comm_state,<br/>receiver, source, t)<br/>-> AircraftState or None"]
         AP["autopilot.step(state, guidance_memory, perf)<br/>-> nominal MotionCommand"]
@@ -271,11 +272,14 @@ flowchart LR
     end
     WF -. passed to .-> DABC
     subgraph CNSf["cns/ — communication-navigation-surveillance"]
-        NAVABC["NavigationModel (ABC)<br/>measure(true, t, rng) -> Message"]
-        NAVABC --> GPS["GnssNavigation(distribution)"]
-        NDP["NoiseDistribution (Protocol)<br/>(rng, ci95, trk) -> (e, n)"]
+        NAVABC["NavigationModel (ABC)<br/>initial_state() · evolve(state, aircraft, t, rng)<br/>measure(state, true, t, rng) -> Message"]
+        NAVABC --> GPS["GnssNavigation(distribution, effects)"]
+        NDP["NoiseDistribution (Protocol)<br/>(rng, ci95) -> (e, n)"]
         NDP --> GAUSS["gaussian"]
         GPS -. uses .-> NDP
+        NEFF["NavEffect (ABC)<br/>initial() · evolve(own, aircraft, elapsed, rng)<br/>quality(own, id) -> NavQuality — never a veto"]
+        NEFF --> GOUT["GnssOutage(fail_rate, recover_rate, factors, declare)"]
+        GPS -. composes .-> NEFF
         COMMABC["CommunicationModel (ABC)<br/>step(state, bcasts, rcvrs, t, rng) -> CommState"]
         COMMABC --> COMMc["Comm(reception_prob, latency)"]
         LDP["LatencyDistribution (Protocol)<br/>(rng) -> delay"]
@@ -310,7 +314,9 @@ flowchart LR
     DV["DesiredVelocity<br/>v_east, v_north<br/>(.trk / .gs derived)"]
     CMD["MotionCommand<br/>target_velocity / _body_velocity /<br/>_position / _yaw / _course /<br/>_airspeed / _lateral_accel ..."]
     MSG["Message<br/>source, state, t_meas"]
-    CS["CommState<br/>held, in_flight"]
+    CS["CommState<br/>held, in_flight, gates, t_prev"]
+    NS["NavState<br/>effects, t_prev"]
+    NQ["NavQuality<br/>pos/vel_scale, pos/vel_declared"]
     IF["InFlight<br/>message, receiver, deliver_t"]
     FM["FleetMemory<br/>resopairs (who I am resolving against)"]
     REL["Relative<br/>rx, ry, vx, vy, dist"]
@@ -429,10 +435,13 @@ exist.
 
 | Module | Symbol | Input | Output |
 |---|---|---|---|
-| `cns/base.py` | `NavigationModel` (ABC) `.measure(true, t, rng)` | true state + RNG | `Message` (noisy self-fix) |
-| `cns/navigation.py` | `GnssNavigation(distribution)` | — | nav impl (uses `geo`, `kinematics`, noise) |
-| `cns/base.py` | `NoiseDistribution` (Protocol) `(rng, ci95, trk)` | — | `(east, north)` error |
-| `cns/noise_distributions.py` | `gaussian`, `make_mixture_gaussian`, `make_anisotropic_gaussian`, `make_anisotropic_mixture_gaussian` | — | isotropic, mixture and along/cross-track position noise |
+| `cns/base.py` | `NavigationModel` (ABC) `.measure(state, true, t, rng)`, `.evolve(...)`, `.initial_state()` | nav state + true state + RNG | `Message` (noisy self-fix) |
+| `cns/navigation.py` | `GnssNavigation(distribution, effects=...)` | — | nav impl (uses `geo`, `relative`, noise) |
+| `cns/base.py` | `NoiseDistribution` (Protocol) `(rng, ci95)` | — | `(east, north)` error |
+| `cns/base.py` | `NavEffect` (ABC) `.quality(own, id) -> NavQuality` | effect state + roster | per-aircraft accuracy scales (multiply; never a veto) |
+| `cns/navigation.py` | `GnssOutage`, `gnss_outage(state)` | — | latching GNSS degradation + its accessor |
+| `cns/hazard.py` | `hazard(rate, elapsed)`, `toggle(...)` | rate [1/h] + elapsed [s] | exponential failure law, one draw per subsystem |
+| `cns/noise_distributions.py` | `gaussian`, `make_mixture_gaussian`, `make_anisotropic_gaussian`, `make_anisotropic_mixture_gaussian` | — | isotropic, mixture and axis-aligned anisotropic position noise |
 | `cns/base.py` | `CommunicationModel` (ABC) `.step(state, bcasts, rcvrs, t, rng)` | comm state + broadcasts | new `CommState` |
 | `cns/communication.py` | `Comm(reception_prob, latency)` | — | reception+latency impl |
 | `cns/base.py` | `LatencyDistribution` (Protocol) `(rng)` | — | `delay` [s] |

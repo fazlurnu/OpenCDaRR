@@ -598,28 +598,42 @@ cheap MC.
 - **Verify:** the level-crossing curve from one `ips_once` matches a plain-MC CCDF of `min_sep` in a
   regime where MC is feasible (the `pos=40` correctness rung).
 
-## 9. Widen the noise-distribution signature
+## 9. Widen the noise-distribution signature — **rejected 2026-07-31**
 
-- [ ] `NoiseDistribution.__call__(rng, ci95)` → also receive heading and ground speed; add the two
-      missing latency models.
+- [x] ~~`NoiseDistribution.__call__(rng, ci95)` → also receive heading and ground speed; add the two
+      missing latency models.~~ **Not done, and deliberately not deferred: rejected.** The signature
+      stays `(rng, ci95)`.
 
-Of Experiment 3's six position-noise models, **four need heading** and two of those also need ground
-speed — the design doc says three. Worse: two are **absent entirely** (Latency, Latency+Anisotropic),
-and the sole reason is that `(rng, ci95)` cannot see `ψ` or `g`. The fix is small and local:
-`NavigationModel.measure(true, t, rng)` already receives the whole `AircraftState`, so both are in
-hand — only the inner call at `navigation.py:47` drops them.
+**Why: the latency models would double-count.** `LastKnown` is hold-as-is with no dead-reckoning
+(ADR 0006 §2), so a receiver acting at `t` on a message measured at `t_meas` is *already* looking at
+a position `t - t_meas` seconds stale, and the source has already moved `(t - t_meas)·g` along track
+since. That displacement is already emergent from C + S. Folding a `−ℓ·g` bias into the navigation
+error would apply it a second time.
 
-Not blocked by the open anisotropy question: the latency bias `−ℓg` along-track needs `ψ` and `g`
-whichever way that resolves. **Only the reorientation of the two anisotropic models waits** — see
-the separate investigation into whether the error ellipse rotates with track (paper) or is fixed
-North/East from satellite geometry (`noise_distributions.py` / `gps-noise.md`). The two disagree, and
-Experiment 3's whole point is the shape of the error.
+The paper's lumped "Latency" model is the right modelling choice for a simulator with **no channel
+model** — which is what CDaRR was. OpenCDaRR has `LatencyDistribution` and hold-as-is surveillance,
+so it produces the same displacement for free and with the *correct distribution*: whatever
+`t - t_meas` actually is under jitter, drops and broadcast cadence, rather than a fixed `ℓ`.
 
-- **Files:** `opencdarr/cns/base.py`, `opencdarr/cns/navigation.py`,
-  `opencdarr/cns/noise_distributions.py`
-- **Verify:** re-derive the calibration constants in the paper's `tab:noise_sigmas`
-  (σ = 4.085, σ₁ = 2.776, σ_c = 1.675, …) numerically from the new signatures. Those numbers come
-  from *outside* the code, which is what `design-philosophy.md` #15 asks of a test.
+**Experiment 3's two Latency models are still runnable** — as `constant_latency(ℓ)` in the comm
+layer rather than as a noise distribution. That is a better-founded comparison, but the numbers will
+not match the paper's lumped model exactly, and that difference needs stating in the write-up rather
+than glossing.
+
+**The anisotropy question is closed with it, in the code's favour.** Track-oriented anisotropy was
+the only other reason to pass `trk`. `noise_distributions.py` already argues the physics: GPS
+position-error anisotropy comes from satellite geometry, not the vehicle's heading, so the ellipse
+is axis-aligned. The paper disagrees; that is a disagreement about the physics, not an
+unimplemented feature, and it is now recorded as such in [[gps-noise]] rather than left open.
+
+**A bias needs no signature change either.** A *static* ENU bias is a five-line `NoiseDistribution`
+closure over the existing protocol — it belongs in a user's file, not beside `gaussian`, because it
+breaks that module's containment guarantee. A *drifting* bias needs memory, which is what the
+`NavEffect` seam is for ([[0021-navigation-extension-by-quality-effects]] §1).
+
+- **Files touched instead:** `vault/derivations/gps-noise.md` (new "Why the noise model does not see
+  heading" section), `vault/architecture-dataflow.md` (the map documented `(rng, ci95, trk)`, which
+  never existed), `vault/run-experiment-design.md` §"cannot see heading".
 
 ## 10. A stateful comm model: independent transmitter and receiver outages — **done 2026-07-30**
 

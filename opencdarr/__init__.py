@@ -41,7 +41,10 @@ from opencdarr.cd.base import ConflictDetector
 from opencdarr.cd.statebased import StateBased
 from opencdarr.cns.base import (
     CommunicationModel,
+    NavEffect,
     NavigationModel,
+    NavQuality,
+    NavState,
     NoiseDistribution,
     SurveillanceModel,
 )
@@ -108,6 +111,9 @@ __all__ = [
     "Methods",
     "MotionCommand",
     "Multirotor",
+    "NavEffect",
+    "NavQuality",
+    "NavState",
     "NavigationModel",
     "NoiseDistribution",
     "PastCPA",

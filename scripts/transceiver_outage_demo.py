@@ -70,7 +70,7 @@ def _stack(n: int, noisy: bool) -> tuple[CNS, CnsState, CnsStreams]:
         communication=TransceiverComm(reception_prob=1.0),  # lossless: isolate the outage
         surveillance=LastKnown(),
     )
-    return cns, CnsState.initial(n, cns.communication), CnsStreams(
+    return cns, cns.initial_state(n), CnsStreams(
         nav=generator(nav_seq), comm=generator(comm_seq)
     )
 

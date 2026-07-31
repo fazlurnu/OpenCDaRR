@@ -7,7 +7,10 @@ from opencdarr.cns.base import (
     LatencyDistribution,
     LinkGate,
     Message,
+    NavEffect,
     NavigationModel,
+    NavQuality,
+    NavState,
     NoiseDistribution,
     SurveillanceModel,
 )
@@ -26,7 +29,12 @@ from opencdarr.cns.communication import (
     radio_health,
     uniform_latency,
 )
-from opencdarr.cns.navigation import GnssNavigation
+from opencdarr.cns.navigation import (
+    GnssNavigation,
+    GnssOutage,
+    GnssOutageState,
+    gnss_outage,
+)
 from opencdarr.cns.noise_distributions import (
     gaussian,
     make_anisotropic_gaussian,
@@ -45,13 +53,19 @@ __all__ = [
     "CommState",
     "CommunicationModel",
     "GnssNavigation",
+    "GnssOutage",
+    "GnssOutageState",
     "InFlight",
     "LastKnown",
     "LatencyDistribution",
     "LinkGate",
     "Message",
+    "NavEffect",
+    "NavQuality",
+    "NavState",
     "NavigationModel",
     "NoiseDistribution",
+    "gnss_outage",
     "Perception",
     "RadioHealth",
     "RadioHealthState",

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import math
+from collections.abc import Sequence
 
 import numpy as np
 import pytest
@@ -11,20 +12,24 @@ import pytest
 from opencdarr import geo
 from opencdarr.cd import StateBased
 from opencdarr.cns import (
+    BroadcastSchedule,
     GnssNavigation,
+    NavState,
     NoiseDistribution,
     gaussian,
     make_anisotropic_gaussian,
     make_anisotropic_mixture_gaussian,
     make_mixture_gaussian,
 )
+from opencdarr.cns.stack import CNS, CnsState
 from opencdarr.cr import MVP
 from opencdarr.crr import PastCPA, ProbabilisticFTR
 from opencdarr.crr.base import RecoveryCriterion
+from opencdarr.fleet import Agent, run_fleet
 from opencdarr.loop import run_encounter
 from opencdarr.performance import M600
 from opencdarr.relative import velocity_enu
-from opencdarr.scenario import sample_pairwise
+from opencdarr.scenario import create_conflict, sample_pairwise
 from opencdarr.state import AircraftState, DesiredVelocity
 
 _TRUE = AircraftState(id="A", lat=52.0, lon=4.0, trk=30.0, gs=10.0)
@@ -40,7 +45,7 @@ def _pos_offset_enu(true: AircraftState, meas: AircraftState) -> tuple[float, fl
 def test_zero_noise_measures_true_state() -> None:
     """Default AircraftState declares perfect accuracy (pos_ci95 = vel_ci95 = 0)."""
     nav = GnssNavigation()
-    msg = nav.measure(_TRUE, t=5.0, rng=np.random.default_rng(0))
+    msg = nav.measure(nav.initial_state(), _TRUE, t=5.0, rng=np.random.default_rng(0))
     assert msg.source == "A"
     assert msg.t_meas == 5.0
     assert msg.state.lat == pytest.approx(_TRUE.lat)
@@ -52,7 +57,8 @@ def test_zero_noise_measures_true_state() -> None:
 def test_broadcast_declares_the_source_accuracy() -> None:
     """The measured (broadcast) state carries the source's own declared ci95."""
     true = dataclasses.replace(_TRUE, pos_ci95=20.0, vel_ci95=2.0)
-    msg = GnssNavigation().measure(true, t=0.0, rng=np.random.default_rng(0))
+    nav = GnssNavigation()
+    msg = nav.measure(nav.initial_state(), true, t=0.0, rng=np.random.default_rng(0))
     assert msg.state.pos_ci95 == 20.0
     assert msg.state.vel_ci95 == 2.0
 
@@ -70,8 +76,8 @@ def test_an_honest_declaration_is_the_default_and_changes_nothing() -> None:
     assert true.pos_ci95_declared is None and true.vel_ci95_declared is None
     spelled_out = dataclasses.replace(true, pos_ci95_declared=20.0, vel_ci95_declared=2.0)
     nav = GnssNavigation()
-    implicit = nav.measure(true, 0.0, np.random.default_rng(4)).state
-    explicit = nav.measure(spelled_out, 0.0, np.random.default_rng(4)).state
+    implicit = nav.measure(nav.initial_state(), true, 0.0, np.random.default_rng(4)).state
+    explicit = nav.measure(nav.initial_state(), spelled_out, 0.0, np.random.default_rng(4)).state
     assert implicit == explicit
 
 
@@ -81,8 +87,8 @@ def test_the_broadcast_carries_the_claim_while_the_error_follows_the_sensor() ->
     liar = dataclasses.replace(true, pos_ci95_declared=5.0, vel_ci95_declared=0.25)
     nav = GnssNavigation()
 
-    honest_fix = nav.measure(true, 0.0, np.random.default_rng(3)).state
-    lying_fix = nav.measure(liar, 0.0, np.random.default_rng(3)).state
+    honest_fix = nav.measure(nav.initial_state(), true, 0.0, np.random.default_rng(3)).state
+    lying_fix = nav.measure(nav.initial_state(), liar, 0.0, np.random.default_rng(3)).state
 
     # the claim does not touch the draw: same seed, same actual accuracy, same geometry
     assert (lying_fix.lat, lying_fix.lon, lying_fix.trk, lying_fix.gs) == (
@@ -97,9 +103,10 @@ def test_the_error_stays_calibrated_to_the_sensor_not_the_claim() -> None:
     """A 5 m claim over a 40 m sensor still scatters like 40 m -- the point of the mismatch."""
     liar = dataclasses.replace(_TRUE, pos_ci95=40.0, vel_ci95=0.0, pos_ci95_declared=5.0)
     nav = GnssNavigation()
+    fresh = nav.initial_state()
     rng = np.random.default_rng(11)
     radial = np.array([
-        math.hypot(*_pos_offset_enu(liar, nav.measure(liar, 0.0, rng).state))
+        math.hypot(*_pos_offset_enu(liar, nav.measure(fresh, liar, 0.0, rng).state))
         for _ in range(8000)
     ])
     assert abs(float(np.quantile(radial, 0.95)) - 40.0) < 2.0
@@ -109,7 +116,8 @@ def test_only_one_accuracy_travels_on_the_wire() -> None:
     """A broadcast carries the claim in ``pos_ci95`` and no second field: a receiver reads one
     number, and only a *true* state ever needs both (``AircraftState``'s docstring)."""
     liar = dataclasses.replace(_TRUE, pos_ci95=40.0, pos_ci95_declared=5.0, vel_ci95_declared=1.0)
-    fix = GnssNavigation().measure(liar, 0.0, np.random.default_rng(0)).state
+    nav = GnssNavigation()
+    fix = nav.measure(nav.initial_state(), liar, 0.0, np.random.default_rng(0)).state
     assert fix.pos_ci95 == 5.0
     assert fix.pos_ci95_declared is None and fix.vel_ci95_declared is None
 
@@ -134,9 +142,9 @@ def test_the_declaration_is_what_probabilistic_ftr_acts_on() -> None:
         o = dataclasses.replace(own, pos_ci95_declared=claim, vel_ci95_declared=claim / 20.0)
         i = dataclasses.replace(intr, pos_ci95_declared=claim, vel_ci95_declared=claim / 20.0)
         seen_own = dataclasses.replace(
-            nav.measure(o, 0.0, np.random.default_rng(1)).state, desired=want
+            nav.measure(nav.initial_state(), o, 0.0, np.random.default_rng(1)).state, desired=want
         )
-        seen_intr = nav.measure(i, 0.0, np.random.default_rng(2)).state
+        seen_intr = nav.measure(nav.initial_state(), i, 0.0, np.random.default_rng(2)).state
         return ftr.should_resume(seen_own, seen_intr, rpz=50.0)
 
     assert resumes(10.0) is True  # claims to be sure -> resumes
@@ -188,9 +196,10 @@ def test_position_noise_is_zero_mean_and_ci95_calibrated() -> None:
     ci95 = 20.0
     true = dataclasses.replace(_TRUE, pos_ci95=ci95, vel_ci95=0.0)
     nav = GnssNavigation()
+    fresh = nav.initial_state()
     rng = np.random.default_rng(1)
     offsets = np.array(
-        [_pos_offset_enu(true, nav.measure(true, 0.0, rng).state) for _ in range(8000)]
+        [_pos_offset_enu(true, nav.measure(fresh, true, 0.0, rng).state) for _ in range(8000)]
     )
     assert abs(offsets[:, 0].mean()) < 1.0  # zero-mean per axis
     assert abs(offsets[:, 1].mean()) < 1.0
@@ -203,8 +212,9 @@ def test_velocity_noise_is_zero_mean_and_ci95_calibrated() -> None:
     vel_ci95 = 2.0
     true = dataclasses.replace(_TRUE, pos_ci95=0.0, vel_ci95=vel_ci95)
     nav = GnssNavigation()
+    fresh = nav.initial_state()
     rng = np.random.default_rng(2)
-    ve = np.array([velocity_enu(nav.measure(true, 0.0, rng).state) for _ in range(8000)])
+    ve = np.array([velocity_enu(nav.measure(fresh, true, 0.0, rng).state) for _ in range(8000)])
     true_e, true_n = velocity_enu(true)
     assert abs(ve[:, 0].std() - vel_ci95 * _SIGMA_PER_CI95) < 0.2  # per-axis sigma
     assert abs(ve[:, 0].mean() - true_e) < 0.2
@@ -224,7 +234,8 @@ def test_velocity_uses_its_own_pluggable_distribution() -> None:
         return ci95, 0.0  # deterministic East-only velocity offset
 
     nav = GnssNavigation(vel_distribution=constant_bias)
-    ve, vn = velocity_enu(nav.measure(true, 0.0, np.random.default_rng(0)).state)
+    fix = nav.measure(nav.initial_state(), true, 0.0, np.random.default_rng(0)).state
+    ve, vn = velocity_enu(fix)
     assert ve == pytest.approx(true_e + vel_ci95)
     assert vn == pytest.approx(true_n)
 
@@ -232,8 +243,8 @@ def test_velocity_uses_its_own_pluggable_distribution() -> None:
 def test_reproducible_per_seed() -> None:
     true = dataclasses.replace(_TRUE, pos_ci95=20.0, vel_ci95=1.0)
     nav = GnssNavigation()
-    a = nav.measure(true, 0.0, np.random.default_rng(42)).state
-    b = nav.measure(true, 0.0, np.random.default_rng(42)).state
+    a = nav.measure(nav.initial_state(), true, 0.0, np.random.default_rng(42)).state
+    b = nav.measure(nav.initial_state(), true, 0.0, np.random.default_rng(42)).state
     assert a == b
 
 
@@ -277,12 +288,13 @@ def test_the_seeded_navigation_stream_is_unchanged() -> None:
     edit the literals to match.
     """
     nav = GnssNavigation()
+    fresh = nav.initial_state()
     rng = np.random.default_rng(7)
     radial, sign = "", ""
 
     for k in range(len(_PINNED_POS_RADIAL) // 2):
         for true in (_TRACE_A, _TRACE_B):
-            measured = nav.measure(true, float(k), rng).state
+            measured = nav.measure(fresh, true, float(k), rng).state
             _, dist = geo.qdrdist(true.lat, true.lon, measured.lat, measured.lon)
             radial += str(min(int(10.0 * dist / true.pos_ci95), 9))
             true_e, _ = velocity_enu(true)
@@ -340,3 +352,65 @@ def test_zero_ci95_returns_exactly_zero_error_from_every_distribution() -> None:
     """
     for name, distribution in _DISTRIBUTIONS.items():
         assert distribution(np.random.default_rng(0), 0.0) == (0.0, 0.0), name
+
+
+# --- the stateful-model seam (NavigationModel.initial_state) ------------------------------------
+
+
+@dataclasses.dataclass(frozen=True)
+class _TickCountNavState(NavState):
+    """A nav state with a field of its own, to prove the subclass survives the whole run."""
+
+    ticks: int = 0
+
+
+class _TickCountingNav(GnssNavigation):
+    """A stateful model that reads its **own** state field on every tick, upgrading nothing."""
+
+    def initial_state(self) -> NavState:
+        return _TickCountNavState()
+
+    def evolve(
+        self,
+        state: NavState,
+        aircraft: Sequence[AircraftState],
+        t: float,
+        rng: np.random.Generator,
+    ) -> NavState:
+        # the seam under test: never a bare NavState, not even on the first tick. Asserting it
+        # here rather than upgrading with an isinstance fallback is the point -- a model written
+        # this way is broken by a missing initial_state instead of quietly working around it.
+        assert isinstance(state, _TickCountNavState)
+        return _TickCountNavState(effects=state.effects, t_prev=t, ticks=state.ticks + 1)
+
+
+def test_a_stateless_model_gets_the_plain_default() -> None:
+    """The base hook is what ``GnssNavigation`` and every other stateless model wants."""
+    assert GnssNavigation().initial_state() == NavState()
+    assert CnsState.initial(2).nav == NavState()  # no model at all: the exact-self-fix path
+
+
+def test_the_model_supplies_the_nav_layer_s_initial_value() -> None:
+    nav = _TickCountingNav()
+    assert CnsState.initial(2, navigation=nav).nav == _TickCountNavState(ticks=0)
+    assert CNS(navigation=nav).initial_state(2).nav == _TickCountNavState(ticks=0)
+
+
+def test_a_subclassed_nav_state_survives_a_whole_run() -> None:
+    """A stateful model's own state is in place at t=0 and threaded to termination by run_fleet."""
+    own = AircraftState(id="OWN", lat=52.0, lon=4.0, trk=0.0, gs=10.0, pos_ci95=20.0)
+    intr = create_conflict(own, intr_id="INT", dpsi=90.0, dcpa=0.0, tlos=90.0, rpz=50.0)
+    out = run_fleet(
+        [Agent(own, M600), Agent(intr, M600)],
+        rpz=50.0, t_lookahead=120.0, dt=1.0, detector=StateBased(),
+        resolver=MVP(margin=1.05), recovery=PastCPA(bouncing_guard=True),
+        navigation=_TickCountingNav(), rng=np.random.default_rng(0),
+        schedule=BroadcastSchedule(interval=1.0), record=True,
+    )
+    assert out.frames is not None
+    assert all(isinstance(f.cns_state.nav, _TickCountNavState) for f in out.frames)
+    first, last = out.frames[0].cns_state.nav, out.frames[-1].cns_state.nav
+    assert isinstance(first, _TickCountNavState) and isinstance(last, _TickCountNavState)
+    assert first.ticks == 0  # the model's own state, before anything has been measured
+    # dt == interval, so every step is a broadcast tick: one per frame after the initial one
+    assert last.ticks == len(out.frames) - 1 > 5

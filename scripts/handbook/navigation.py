@@ -95,7 +95,7 @@ def main() -> None:
 
 def _fix(nav: GnssNavigation, true: AircraftState, rng: np.random.Generator) -> tuple[float, float]:
     """The (lat, lon) a receiver sees for this tick's broadcast fix."""
-    m = nav.measure(true, t=0.0, rng=rng).state
+    m = nav.measure(nav.initial_state(), true, t=0.0, rng=rng).state
     return m.lat, m.lon
 
 

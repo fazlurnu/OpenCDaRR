@@ -37,7 +37,7 @@ from opencdarr.cns.base import (
     SurveillanceModel,
 )
 from opencdarr.cns.broadcast import BroadcastSchedule
-from opencdarr.cns.stack import CNS, CnsState, CnsStreams
+from opencdarr.cns.stack import CNS, CnsStreams
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr.base import RecoveryCriterion
 from opencdarr.kinematics import FixedWing, Kinematics, MotionCommand, Multirotor
@@ -257,7 +257,7 @@ def run_encounter(
         cmd, gm = aps[i].step(states[i], GuidanceMemory(), perfs[i])
         cmds.append(cmd)
         gms.append(gm)
-    cns_state = CnsState.initial(2, communication)
+    cns_state = cns.initial_state(2)
 
     conflict = los = False
     min_sep = float("inf")

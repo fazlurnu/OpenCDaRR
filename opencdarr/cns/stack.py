@@ -33,6 +33,7 @@ from opencdarr.cns.base import (
     CommunicationModel,
     Message,
     NavigationModel,
+    NavState,
     SurveillanceModel,
 )
 from opencdarr.cns.surveillance import LastKnown
@@ -68,20 +69,29 @@ class CnsState:
     """
 
     comm: CommState = field(default_factory=CommState)
+    nav: NavState = field(default_factory=NavState)
     last_tx: tuple[AircraftState | None, ...] = ()
 
     @staticmethod
-    def initial(n: int, communication: CommunicationModel | None = None) -> CnsState:
+    def initial(
+        n: int,
+        communication: CommunicationModel | None = None,
+        navigation: NavigationModel | None = None,
+    ) -> CnsState:
         """The state at ``t = 0``: nothing delivered, nobody has transmitted yet.
 
-        The comm layer's own starting value comes from the *model*
-        (:meth:`~opencdarr.cns.base.CommunicationModel.initial_state`), so a stateful model finds
-        its own :class:`~opencdarr.cns.base.CommState` subclass already in place on the first tick.
-        Omitting the model (or running without one) gives the plain default, which is what the
-        perfect-delivery path uses.
+        Each layer's own starting value comes from its *model*
+        (:meth:`~opencdarr.cns.base.CommunicationModel.initial_state`,
+        :meth:`~opencdarr.cns.base.NavigationModel.initial_state`), so a stateful model finds its
+        own state subclass already in place on the first tick. Omitting a model (or running without
+        one) gives the plain default, which is what the perfect-delivery path uses.
+
+        Prefer :meth:`CNS.initial_state`, which passes both models for you — the two most expensive
+        defects in this package's history were a composition root forgetting to pass one.
         """
         comm = communication.initial_state() if communication is not None else CommState()
-        return CnsState(comm=comm, last_tx=(None,) * n)
+        nav = navigation.initial_state() if navigation is not None else NavState()
+        return CnsState(comm=comm, nav=nav, last_tx=(None,) * n)
 
 
 @dataclass(frozen=True)
@@ -120,6 +130,17 @@ class CNS:
     surveillance: SurveillanceModel | None = None
     share_intent: bool = False
 
+    def initial_state(self, n: int) -> CnsState:
+        """This stack's state at ``t = 0``, for a fleet of ``n`` aircraft.
+
+        Prefer this over calling :meth:`CnsState.initial` directly: it passes *this* stack's
+        models, so a stateful model always finds its own state subclass in place on the first tick
+        and a composition root cannot wire one layer's state while forgetting another's. That
+        failure mode is not hypothetical — the two most expensive defects in this package's
+        history were both a composition root omitting a model it should have passed.
+        """
+        return CnsState.initial(n, self.communication, self.navigation)
+
     def sense(
         self,
         states: Sequence[AircraftState],
@@ -144,11 +165,19 @@ class CNS:
             raise ValueError(
                 "communication requires a comm RNG stream (its own substream, ADR 0006 §6)"
             )
+        # The nav layer's own state advances first — once, for the whole roster, at a fixed offset
+        # from the start of the tick — so what an effect draws does not shift with which aircraft
+        # happened to fire (the discipline `Comm.step` applies to its gates). A model with no
+        # effects draws nothing here, so a stack without them is bit-for-bit the pre-seam stack
+        # (ADR 0021 §3).
+        nav_state = cns.nav
+        if self.navigation is not None and streams.nav is not None:
+            nav_state = self.navigation.evolve(nav_state, states, t, streams.nav)
         last_tx = list(cns.last_tx)
         selfs: dict[int, AircraftState] = {}
         for i in firing:
             if self.navigation is not None and streams.nav is not None:
-                fix = self.navigation.measure(states[i], t, streams.nav).state
+                fix = self.navigation.measure(nav_state, states[i], t, streams.nav).state
             else:
                 fix = states[i]
             selfs[i] = replace(fix, desired=states[i].desired)
@@ -185,4 +214,4 @@ class CNS:
                 traffic = [tx for j, tx in enumerate(last_tx) if j != i and tx is not None]
             perception[i] = Perception(own=selfs[i], traffic=traffic)
 
-        return CnsState(comm=comm_state, last_tx=tuple(last_tx)), perception
+        return CnsState(comm=comm_state, nav=nav_state, last_tx=tuple(last_tx)), perception

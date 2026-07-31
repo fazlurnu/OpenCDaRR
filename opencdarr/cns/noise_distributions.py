@@ -34,6 +34,7 @@ from __future__ import annotations
 import math
 
 import numpy as np
+from numpy.typing import NDArray
 
 # 95% radial CI -> per-axis 1-sigma for a 2D isotropic Gaussian: sigma = CI95 / sqrt(chi2_2,0.95).
 # Shared by position and velocity error: both are per-axis-Gaussian, isotropic 2D quantities
@@ -96,6 +97,22 @@ def make_mixture_gaussian(tail_ratio: float = 3.0, tail_weight: float = 0.1):
     return mixture_gaussian
 
 
+def _trapezoid(y: NDArray[np.float64], x: NDArray[np.float64]) -> float:
+    """Trapezoidal integration of ``y`` over ``x`` — ours, because NumPy's spelling moved.
+
+    ``np.trapz`` was removed in NumPy 2.0 in favour of ``np.trapezoid``, which does not exist on
+    1.x. ``pyproject.toml`` supports ``numpy>=1.26,<3``, so **neither name is safe** and no
+    ``getattr`` fallback type-checks on both versions. Four lines of the composite trapezoid rule
+    cost less than a version branch, and this is the same call ADR 0003 already had this project
+    make for the geodesy: own the small thing rather than depend on where it lives this year.
+
+    Written in NumPy's own summation order (``sum(diff(x) * (y[1:] + y[:-1]) / 2)``), so it returns
+    **bit-identical** results to ``np.trapz`` and the sigmas :func:`make_anisotropic_gaussian`
+    bisects for do not move.
+    """
+    return float(np.sum(np.diff(x) * (y[1:] + y[:-1]) / 2.0))
+
+
 def _radial_cdf(r: float, sigma_along: float, sigma_cross: float, n_grid: int = 4001) -> float:
     """P(sqrt(X^2 + Y^2) <= r) for independent X ~ N(0, sigma_along^2),
     Y ~ N(0, sigma_cross^2). Computed by numerical integration (no closed
@@ -108,7 +125,7 @@ def _radial_cdf(r: float, sigma_along: float, sigma_cross: float, n_grid: int = 
     z = y_bound / (sigma_cross * math.sqrt(2.0))
     erf_z = np.array([math.erf(v) for v in z])
     integrand = fx * erf_z  # 2*Phi(z*sqrt2) - 1 == erf(z)
-    return float(np.trapz(integrand, x))
+    return _trapezoid(integrand, x)
 
 
 def make_anisotropic_gaussian(var_ratio: float = 3.0):

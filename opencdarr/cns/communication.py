@@ -32,6 +32,7 @@ from opencdarr.cns.base import (
     LinkGate,
     Message,
 )
+from opencdarr.cns.hazard import hazard, toggle
 
 
 def constant_latency(seconds: float) -> LatencyDistribution:
@@ -241,46 +242,6 @@ class Comm(CommunicationModel):
         return CommState(held=held, in_flight=still_flying, gates=gate_states, t_prev=t)
 
 
-_SECONDS_PER_HOUR = 3600.0
-
-
-def _hazard(rate: float, elapsed: float) -> float:
-    """Probability of at least one event in ``elapsed`` **seconds** at constant ``rate`` [1/h].
-
-    ``1 - exp(-rate * elapsed / 3600)``, the exponential (memoryless) failure law — so the
-    parameter is a **rate** and the mean time to the event is ``1 / rate`` hours *whatever the
-    broadcast cadence*. Quoting a probability per broadcast instead would tie that mean to the
-    interval, and a cadence sweep would then be moving two things at once.
-
-    The rate is per **hour** because that is the unit reliability is quoted in: a mean time between
-    failures of 28 hours is readable where ``1e-5`` per second is not. ``elapsed`` stays in
-    seconds, the simulation's own unit, and the conversion happens here. Written with ``expm1``
-    because
-    ``1 - exp(-x)`` loses every significant digit for the small ``x`` a rare failure uses.
-    """
-    if rate <= 0.0 or elapsed <= 0.0:
-        return 0.0
-    return -math.expm1(-rate * elapsed / _SECONDS_PER_HOUR)
-
-
-def _toggle(
-    down: set[str], aid: str, p_fail: float, p_recover: float, rng: np.random.Generator
-) -> None:
-    """One draw for one subsystem of one aircraft: fail if it is up, recover if it is down.
-
-    Exactly one draw either way, and it is made whatever the current health *and whatever the
-    rates* — including when both are zero. That is what keeps the stream position a function of the
-    roster and the tick count rather than of the failure history, so sweeping a rate moves the
-    outages without moving the reception and latency draws underneath them (ADR 0006 §6, and the
-    same discipline ``scenario.sample_pairwise`` applies to its pinned slots).
-    """
-    if aid in down:
-        if float(rng.random()) < p_recover:
-            down.discard(aid)
-    elif float(rng.random()) < p_fail:
-        down.add(aid)
-
-
 @dataclass(frozen=True)
 class RadioHealthState:
     """Which aircraft currently have a failed transmitter / receiver — `RadioHealth`'s state.
@@ -371,13 +332,13 @@ class RadioHealth(LinkGate):
         """
         assert isinstance(own, RadioHealthState)
         tx_down, rx_down = set(own.tx_down), set(own.rx_down)
-        p_tx_fail = _hazard(self.tx_fail_rate, elapsed)
-        p_tx_recover = _hazard(self.tx_recover_rate, elapsed)
-        p_rx_fail = _hazard(self.rx_fail_rate, elapsed)
-        p_rx_recover = _hazard(self.rx_recover_rate, elapsed)
+        p_tx_fail = hazard(self.tx_fail_rate, elapsed)
+        p_tx_recover = hazard(self.tx_recover_rate, elapsed)
+        p_rx_fail = hazard(self.rx_fail_rate, elapsed)
+        p_rx_recover = hazard(self.rx_recover_rate, elapsed)
         for aid in receivers:  # agent order: the fleet's, so the pairwise runner's at n = 2
-            _toggle(tx_down, aid, p_tx_fail, p_tx_recover, rng)
-            _toggle(rx_down, aid, p_rx_fail, p_rx_recover, rng)
+            toggle(tx_down, aid, p_tx_fail, p_tx_recover, rng)
+            toggle(rx_down, aid, p_rx_fail, p_rx_recover, rng)
         return RadioHealthState(tx_down=frozenset(tx_down), rx_down=frozenset(rx_down))
 
     def admits(self, own: object, source: str, receiver: str) -> bool:

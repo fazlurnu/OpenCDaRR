@@ -99,7 +99,7 @@ def run(nav_noise: bool) -> Trace:
         if t + 1e-9 >= next_bc:
             # AC1 broadcasts its self-fix (noisy iff nav_noise); the source is what matters here
             if nav is not None:
-                msg1 = nav.measure(ac1, t, nav_rng)
+                msg1 = nav.measure(nav.initial_state(), ac1, t, nav_rng)
             else:
                 msg1 = Message(source="AC1", state=ac1, t_meas=t)
             bc = [msg1,

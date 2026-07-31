@@ -115,7 +115,7 @@ parent saw.
 
 code(r'''
 cns = CNS(communication=Comm(reception_prob=1.0, latency=0.0), surveillance=LastKnown())
-state = CnsState.initial(2, cns.communication)
+state = cns.initial_state(2)
 streams = CnsStreams(comm=comm_rng(0))
 
 truth = [aircraft("OWN", gs=10.0), aircraft("INT", gs=25.0)]
@@ -706,7 +706,7 @@ print(f"tokens left: {state.tokens}")
 
 # it drops straight into the stack like any other model
 cns = CNS(communication=TokenBucket(capacity=1), surveillance=LastKnown())
-cns_state = CnsState.initial(2, cns.communication)
+cns_state = cns.initial_state(2)
 cns_state, perception = cns.sense([aircraft("OWN"), aircraft("INT")], (0, 1), 0.0,
                                   cns_state, CnsStreams(comm=comm_rng(0)))
 for i, aid in enumerate(IDS):
