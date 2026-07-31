@@ -559,11 +559,20 @@ def _cache_params(
 
     The code fingerprint is added by :func:`opencdarr.cache.run_key`, so the library half of "same
     code" is already covered; :func:`identity` covers the user half.
+
+    ``methods`` is resolved **here**, against this condition, rather than being keyed as the bundle
+    the caller passed. A component declared as an axis — ``resolver=Sweep([...])`` and the other
+    seven in :data:`_COMPONENTS` — differs per condition while the bundle does not, so keying the
+    bundle made every level of a component sweep share one key: the first cell computed, and every
+    later one was served *its* numbers under a different name. Resolving here rather than at the
+    call site keeps the key and the run reading the same objects, which is the only version of this
+    that cannot drift apart again.
     """
+    resolved = _resolved_methods(condition, methods)
     return {
         "config": dataclasses.asdict(config),
         "methods": {
-            f.name: identity(getattr(methods, f.name)) for f in dataclasses.fields(methods)
+            f.name: identity(getattr(resolved, f.name)) for f in dataclasses.fields(resolved)
         },
         "geometry": {
             k: identity(v) for k, v in condition.values if k in _GEOMETRY_SLOTS
@@ -690,7 +699,15 @@ class ExperimentResult:
 
 
 def _metrics(result: Any) -> dict[str, Any]:
-    """The reported columns for one cell, per backend."""
+    """The reported columns for one cell, per backend.
+
+    ``median_min_sep`` is an MC column only, and deliberately so: it is an expectation over the
+    *whole* encounter population, which is exactly what a splitting estimator cannot give. IPS
+    discards the particles that fail to reach a shell and clones the survivors, so its cloud is a
+    sample of the rare set, not of the population — a median over it would be the median given
+    near-LoS, silently mislabelled. (Conditional-on-the-rare-set quantities *are* available from
+    IPS; item 8 of the build order is where they belong.)
+    """
     if isinstance(result, IPRResult):
         lo, hi = result.ci95
         return {
@@ -698,6 +715,7 @@ def _metrics(result: Any) -> dict[str, Any]:
             "p_los_lo": lo,
             "p_los_hi": hi,
             "ipr": result.ipr,
+            "median_min_sep": result.median_min_sep,
             "n_los": result.n_los,
             "n_encounters": result.n_encounters,
             "detection_rate": result.detection_rate,

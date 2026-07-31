@@ -355,6 +355,62 @@ different job — it is the **efficiency baseline** every phase-9 "extra vs nomi
 resolver, recovery and γ: one nominal run per geometry serves every cell of a sweep.
 </details>
 
+### 4d. The per-encounter separation record — **done 2026-07-31**
+
+- [x] `IPRResult` stores `min_seps: tuple[float, ...]` — one achieved minimum separation per
+      encounter, in fan-out order — instead of a bare `n_encounters: int`, which is now `len()` of
+      it. New `median_min_sep` property; `run_experiment` reports it as a `median_min_sep` column
+      on MC and, deliberately, not on IPS.
+
+**The scalar half of 4b, and only that half.** 4b's event lists (engagements, LoS episodes) are
+still deferred — they are what would cost the ~10 GB that item measured, and they still need the
+debounce policy settled first. One float per encounter costs nothing: 10 000 encounters is 80 kB,
+and the storage question 4b agonised over does not arise.
+
+**Why it was needed.** `estimate_ipr` computed `outcome.min_sep` for every encounter and threw it
+away, so the only thing an experiment could report was a *threshold* of it. Two resolvers that both
+clear a geometry completely were indistinguishable — `P(LoS) = 0` for both — with no way to ask how
+much room either left. Measured at `dpsi=30`, `pos_ci95=10`, n=200: MVP and VO both at
+`P(LoS) = 0`, medians **195.01 m** and **192.37 m**.
+
+**Nothing is stored twice, which is what makes the redundancy safe.** `n_los` and `min_seps` look
+like the same fact written down twice, and they would be a drift hazard if they could disagree.
+They cannot: `FleetEnv.advance` accumulates both from the *same* per-step segment minimum
+(`los = state.los or cur < rpz` beside `min_sep = min(state.min_sep, cur)`), so `los` is exactly
+`min_sep < rpz`. That identity is now a test rather than an observation, which is what licenses
+reading a median, a quantile or `P(min_sep <= d)` off the record and trusting it to describe the
+same population `p_los` does. `n_encounters` became a property for the same reason — it was the one
+number that genuinely *was* duplicated.
+
+**Not on IPS, and that is the interesting half.** IPS could print a number in this column and it
+would be wrong: splitting discards the particles that miss a shell and clones the survivors, so its
+cloud samples the rare set, not the encounter population — a median over it is a median *given*
+near-LoS wearing a population label. This is item 8's rule (*IPS gives the rare-event probability
+and anything conditional on the rare set; it cannot give unconditional population expectations*)
+meeting its first concrete metric, and it lands on the side item 8 predicted.
+
+**Verified.** Suite **469 passed** (+2); `ruff` clean on the touched files; `mypy` clean on them
+(the 13 remaining tree-wide errors are the pre-existing catalogue). `scripts/ips_validate.py
+--pos 40` **PASS** and bit-identical to the item-10 run — MC `P(LoS)=0.03025`, IPS `0.028452`,
+`collapsed=0/8`, same per-shell survival — so the change moved no number. Cold/warm cache round-trip
+returns identical records *and* identical `min_seps`. Three tests:
+
+- `test_min_seps_is_the_record_p_los_was_thresholded_from` — `n_los == sum(s < rpz)`, checked at
+  two noise levels because the equality is satisfied by any broken implementation when nothing
+  breaches, plus an assertion that the noisy pass actually had breaches to count.
+- `test_median_min_sep_separates_resolvers_p_los_cannot` — three MVP margins that all clear the
+  geometry, so `p_los == 0` for every one; the medians rise **76.5 → 120.0 → 165.4 m**. The
+  *ordering* is asserted rather than a bare inequality because it is predicted (MVP steers tangent
+  to a zone of radius `margin * rpz`), so it is a property of the resolver and not a threshold
+  tuned to the seed.
+- The golden anchor gained `median_min_sep == 126.45469556207351`; its counts (22/200, IPR 0.89)
+  did not move. `test_chunked_run_pools_back_to_the_serial_estimate` now also pins the pooled
+  record element-by-element, since equality covers `min_seps` — a stronger statement than the
+  counts agreeing, which they would also do if the chunks were concatenated backwards.
+
+- **Files:** `opencdarr/estimator.py`, `opencdarr/experiment.py` (`_metrics`),
+  `tests/test_estimator.py`, `tests/test_experiment.py`
+
 ## 5. Top-level exports — **done 2026-07-30**
 
 - [x] `opencdarr/__init__.py` re-exports 45 names across four groups: the contribution surfaces (the
@@ -470,6 +526,13 @@ documented escape hatch. A wrong key is worse than no cache.
 
 Measured: 6 conditions cold 12.3 s → warm 0.02 s (**~660×**), identical rows, one entry per
 condition; changing a resolver's margin writes a second entry rather than serving the first.
+
+> **Amended 2026-07-31.** The identity machinery was right and it was being handed the wrong
+> object: `_cache_params` keyed the caller's `Methods` bundle, while a component declared as an
+> *axis* lives on the condition — so every level of a component sweep collided on one key and the
+> later cells were served the first one's numbers. "A wrong key is worse than no cache" was the
+> stated principle, and this was a wrong key. Fixed by resolving the condition inside
+> `_cache_params`; see [[todo-might-be-a-bug]] entry 8 for the measurement and the regression.
 
 **`n_jobs`** spreads conditions over processes via `parallel.resolve_jobs` and `_joblib` (matching
 `parallel.py`'s `parallel_cls, delayed` naming). Conditions are independent seeded fan-outs, so this

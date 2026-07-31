@@ -22,6 +22,7 @@ one backend and be ignored under the other — with nothing in either result to 
 from __future__ import annotations
 
 import math
+import statistics
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -85,16 +86,48 @@ class IPRResult:
     conflict (:func:`~opencdarr.scenario.create_conflict`, guarded by the ``dcpa_max <= rpz`` check
     in :mod:`opencdarr.config`), ``IPR = 1 - P(LoS)`` exactly — they are one quantity under two
     names, not two quantities.
+
+    **The record is** :attr:`min_seps`, **one achieved minimum separation per encounter**, in
+    fan-out order; the encounter count is its length rather than a second stored number, so the two
+    cannot disagree about how many encounters there were. Keeping it turns the binary LoS outcome
+    back into the continuous quantity it was thresholded from: ``P(LoS)`` is a single point on the
+    CDF of these values, and any *other* point — ``P(min_sep <= 25)``, a median, a quantile — is
+    now a read rather than another simulation. This is the scalar half of the encounter record
+    designed in ``vault/run-experiment-todo.md`` item 4b; the event lists (engagements, LoS
+    episodes) it also specifies are still to come, and are what would cost real storage. One float
+    per encounter does not: 10 000 encounters is 80 kB.
     """
 
-    n_encounters: int
+    min_seps: tuple[float, ...]  # achieved minimum separation [m], one per encounter
     n_los: int
     n_conflict: int  # diagnostic: how many were *detected* as conflicts, not the denominator
+
+    @property
+    def n_encounters(self) -> int:
+        """The denominator: how many encounters were run. Derived from :attr:`min_seps`."""
+        return len(self.min_seps)
 
     @property
     def p_los(self) -> float:
         """P(loss of separation) — the fraction of encounters in which separation was lost."""
         return self.n_los / self.n_encounters if self.n_encounters else float("nan")
+
+    @property
+    def median_min_sep(self) -> float:
+        """Median achieved minimum separation over all encounters [m], ``nan`` when there are none.
+
+        Named for what it measures. It is *not* ``dcpa``, which everywhere else in this package is
+        the **predicted** miss distance a detector computes from a straight-line extrapolation;
+        this is the miss distance the encounter actually flew, after resolution, measured over each
+        step rather than at its endpoints (:func:`~opencdarr.fleet._segment_min_sep`).
+
+        A median rather than a mean because the distribution is bounded below by zero and skewed:
+        a resolver that clears almost everything but folds a few encounters onto the protected zone
+        has a mean dragged by the tail, which is precisely the part :attr:`p_los` already reports.
+        The two answer different questions — "how often did it fail" and "how much room did it
+        leave when it did not" — and a resolver can win one while losing the other.
+        """
+        return statistics.median(self.min_seps) if self.min_seps else float("nan")
 
     @property
     def ipr(self) -> float:
@@ -129,9 +162,15 @@ def combine_ipr(results: Sequence[IPRResult]) -> IPRResult:
     averaging per-chunk ratios would weight a chunk of few encounters as heavily as one of many.
     Summing counts is exact here because every chunk is a disjoint slice of the same encounter
     fan-out (see :func:`estimate_ipr`'s ``seqs``).
+
+    The per-encounter records concatenate in argument order, which reproduces the serial run's
+    order when the chunks are passed in the order their slices were taken — the ``children(root,
+    lo, hi)`` convention :func:`estimate_ipr` documents. Order does not affect
+    :attr:`~IPRResult.median_min_sep` or any other aggregate, so a caller who pools out of order
+    still gets the right numbers; it only affects which encounter is which if they index in.
     """
     return IPRResult(
-        n_encounters=sum(r.n_encounters for r in results),
+        min_seps=tuple(s for r in results for s in r.min_seps),
         n_los=sum(r.n_los for r in results),
         n_conflict=sum(r.n_conflict for r in results),
     )
@@ -177,7 +216,7 @@ def estimate_ipr(
     serial run. That is the reproducible way to chunk; offsetting the seed per chunk (``seed + i``)
     is not, because those trees can correlate and their union is not the serial run's tree at all.
     """
-    n_encounters = 0
+    min_seps: list[float] = []
     n_conflict = 0
     n_los = 0
     encounters = (
@@ -240,8 +279,8 @@ def estimate_ipr(
         # separation whether or not the detector ever flagged that encounter. (The old code nested
         # the LoS count inside the conflict count, so an undetected breach was silently dropped
         # from the numerator as well as the denominator.)
-        n_encounters += 1
+        min_seps.append(outcome.min_sep)
         n_conflict += int(outcome.conflict)
         n_los += int(outcome.los)
 
-    return IPRResult(n_encounters=n_encounters, n_los=n_los, n_conflict=n_conflict)
+    return IPRResult(min_seps=tuple(min_seps), n_los=n_los, n_conflict=n_conflict)

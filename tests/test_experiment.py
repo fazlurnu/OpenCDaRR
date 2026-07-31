@@ -148,6 +148,11 @@ def test_columns_adapt_to_the_backend() -> None:
 
     They are not forced into one schema, because neither can honestly fill the other's columns —
     there is no ``n_encounters`` for a splitting run and no ``n_collapsed`` for plain MC.
+
+    ``median_min_sep`` is the sharpest case, because IPS *could* be made to print a number here and
+    it would be wrong: splitting discards the particles that miss a shell and clones the survivors,
+    so its cloud samples the rare set rather than the encounter population. The median over it is a
+    median given near-LoS wearing the label of a population median. Absent is the honest column.
     """
     mc = run_experiment(_PINNED, methods=_methods(), backend=MC(n_encounters=20),
                    base_config=_base(), seed=0).records()[0]
@@ -156,10 +161,10 @@ def test_columns_adapt_to_the_backend() -> None:
                     base_config=_base(), seed=0).records()[0]
 
     assert {"p_los", "p_los_lo", "p_los_hi"} <= set(mc) & set(ips)  # the shared core
-    assert {"n_encounters", "n_los", "ipr", "detection_rate"} <= set(mc)
+    assert {"n_encounters", "n_los", "ipr", "detection_rate", "median_min_sep"} <= set(mc)
     assert "n_collapsed" not in mc
     assert {"n_collapsed", "reps"} <= set(ips)
-    assert "n_encounters" not in ips
+    assert not {"n_encounters", "median_min_sep"} & set(ips)
 
 
 def test_cell_returns_the_raw_estimator_result() -> None:
@@ -387,6 +392,31 @@ def test_changing_a_component_changes_the_cache_key(tmp_path: Path) -> None:
     run_experiment(_PINNED, methods=_methods(resolver=MVP(1.05)), cache=cc, **kw)
     run_experiment(_PINNED, methods=_methods(resolver=MVP(1.4)), cache=cc, **kw)
     assert len(list((tmp_path / "cache").glob("*.pkl"))) == 2  # two keys, not one
+
+
+def test_a_swept_component_reaches_the_cache_key(tmp_path: Path) -> None:
+    """A component swept as an *axis* keys per level — the regression for a real collision.
+
+    The test above changes the resolver through the ``Methods`` bundle, which was always keyed.
+    Sweeping it changes it per *condition* instead, and the key was built from the bundle the
+    caller passed rather than from the bundle each condition actually runs — so every level of a
+    component sweep collided on one key. The first cell computed and the rest were served its
+    result: measured at ``dpsi=2``, VO reported MVP's ``P(LoS)=0.05`` instead of its own 0.78.
+
+    Asserted as *cached equals uncached*, which is the promise the cache makes (it may only ever
+    save time, never change a result), rather than as an entry count — a count says the keys
+    differ without saying the right numbers came back, and the bug produced plausible ones.
+    """
+    cc = CacheConfig(dir=tmp_path / "cache")
+    resolvers = {"mvp": MVP(1.05), "vo": VO(1.05)}
+    declared = {**_PINNED, "resolver": Sweep(list(resolvers), build=resolvers.__getitem__)}
+    kw = dict(methods=_methods(), backend=MC(n_encounters=40), base_config=_base(), seed=0)
+
+    uncached = run_experiment(declared, **kw).records()
+    assert uncached[0]["p_los"] != uncached[1]["p_los"], "the two levels must be distinguishable"
+    assert run_experiment(declared, cache=cc, **kw).records() == uncached  # cold: writes
+    assert run_experiment(declared, cache=cc, **kw).records() == uncached  # warm: reads back
+    assert len(list((tmp_path / "cache").glob("*.pkl"))) == 2
 
 
 def test_parallel_conditions_give_the_serial_answer() -> None:

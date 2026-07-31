@@ -241,7 +241,56 @@ fail-fast candidate is narrower: warn or raise when a **declaration** carries a 
 certainly not what the caller meant. Worth checking the other declarable keys for the same
 property before fixing just this one.
 
-## 8. Smaller things, noted in passing
+## 8. A swept component never reached the cache key — **fixed 2026-07-31**
+
+**The worst kind of bug this project can have: `cache=True` returned wrong numbers, silently, and
+they looked right.** Two conditions differing only by a swept component shared one cache key, so
+the first cell computed and every later one was served *its* result under a different name.
+Measured at `dpsi=2°`, `pos_ci95=10`, n=60:
+
+| | uncached | `cache=True` |
+|---|---|---|
+| MVP | 0.050 | 0.050 |
+| **VO** | **0.783** | **0.050** |
+
+VO reported MVP's number. Nothing in the table, the card or the entry count says so — the run is
+fast, the row is plausible, and the conclusion ("the two resolvers are equivalent") is exactly the
+kind of null result a sweep is run to find.
+
+**Cause.** `_run_one` passed the caller's `Methods` bundle to `_cache_params`, which keyed
+`identity()` off it. But a component declared as an axis lives on the *condition*, not the bundle —
+`_run_mc` calls `_resolved_methods(condition, methods)` and the key never did. All eight of
+`_COMPONENTS` were affected (`detector`, `resolver`, `recovery`, `navigation`, `communication`,
+`surveillance`, `kinematics`, `perf`), i.e. every categorical benchmark the runner exists to
+support. `identity()` itself was never at fault: it was being handed the wrong object.
+
+**Fix.** `_cache_params` resolves the condition itself rather than trusting its caller to have done
+it, so the key and the run read the same objects and cannot drift apart again. One line, no
+behaviour change anywhere else: `_resolved_methods` returns the bundle unchanged when no component
+is declared, so **a declaration without a component axis keeps the key it had** — verified — and
+existing cache entries stay valid.
+
+**Why it survived.** `test_changing_a_component_changes_the_cache_key` covers exactly this hazard,
+but changes the resolver through the `Methods` *bundle*, which was always keyed. The axis path had
+no test. And the cold/warm test (`warm.records() == cold.records()`) passes happily with the bug —
+both halves are wrong in the same way.
+
+The regression added asserts **cached equals uncached**, which is the promise the cache actually
+makes (*may only ever save time, never change a result*), rather than counting entries. A count
+would have said the keys differ without saying the right numbers came back — and wrong-but-plausible
+numbers were the whole failure mode. It also asserts the two levels are distinguishable at all
+first, so it cannot pass vacuously.
+
+**The general rule this is the second instance of:** *anything that varies per condition must be
+derived from the condition, not from the declaration.* Entry 6 is the same shape one layer over —
+`_config_for` builds its `Config` with `dataclasses.replace` and never re-validates, so a declared
+parameter bypasses every config constraint. Both come from a per-condition value being read off the
+wrong object.
+
+Found while writing `examples/handbook/resolver_comparison.ipynb`, by an assertion that a cached
+re-run of a sweep reproduces the uncached one. Worth keeping that assertion in the notebook.
+
+## 9. Smaller things, noted in passing
 
 - **`test_every_sampled_encounter_is_a_conflict` passed by accident** of its config
   (`tlos < t_lookahead`), not by construction. Re-documented and given an explicit precondition

@@ -79,6 +79,10 @@ def test_chunked_run_pools_back_to_the_serial_estimate() -> None:
     This is what makes a parallel MC anchor reproducible: chunks address slices of the *one* seed
     tree the serial run walks. Rooting each chunk at ``seed + i`` instead would give a different
     tree altogether — the pattern this seam exists to replace.
+
+    Equality covers the per-encounter ``min_seps`` too, so this pins the pooled record
+    element-by-element and in order — a stronger statement than the counts agreeing, which they
+    would also do if the chunks were concatenated backwards.
     """
     cfg = _config(n=120)
     whole = estimate_ipr(cfg, M600, StateBased(), MVP(1.05), PastCPA())
@@ -94,8 +98,8 @@ def test_chunked_run_pools_back_to_the_serial_estimate() -> None:
 
 def test_combine_ipr_recomputes_the_ratio_from_pooled_counts() -> None:
     """The rates are ratios, so chunks pool by counts — not by averaging their per-chunk ratios."""
-    pooled = combine_ipr([IPRResult(n_encounters=2, n_los=1, n_conflict=2),
-                          IPRResult(n_encounters=98, n_los=0, n_conflict=98)])
+    pooled = combine_ipr([IPRResult(min_seps=(10.0, 60.0), n_los=1, n_conflict=2),
+                          IPRResult(min_seps=(70.0,) * 98, n_los=0, n_conflict=98)])
     assert pooled.n_encounters == 100
     assert pooled.n_los == 1
     assert pooled.ipr == 0.99  # not (0.5 + 1.0) / 2 = 0.75, the per-chunk average
@@ -125,6 +129,51 @@ def test_golden_ipr_at_midrange_noise() -> None:
     )
     assert (result.n_los, result.n_conflict) == (22, 200)
     assert result.ipr == 0.89
+    assert result.median_min_sep == 126.45469556207351
+
+
+def test_min_seps_is_the_record_p_los_was_thresholded_from() -> None:
+    """``n_los`` is recoverable from ``min_seps`` — the two are one measurement, not two.
+
+    ``IPRResult`` now stores both a per-encounter separation and a LoS count, which would be the
+    same fact written down twice if they could ever disagree. They cannot, and this is why:
+    ``FleetEnv.advance`` accumulates ``min_sep`` and ``los`` from the *same* per-step segment
+    minimum (``los = state.los or cur < rpz``, ``min_sep = min(state.min_sep, cur)``), so
+    ``los`` is exactly ``min_sep < rpz``. Asserting it here is what licenses reading a median, a
+    quantile or ``P(min_sep <= d)`` off the record and trusting it to be the same population
+    ``p_los`` describes.
+
+    Checked at two noise levels because the equality is uninteresting when nothing breaches: at
+    ``pos_ci95=0`` both sides are 0, which any broken implementation satisfies.
+    """
+    for cfg in (_config(), _noisy_config()):
+        result = estimate_ipr(
+            cfg, M600, StateBased(), MVP(1.05), PastCPA(bouncing_guard=False), GnssNavigation(),
+        )
+        assert len(result.min_seps) == cfg.n_encounters == result.n_encounters
+        assert result.n_los == sum(1 for s in result.min_seps if s < cfg.conflict.rpz)
+    assert result.n_los > 0  # the noisy pass actually exercised the branch it is checking
+
+
+def test_median_min_sep_separates_resolvers_p_los_cannot() -> None:
+    """The reason to keep the record: ``p_los`` saturates at 0, the median keeps reporting.
+
+    Three MVP margins on a geometry all three clear completely. ``p_los`` is 0 for every one of
+    them, so on that metric alone the three are indistinguishable and a wider resolution zone looks
+    free. The median says what it actually bought: 76 m of room at ``margin=1.05``, 165 m at
+    ``2.0``.
+
+    The ordering is asserted, not just the inequality, because it is *predicted* — MVP steers to
+    make the trajectory tangent to a zone of radius ``margin * rpz``, so a larger margin must leave
+    more separation. An inequality that merely happened to hold at this seed would be a threshold
+    tuned to the run rather than a property of the resolver.
+    """
+    cfg = _config()
+    results = [estimate_ipr(cfg, M600, StateBased(), MVP(m), PastCPA()) for m in (1.05, 1.5, 2.0)]
+    assert all(r.p_los == 0.0 for r in results)  # the premise: p_los cannot tell these apart
+    medians = [r.median_min_sep for r in results]
+    assert medians == sorted(medians)
+    assert medians[0] > cfg.conflict.rpz  # a median inside the PZ would contradict p_los == 0
 
 
 def test_denominator_does_not_move_with_the_resolver() -> None:
