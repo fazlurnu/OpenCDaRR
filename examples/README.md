@@ -43,6 +43,12 @@ The notebooks in [`handbook/`](handbook/) are the runnable source behind the pag
 [opencdarr.github.io](https://opencdarr.github.io). They are narrower than the numbered examples
 above — one module per notebook — and several of them generate the figures the site publishes.
 
+- [`handbook/tutorial_your_first_experiment.ipynb`](handbook/tutorial_your_first_experiment.ipynb) —
+  **start here if you are new.** A plain-English tutorial that assumes no prior knowledge: one
+  encounter, why one encounter proves nothing, many encounters and the interval around the answer,
+  then a `run_experiment` sweep. Ends on the lesson the plots make hardest to miss — the median
+  closest approach stays flat at ~125 m while P(LoS) climbs 137-fold, so the typical case says
+  nothing about the failures.
 - [`handbook/a_first_run.ipynb`](handbook/a_first_run.ipynb) — the shortest path from an empty
   notebook to a Monte-Carlo result: spawn two aircraft, run without resolution, add resolution, add
   CNS uncertainty, sweep, add a waypoint, add wind.
@@ -64,6 +70,22 @@ above — one module per notebook — and several of them generate the figures t
 - [`handbook/communication.ipynb`](handbook/communication.ipynb) — the **C** of CNS: broadcast
   cadence, phase and jitter; reception probability and the update interval it produces; latency
   shapes; and the two seams for extending the channel.
+- [`handbook/circle_scenario.ipynb`](handbook/circle_scenario.ipynb) — `N` multirotors spawned on a
+  ring, each flying to the point diametrically opposite, so every aircraft conflicts with every
+  other at the same instant. Starts at four drones with the count as a parameter, sweeps it to 24,
+  and adds the standard CNS stack (`GnssNavigation` + `Comm` + `LastKnown`) over twenty seeds.
+  Includes a timestep-refinement check that separates one real breakdown (N = 24) from one that is
+  only an artifact of `dt = 1.0` (N = 20).
+- [`handbook/traffic_density.ipynb`](handbook/traffic_density.ipynb) — building *traffic* rather
+  than a hand-placed encounter: the entry-bearing rule from Groot, Ellerbroek & Hoekstra (2024)
+  Fig. 4 (left), where `arcsin` makes the miss distance from the centre uniform across the diameter
+  so the traffic comes out homogeneous. Verifies that claim against the naive perimeter rule, keeps
+  the paper's two concentric areas (spawn vs. measurement, at the same 1.35/1.62 ratio), then sweeps
+  density from 5 to 25 aircraft/km² with perfect information and with the standard CNS stack
+  (`MVP` + `FTR`, 10 m / 1 m/s). With perfect information the worst pair sits on the protected zone
+  at every density — `FTR` resumes as soon as reverting is clear, so the fleet rides the boundary
+  and traffic density barely registers. Uncertainty of this size mostly *adds* margin through
+  over-avoidance, and only turns over at the top of the range.
 - [`handbook/mixed_fleet.ipynb`](handbook/mixed_fleet.ipynb) — a multirotor against a small
   fixed-wing in one encounter: `Airframe` bundles each aircraft's envelope with its integrator, and
   `Methods(airframes=[...])` declares one per aircraft. Runs the same declaration under `MC` and

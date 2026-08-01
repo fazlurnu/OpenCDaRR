@@ -1,0 +1,156 @@
+[
+ {
+  "n": 2,
+  "rep": 0,
+  "started": "2026-08-01T20:20:00+02:00",
+  "wallclock_s": 2.25933829206042,
+  "sim_t_s": 296.6,
+  "steps": 5932,
+  "ntraf": 2,
+  "max_confpairs": 2,
+  "simdt": 0.05
+ },
+ {
+  "n": 2,
+  "rep": 1,
+  "started": "2026-08-01T20:20:03+02:00",
+  "wallclock_s": 2.0121433751191944,
+  "sim_t_s": 296.6,
+  "steps": 5932,
+  "ntraf": 2,
+  "max_confpairs": 2,
+  "simdt": 0.05
+ },
+ {
+  "n": 2,
+  "rep": 2,
+  "started": "2026-08-01T20:20:05+02:00",
+  "wallclock_s": 1.8291211251635104,
+  "sim_t_s": 296.6,
+  "steps": 5932,
+  "ntraf": 2,
+  "max_confpairs": 2,
+  "simdt": 0.05
+ },
+ {
+  "n": 4,
+  "rep": 0,
+  "started": "2026-08-01T20:20:07+02:00",
+  "wallclock_s": 1.9280564170330763,
+  "sim_t_s": 296.6,
+  "steps": 5932,
+  "ntraf": 4,
+  "max_confpairs": 12,
+  "simdt": 0.05
+ },
+ {
+  "n": 4,
+  "rep": 1,
+  "started": "2026-08-01T20:20:09+02:00",
+  "wallclock_s": 1.8170188749209046,
+  "sim_t_s": 296.6,
+  "steps": 5932,
+  "ntraf": 4,
+  "max_confpairs": 12,
+  "simdt": 0.05
+ },
+ {
+  "n": 4,
+  "rep": 2,
+  "started": "2026-08-01T20:20:11+02:00",
+  "wallclock_s": 1.7668463750742376,
+  "sim_t_s": 296.6,
+  "steps": 5932,
+  "ntraf": 4,
+  "max_confpairs": 12,
+  "simdt": 0.05
+ },
+ {
+  "n": 8,
+  "rep": 0,
+  "started": "2026-08-01T20:20:13+02:00",
+  "wallclock_s": 1.7602022080682218,
+  "sim_t_s": 296.6,
+  "steps": 5932,
+  "ntraf": 8,
+  "max_confpairs": 56,
+  "simdt": 0.05
+ },
+ {
+  "n": 8,
+  "rep": 1,
+  "started": "2026-08-01T20:20:14+02:00",
+  "wallclock_s": 2.1469322501216084,
+  "sim_t_s": 296.6,
+  "steps": 5932,
+  "ntraf": 8,
+  "max_confpairs": 56,
+  "simdt": 0.05
+ },
+ {
+  "n": 8,
+  "rep": 2,
+  "started": "2026-08-01T20:20:17+02:00",
+  "wallclock_s": 2.0416539588477463,
+  "sim_t_s": 296.6,
+  "steps": 5932,
+  "ntraf": 8,
+  "max_confpairs": 56,
+  "simdt": 0.05
+ },
+ {
+  "n": 16,
+  "rep": 0,
+  "started": "2026-08-01T20:20:19+02:00",
+  "wallclock_s": 1.8760000420734286,
+  "sim_t_s": 296.6,
+  "steps": 5932,
+  "ntraf": 16,
+  "max_confpairs": 240,
+  "simdt": 0.05
+ },
+ {
+  "n": 16,
+  "rep": 1,
+  "started": "2026-08-01T20:20:21+02:00",
+  "wallclock_s": 1.8426389580126852,
+  "sim_t_s": 296.6,
+  "steps": 5932,
+  "ntraf": 16,
+  "max_confpairs": 240,
+  "simdt": 0.05
+ },
+ {
+  "n": 32,
+  "rep": 0,
+  "started": "2026-08-01T20:20:23+02:00",
+  "wallclock_s": 2.0207388328853995,
+  "sim_t_s": 296.6,
+  "steps": 5932,
+  "ntraf": 32,
+  "max_confpairs": 992,
+  "simdt": 0.05
+ },
+ {
+  "n": 32,
+  "rep": 1,
+  "started": "2026-08-01T20:20:25+02:00",
+  "wallclock_s": 2.1951393340714276,
+  "sim_t_s": 296.6,
+  "steps": 5932,
+  "ntraf": 32,
+  "max_confpairs": 992,
+  "simdt": 0.05
+ },
+ {
+  "n": 64,
+  "rep": 0,
+  "started": "2026-08-01T20:20:27+02:00",
+  "wallclock_s": 2.4629180838819593,
+  "sim_t_s": 296.6,
+  "steps": 5932,
+  "ntraf": 64,
+  "max_confpairs": 4032,
+  "simdt": 0.05
+ }
+]
