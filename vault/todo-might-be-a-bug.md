@@ -337,7 +337,72 @@ problem.
 Found 2026-07-31 while tracing what the environment actually hands back to IPS for the handbook's
 architecture diagram.
 
-## 10. Smaller things, noted in passing
+## 10. The IPS confidence interval is centred on a different quantity from the point estimate
+
+**A published number can come out with an interval that does not contain it.** Measured, from a real
+run — 90° crossing, MVP + Past-CPA, `pos_ci95 = 20`, 400 particles × 12 replications, `dt = 0.2`:
+
+```
+P = 0.000162293   CI[1.91587e-05, 0.000144433]
+```
+
+The upper bound is **below** the estimate. That is not a wide interval, it is an interval for a
+different quantity.
+
+**Cause, in two lines of `combine_replications`.** The point estimate is the *arithmetic* mean of
+the per-replication `P̂`, which is correct and is what ADR 0017 §5 requires (each replication is
+unbiased for the mean, so their average is too):
+
+```python
+prob=float(np.mean(probs)),
+ci=_log_ci(probs),
+```
+
+But `_log_ci` averages the **logs** and exponentiates, so its interval is centred on the *geometric*
+mean. By AM–GM the geometric mean is strictly below the arithmetic mean for any spread at all, so
+**the interval always sits low**; it only falls clear of the estimate once the spread is wide enough
+that `exp(1.96·se)` no longer covers the gap. `_log_ci`'s own docstring says "a 95% CI for the mean
+rare-event probability" — that is what it is labelled and not what it computes.
+
+**How often it bites**, drawing 12 replications from a lognormal and testing `ci_hi < prob`
+(`_log_ci` is a pure function, so this needs no simulation):
+
+| replication spread (lognormal σ) | interval excludes the estimate |
+|---|---|
+| 0.3 | 0.0% |
+| 0.6 | 0.1% |
+| 1.0 | **10.6%** |
+| 1.5 | **55.3%** |
+
+So it is invisible in the well-resolved regime — which is exactly why it survived. Every validated
+run (the `pos=40` rung, the twelve-cell sweep on the handbook's validation page) has a tight
+replication spread and reports a sane interval. It only surfaces where the ladder is under-resourced
+and the replications scatter, which is precisely where a reader most needs the interval to be right.
+
+**Three candidate fixes, not yet chosen.**
+
+- *Interval around the arithmetic mean.* A t-interval or a bootstrap on the raw `probs`. Matches the
+  stated purpose, but throws away the log-space treatment that exists because the product estimator
+  is right-skewed — and a normal interval on a skewed positive quantity can go below zero, which is
+  the reason it was in log space in the first place.
+- *Report the geometric mean as `prob`.* Makes the two consistent, and is wrong: it is a biased
+  estimator of the quantity ADR 0017 says to report.
+- *Relabel.* Keep both numbers and say plainly that the interval is for the geometric mean (≈ the
+  median of the replication distribution) while `prob` is the mean. Honest, cheap, and leaves a
+  reader with two numbers whose relationship needs a sentence every time.
+
+The first looks right, with a bootstrap rather than a t-interval so the skew is respected without
+assuming normality. Whatever is chosen, `RareEventEstimate` should carry a **test that the interval
+brackets `prob`** — a property that holds for every correct construction and for none of the broken
+ones.
+
+Found 2026-07-31 while checking whether IPS is sensitive to `dt` at 90°. Note the *other* finding
+from that run, which is not a bug: at `pos_ci95 = 20` the estimate moved by a factor of three when
+the budget went from 200×6 to 400×12, so nothing about `dt` was resolvable there. At
+`pos_ci95 = 40` the same comparison was clean (8% across `dt` 1.0 vs 0.05, 0/6 collapsed both
+times, agreeing with a 2000-encounter MC anchor at 1.5e-3).
+
+## 11. Smaller things, noted in passing
 
 - **`test_every_sampled_encounter_is_a_conflict` passed by accident** of its config
   (`tlos < t_lookahead`), not by construction. Re-documented and given an explicit precondition

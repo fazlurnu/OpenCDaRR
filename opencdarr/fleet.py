@@ -92,6 +92,45 @@ class Agent:
         # ``build``).
         if self.kinematics is not None:
             self.kinematics.validate_performance(self.perf)
+        # An initial speed outside this aircraft's own envelope is a scenario specification error,
+        # the same one :func:`~opencdarr.state.create_aircraft` refuses. It is re-checked here
+        # because the scenario sampler builds an ``AircraftState`` directly rather than through
+        # that constructor, so a mixed fleet could otherwise spawn a fixed-wing below its stall
+        # speed and fly the whole encounter there without a word.
+        if not self.perf.v_min <= self.state.gs <= self.perf.v_max:
+            raise ValueError(
+                f"initial ground speed {self.state.gs} m/s for {self.state.id!r} is outside its "
+                f"envelope [{self.perf.v_min}, {self.perf.v_max}] m/s. In a mixed fleet, set each "
+                f"aircraft's speed for its own airframe (the sampler's `speed` / `gs_intr`)."
+            )
+
+
+@dataclass(frozen=True)
+class Airframe:
+    """One aircraft's physics: what it is capable of, and how it moves.
+
+    The pair :class:`Agent` needs and the pair that must agree — a :class:`Kinematics` integrator
+    reads fields off a :class:`~opencdarr.performance.Performance`, and a mismatched pairing flies
+    silently wrong rather than failing (a fixed-wing given a multirotor's ``phi_max == 0`` never
+    banks, so it can never turn). Bundling them makes the mismatch **unrepresentable in a
+    declaration** rather than caught later: the check runs here, at the line you wrote it.
+
+    Exists because a fleet may be *mixed*. :class:`~opencdarr.experiment.Methods` carries one
+    ``perf`` and one ``kinematics``, which is the right shape when every aircraft is the same
+    airframe; a sequence of these is how an experiment says otherwise. ``kinematics=None`` keeps
+    :class:`Agent`'s default (:class:`~opencdarr.kinematics.Multirotor`, ADR 0007).
+    """
+
+    perf: Performance
+    kinematics: Kinematics | None = None
+
+    def __post_init__(self) -> None:
+        if self.kinematics is not None:
+            self.kinematics.validate_performance(self.perf)
+
+    def agent(self, state: AircraftState, autopilot: Autopilot | None = None) -> Agent:
+        """This airframe flying ``state`` — the one place the pair is unpacked into an `Agent`."""
+        return Agent(state, self.perf, kinematics=self.kinematics, autopilot=autopilot)
 
 
 @dataclass(frozen=True)

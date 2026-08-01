@@ -16,10 +16,11 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from opencdarr import geo
+from opencdarr import experiment, geo
 from opencdarr.cache import code_fingerprint
 from opencdarr.cd import StateBased
 from opencdarr.cns import Comm, GnssNavigation
@@ -51,10 +52,11 @@ from opencdarr.experiment import (
     run_experiment,
     run_one_experiment,
 )
-from opencdarr.ips import RareEventEstimate
-from opencdarr.kinematics import Kinematics, MotionCommand
+from opencdarr.fleet import Agent, Airframe
+from opencdarr.ips import RareEventEstimate, estimate_rare_prob
+from opencdarr.kinematics import FixedWing, Kinematics, MotionCommand
 from opencdarr.kinematics.base import odometry_update
-from opencdarr.performance import M600, Performance
+from opencdarr.performance import M600, SMALL_FIXEDWING, Performance
 from opencdarr.rng import generator, root_seed_sequence
 from opencdarr.state import AircraftState
 from opencdarr.wind import NO_WIND, WindField
@@ -616,3 +618,114 @@ def test_the_declaration_is_a_declarable_axis() -> None:
     )
     assert len(result) == 2
     assert result.axes == ("pos_ci95_declared",)
+
+
+def test_wind_reaches_both_backends(monkeypatch: pytest.MonkeyPatch) -> None:
+    """**The third instance of one defect.** A run setting the estimators accept, and this module
+    silently dropped.
+
+    ``estimate_ipr`` and ``build_env`` have both taken a ``wind`` since Phase 5, and
+    ``experiment.py`` passed it to neither — so a declared wind was ignored under MC *and* under
+    IPS, and a wind sweep would have returned identical cells. Same shape as ``kinematics``
+    reaching IPS but not MC (build-order item 2) and ``schedule`` reaching MC but not IPS (item
+    11): a parameter one layer down accepts, that the layer above forgets to forward.
+
+    MC is checked on the numbers, because a strong crosswind must move an outcome measured on the
+    true states. IPS is checked white-box on the environment it builds, for the reason item 11's
+    regression gives: inferring the wiring from a statistical difference is slower and flakier
+    than reading the ``FleetEnv`` the backend actually constructed.
+    """
+    kw = dict(backend=MC(n_encounters=40), base_config=_base(), seed=0)
+    still, blown = (
+        run_experiment(_PINNED, methods=_methods(wind=w), **kw).cell().min_seps
+        for w in (WindField(0.0, 0.0), WindField(12.0, 0.0))
+    )
+    assert still != blown, "a 12 m/s crosswind did not reach the MC backend"
+
+    captured: dict[str, WindField] = {}
+
+    def spy(build_initial: Any, shells: Any, **kwargs: Any) -> Any:
+        captured["wind"] = build_initial(root_seed_sequence(0)).env.wind
+        return estimate_rare_prob(build_initial, shells, **kwargs)
+
+    monkeypatch.setattr(experiment, "estimate_rare_prob", spy)
+    run_experiment(
+        _PINNED, methods=_methods(wind=WindField(12.0, 0.0)),
+        backend=IPS(shells=[60.0, 50.0], n_particles=8, reps=1),
+        base_config=_base(), seed=0,
+    )
+    assert captured["wind"] == WindField(12.0, 0.0)
+
+
+def test_a_mixed_fleet_reaches_both_backends(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``airframes`` gives each aircraft its own physics, on MC *and* IPS.
+
+    Before it, ``Methods`` carried one ``perf`` and one ``kinematics`` and both Agent-construction
+    sites passed the same object twice, so a multirotor-versus-fixed-wing encounter — which
+    ``run_fleet`` has always supported — could be run once by hand and never *swept*.
+
+    MC is checked on the numbers; IPS white-box on the environment it builds, for the reason the
+    ``schedule`` and ``wind`` regressions give: reading the wiring off a statistical difference is
+    slower and flakier than reading the ``FleetEnv`` the backend actually constructed. The adapter
+    assertion is the load-bearing one — a fixed-wing rejects the raw ``target_velocity`` every
+    resolver returns, so a mixed fleet only works if the per-aircraft setpoint adapter comes with
+    it.
+    """
+    mixed = [Airframe(M600), Airframe(SMALL_FIXEDWING, FixedWing())]
+    pinned = {"dpsi": Fixed(90.0), "dcpa": Fixed(0.0), "tlos": Fixed(180.0),
+              "speed": Fixed(15.0), "gs_intr": Fixed(17.0),  # each in its own envelope
+              "pos_ci95": Fixed(40.0), "vel_ci95": Fixed(4.0)}
+    stack = Methods(detector=StateBased(), resolver=MVP(1.05), recovery=PastCPA(True),
+                    navigation=GnssNavigation())
+    kw = dict(backend=MC(n_encounters=30), base_config=_base(), seed=0)
+
+    uniform = run_experiment(
+        {**pinned, "airframes": Fixed([Airframe(M600), Airframe(M600)])}, methods=stack, **kw
+    ).cell().min_seps
+    heterogeneous = run_experiment(
+        {**pinned, "airframes": Fixed(mixed)}, methods=stack, **kw
+    ).cell().min_seps
+    assert uniform != heterogeneous, "the second airframe did not reach the MC backend"
+
+    captured: dict[str, Any] = {}
+
+    def spy(build_initial: Any, shells: Any, **kwargs: Any) -> Any:
+        env = build_initial(root_seed_sequence(0)).env
+        captured["kinematics"] = [type(k).__name__ for k in env.kinematics]
+        captured["v_max"] = [p.v_max for p in env.perfs]
+        captured["adapted"] = [a is not None for a in env.adapters]
+        return estimate_rare_prob(build_initial, shells, **kwargs)
+
+    monkeypatch.setattr(experiment, "estimate_rare_prob", spy)
+    run_experiment({**pinned, "airframes": Fixed(mixed)}, methods=stack,
+                   backend=IPS(shells=[150.0, 100.0, 50.0], n_particles=8, reps=1),
+                   base_config=_base(), seed=0)
+    assert captured["kinematics"] == ["Multirotor", "FixedWing"]
+    assert captured["v_max"] == [M600.v_max, SMALL_FIXEDWING.v_max]
+    assert captured["adapted"] == [False, True]  # only the fixed-wing needs its command projected
+
+
+def test_one_airframe_spelling_at_a_time() -> None:
+    """``airframes`` and ``perf``/``kinematics`` say the same thing two ways; both at once is
+    refused rather than resolved in some undocumented order."""
+    with pytest.raises(ValueError, match="not both"):
+        Methods(detector=StateBased(), perf=M600, airframes=[Airframe(M600)])
+
+
+def test_an_airframe_refuses_a_mismatched_pair() -> None:
+    """The point of bundling: a wrong pairing cannot be written down, rather than caught a layer
+    later. A fixed-wing on a multirotor envelope has ``phi_max == 0`` and could never turn."""
+    with pytest.raises(ValueError, match="envelope"):
+        Airframe(M600, FixedWing())
+
+
+def test_an_aircraft_cannot_spawn_outside_its_own_envelope() -> None:
+    """A mixed fleet needs a speed per airframe, and nothing else was checking it.
+
+    ``create_aircraft`` validates this, but ``sample_pairwise`` builds an ``AircraftState``
+    directly, so the experiment path bypassed it — a fixed-wing intruder handed the multirotor's
+    10 m/s would have spawned below its 12 m/s stall and flown the whole encounter there.
+    """
+    slow = AircraftState(id="INT", lat=52.0, lon=4.0, trk=0.0, gs=10.0)
+    with pytest.raises(ValueError, match="outside its envelope"):
+        Agent(slow, SMALL_FIXEDWING, FixedWing())

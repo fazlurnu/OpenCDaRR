@@ -63,13 +63,14 @@ from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr import ProbabilisticFTR
 from opencdarr.crr.base import RecoveryCriterion
 from opencdarr.estimator import IPRResult, estimate_ipr
-from opencdarr.fleet import Agent, build_env
+from opencdarr.fleet import Agent, Airframe, build_env
 from opencdarr.ips import Particle, RareEventEstimate, estimate_rare_prob
 from opencdarr.kinematics import Kinematics
 from opencdarr.parallel import _joblib, resolve_jobs
 from opencdarr.performance import Performance
 from opencdarr.rng import generator
 from opencdarr.scenario import sample_pairwise
+from opencdarr.wind import NO_WIND, WindField
 
 # --- what can be declared -------------------------------------------------------------------
 # Every key below is wired end to end. The list is deliberately short: it is what the estimators
@@ -86,9 +87,12 @@ _SIMULATION_FIELDS = frozenset(
      "broadcast_random_phase"}
 )
 _GEOMETRY_SLOTS = frozenset({"dpsi", "dcpa", "side", "gs_intr"})
+# Every field of `Methods`, so declaring one as an axis overrides the bundle per condition.
+# `wind` is not a pluggable model but it is a per-run input the bundle carries, so it is swept the
+# same way — `wind=Sweep([NO_WIND, WindField.from_met(270, 8)])`.
 _COMPONENTS = frozenset(
     {"detector", "resolver", "recovery", "navigation", "communication", "surveillance",
-     "kinematics", "perf"}
+     "kinematics", "perf", "wind", "airframes"}
 )
 _KNOWN_KEYS = (
     _SCENARIO_FIELDS | _CONFLICT_FIELDS | _SIMULATION_FIELDS | _GEOMETRY_SLOTS | _COMPONENTS
@@ -204,6 +208,20 @@ class Methods:
     estimator, and any of them can be overridden per condition by declaring the same name as an
     axis. ``perf`` defaults are the caller's business; the airframe defaults to the fleet's
     multirotor when ``kinematics`` is ``None`` (ADR 0007).
+
+    **A mixed fleet is spelled ``airframes``**: one :class:`~opencdarr.fleet.Airframe` per aircraft
+    (ownship first), replacing ``perf``/``kinematics`` rather than joining them. The single fields
+    are the right shape when every aircraft is the same airframe, which is the ordinary case;
+    ``airframes`` is how a declaration says otherwise, and it is what lets a multirotor-versus-
+    fixed-wing encounter be *swept* rather than only run once through
+    :func:`~opencdarr.fleet.run_fleet`. Bundling ``perf`` with ``kinematics`` also makes a
+    mismatched pair unrepresentable in the declaration instead of caught a layer down.
+
+    ``wind`` is the odd one out: it is a steady environment input rather than a pluggable model, so
+    it has no ABC and lives here for the same reason ``perf`` does — the run needs it and no
+    scenario field carries it. It reaches **both** backends; it previously reached neither, because
+    :func:`~opencdarr.estimator.estimate_ipr` and :func:`~opencdarr.fleet.build_env` both accept a
+    ``wind`` this module never passed.
     """
 
     detector: ConflictDetector
@@ -214,6 +232,18 @@ class Methods:
     surveillance: SurveillanceModel | None = None
     kinematics: Kinematics | None = None
     perf: Performance | None = None
+    wind: WindField = NO_WIND
+    airframes: Sequence[Airframe] | None = None
+
+    def __post_init__(self) -> None:
+        # One spelling for one thing. ``perf``/``kinematics`` say "every aircraft is this
+        # airframe"; ``airframes`` says "here is each one". Both at once has no meaning, so it is
+        # refused rather than silently resolved in some order.
+        if self.airframes is not None and (self.perf is not None or self.kinematics is not None):
+            raise ValueError(
+                "give either airframes=[...] (one per aircraft) or perf=/kinematics= (one shared "
+                "airframe), not both"
+            )
 
 
 # --- conditions -----------------------------------------------------------------------------
@@ -284,10 +314,25 @@ def _config_for(condition: Condition, base: Config, n_encounters: int) -> Config
 
 
 def _resolved_methods(condition: Condition, methods: Methods) -> Methods:
-    """``methods`` with any component this condition declares as an axis substituted in."""
+    """``methods`` with any component this condition declares as an axis substituted in.
+
+    An axis **replaces** the bundle's value for that key, which for the airframe means displacing
+    the other spelling rather than colliding with it: ``airframes=Sweep([...])`` over a bundle
+    carrying ``perf=M600`` is a declaration that the airframe varies per condition, not a
+    contradiction. Without this, the ordinary ``Methods(..., perf=M600)`` would make an airframe
+    axis unwritable, because the resolved bundle would carry both spellings and
+    :meth:`Methods.__post_init__` refuses that — a check meant for what the *caller* wrote.
+    """
     values = dict(condition.values)
     overrides = {k: v for k, v in values.items() if k in _COMPONENTS}
-    return dataclasses.replace(methods, **overrides) if overrides else methods
+    if not overrides:
+        return methods
+    if "airframes" in overrides:
+        overrides.setdefault("perf", None)
+        overrides.setdefault("kinematics", None)
+    elif overrides.keys() & {"perf", "kinematics"}:
+        overrides.setdefault("airframes", None)
+    return dataclasses.replace(methods, **overrides)
 
 
 def _reads_declared_accuracy(recovery: RecoveryCriterion | None) -> bool:
@@ -352,9 +397,11 @@ def _run_mc(condition: Condition, base: Config, methods: Methods, backend: MC,
     geometry = {k: v for k, v in dict(condition.values).items() if k in _GEOMETRY_SLOTS}
     return estimate_ipr(
         dataclasses.replace(cfg, seed=seed),
-        m.perf if m.perf is not None else _require_perf(),
+        _base_perf(m),
         m.detector, m.resolver, m.recovery, m.navigation, m.communication, m.surveillance,
         kinematics=m.kinematics,
+        airframes=m.airframes,
+        wind=m.wind,
         **geometry,
     )
 
@@ -371,7 +418,7 @@ def _run_ips(condition: Condition, base: Config, methods: Methods, backend: IPS,
     cfg = _config_for(condition, base, backend.n_particles)
     m = _resolved_methods(condition, methods)
     geometry = {k: v for k, v in dict(condition.values).items() if k in _GEOMETRY_SLOTS}
-    perf = m.perf if m.perf is not None else _require_perf()
+    perf = _base_perf(m)
 
     def build_initial(seq: np.random.SeedSequence) -> Particle:
         geom_rng = generator(seq)
@@ -383,15 +430,19 @@ def _run_ips(condition: Condition, base: Config, methods: Methods, backend: IPS,
             pos_ci95_declared=cfg.scenario.pos_ci95_declared,
             vel_ci95_declared=cfg.scenario.vel_ci95_declared, **geometry,
         )
-        agents = [
-            Agent(own, perf, kinematics=m.kinematics),
-            Agent(intr, perf, kinematics=m.kinematics),
-        ]
+        if m.airframes is None:
+            agents = [
+                Agent(own, perf, kinematics=m.kinematics),
+                Agent(intr, perf, kinematics=m.kinematics),
+            ]
+        else:  # mixed fleet: one airframe per aircraft, ownship first
+            agents = [af.agent(ac) for af, ac in zip(m.airframes, (own, intr), strict=True)]
         env = build_env(
             agents, rpz=cfg.conflict.rpz, t_lookahead=cfg.conflict.t_lookahead,
             dt=cfg.simulation.dt, detector=m.detector, resolver=m.resolver, recovery=m.recovery,
             navigation=m.navigation, communication=m.communication, surveillance=m.surveillance,
             t_max=cfg.simulation.t_max, done_timeout=cfg.simulation.done_timeout,
+            wind=m.wind,
             # the transmit timing, which this call omitted entirely: build_env then fell back to
             # the 1 s default, so a declared broadcast_interval reached MC and was silently
             # dropped by IPS. Built through the same schedule_for MC uses, so the two cannot
@@ -408,6 +459,19 @@ def _run_ips(condition: Condition, base: Config, methods: Methods, backend: IPS,
         build_initial, backend.shells,
         n_particles=backend.n_particles, reps=backend.reps, seed=seed,
     )
+
+
+def _base_perf(m: Methods) -> Performance:
+    """The ``perf`` the estimator still takes positionally, even on the mixed path.
+
+    ``airframes`` overrides it per aircraft, so on that path this is only the value the signature
+    needs; the ownship's is the honest one to hand over.
+    """
+    if m.perf is not None:
+        return m.perf
+    if m.airframes:
+        return m.airframes[0].perf
+    return _require_perf()
 
 
 def _require_perf() -> Performance:
@@ -676,6 +740,28 @@ class ExperimentResult:
         if series_axes:
             ax.legend(frameon=False, loc="best")
         return fig
+
+    def _repr_html_(self) -> str:
+        """Show the results table when a notebook displays this object.
+
+        Display only — the return value of :func:`run_experiment` stays an
+        :class:`ExperimentResult`, because the table is a *reduction*: :meth:`cell` reaches the raw
+        estimator result behind a row, and with it the per-encounter record every other metric is
+        computed from. Handing back a bare frame would make ``pandas`` a hard dependency of the
+        entry point and put ``min_seps`` out of reach.
+
+        Falls back to plain text when ``pandas`` is absent, so displaying a result never raises on
+        a core install.
+        """
+        head = (f"<p><code>{self.backend}</code> &middot; seed {self.seed} &middot; "
+                f"{len(self.conditions)} condition(s)"
+                + (f" &middot; axes {list(self.axes)}" if self.axes else "")
+                + "</p>")
+        try:
+            return head + self.frame()._repr_html_()
+        except ModuleNotFoundError:
+            rows = "\n".join(str(r) for r in self.records())
+            return head + f"<pre>{rows}</pre>"
 
     def cell(self, **levels: Any) -> Any:
         """The raw estimator result for the condition matching ``levels`` (exactly one must match).

@@ -34,7 +34,7 @@ from opencdarr.cns.broadcast import schedule_for
 from opencdarr.config import Config
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr.base import RecoveryCriterion
-from opencdarr.fleet import Agent, run_fleet
+from opencdarr.fleet import Agent, Airframe, run_fleet
 from opencdarr.kinematics import Kinematics
 from opencdarr.performance import Performance
 from opencdarr.rng import generator, root_seed_sequence, spawn
@@ -187,6 +187,7 @@ def estimate_ipr(
     surveillance: SurveillanceModel | None = None,
     *,
     kinematics: Kinematics | None = None,
+    airframes: Sequence[Airframe] | None = None,
     wind: WindField = NO_WIND,
     share_intent: bool = False,
     dpsi: float | Draw | None = None,
@@ -199,7 +200,14 @@ def estimate_ipr(
 
     ``kinematics`` is the airframe both aircraft fly (``None`` = the fleet default
     :class:`~opencdarr.kinematics.Multirotor`, ADR 0007); ``wind`` and ``share_intent`` are the
-    other two per-run settings the fleet environment takes. All three are keyword-only additions
+    other two per-run settings the fleet environment takes.
+
+    ``airframes`` is the **mixed-fleet** spelling: one :class:`~opencdarr.fleet.Airframe` per
+    aircraft (ownship first), overriding ``perf`` and ``kinematics`` entirely. Left ``None``, every
+    aircraft flies ``perf`` + ``kinematics``, which is the single-airframe case and is unchanged.
+    Give the two aircraft different envelopes and the sampler must give each a speed its own
+    airframe can fly — ``speed`` for the ownship, ``gs_intr`` for the intruder — or
+    :class:`~opencdarr.fleet.Agent` refuses the encounter. All three are keyword-only additions
     that were previously reachable through IPS but *not* through this estimator — see the module
     docstring for why that asymmetry mattered.
 
@@ -255,8 +263,13 @@ def estimate_ipr(
             jitter=config.simulation.broadcast_jitter,
             random_phase=config.simulation.broadcast_random_phase,
         )
+        if airframes is None:
+            pair = [Agent(own, perf, kinematics=kinematics),
+                    Agent(intr, perf, kinematics=kinematics)]
+        else:  # mixed fleet: one airframe per aircraft, ownship first
+            pair = [af.agent(ac) for af, ac in zip(airframes, (own, intr), strict=True)]
         outcome = run_fleet(
-            [Agent(own, perf, kinematics=kinematics), Agent(intr, perf, kinematics=kinematics)],
+            pair,
             rpz=config.conflict.rpz,
             t_lookahead=config.conflict.t_lookahead,
             dt=config.simulation.dt,

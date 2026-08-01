@@ -64,6 +64,11 @@ above — one module per notebook — and several of them generate the figures t
 - [`handbook/communication.ipynb`](handbook/communication.ipynb) — the **C** of CNS: broadcast
   cadence, phase and jitter; reception probability and the update interval it produces; latency
   shapes; and the two seams for extending the channel.
+- [`handbook/mixed_fleet.ipynb`](handbook/mixed_fleet.ipynb) — a multirotor against a small
+  fixed-wing in one encounter: `Airframe` bundles each aircraft's envelope with its integrator, and
+  `Methods(airframes=[...])` declares one per aircraft. Runs the same declaration under `MC` and
+  `IPS` and tabulates P(LoS) for both. Shows the two guards that catch the usual mistakes — a
+  mismatched envelope/integrator pair, and an aircraft spawned below its own stall speed.
 - [`handbook/resolver_comparison.ipynb`](handbook/resolver_comparison.ipynb) — MVP against VO as
   the crossing gets shallow and the position fix gets worse, declared as one `run_experiment` sweep
   over sixteen conditions. Builds up from a single encounter to the full grid, and reports two

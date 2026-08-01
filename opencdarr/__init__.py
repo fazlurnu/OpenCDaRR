@@ -70,7 +70,7 @@ from opencdarr.experiment import (
     run_experiment,
     run_one_experiment,
 )
-from opencdarr.fleet import Agent, run_fleet
+from opencdarr.fleet import Agent, Airframe, run_fleet
 from opencdarr.ips import estimate_rare_prob
 from opencdarr.kinematics.base import Kinematics, MotionCommand
 from opencdarr.kinematics.fixedwing import FixedWing
@@ -95,6 +95,7 @@ __all__ = [
     "VO",
     "AircraftState",
     "Agent",
+    "Airframe",
     "Comm",
     "CommunicationModel",
     "Config",
