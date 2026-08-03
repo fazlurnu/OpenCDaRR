@@ -175,8 +175,15 @@ def test_the_declaration_changes_a_whole_encounter_when_recovery_reads_it() -> N
     aircraft passes wider -- ``min_sep`` rises monotonically with the claim while the sensor and
     the seeds are unchanged. Asserting the direction, not just inequality, is what makes this a
     statement about the physics rather than about two numbers differing.
+
+    ``prob_threshold`` is pinned below the 0.999 default deliberately: at 0.999 this encounter's
+    fixed 2 m/s velocity uncertainty is on its own enough to withhold recovery, so the two tighter
+    claims (5 m and the sensor's true 40 m) saturate to the same trajectory and the ladder
+    collapses. Pinning it keeps the *position* declaration the discriminating variable, which is
+    what this test is about.
     """
-    sep = [_encounter_min_sep(ProbabilisticFTR(), claim) for claim in (5.0, None, 200.0)]
+    ftr = ProbabilisticFTR(prob_threshold=0.9)
+    sep = [_encounter_min_sep(ftr, claim) for claim in (5.0, None, 200.0)]
     assert sep[0] < sep[1] < sep[2]
 
 

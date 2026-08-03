@@ -9,6 +9,9 @@ uncertainty each aircraft has already declared on its own state (``pos_ci95``/``
 ``opencdarr.state.AircraftState``), what is P(closest-approach offset > rpz)? Resume only once
 that probability clears ``prob_threshold`` for both FTR criteria.
 
+Whether the ownship's own declared ``vel_ci95`` belongs in the relative-velocity covariance is a
+modelling choice, not a fact — see ``velocity_uncertainty`` on :class:`ProbabilisticFTR`.
+
 Re-derived from ``CDaRR_git/sim_models/crr_resumenav_probabilistic_ftr.py``
 (``resumenav_probabilistic_ftr``); only the criterion actually exercised there is ported — the
 file also defines ``analytical_past_cpa_prob`` (a separate P(t_cpa<0) delta-method
@@ -19,6 +22,7 @@ unused code).
 from __future__ import annotations
 
 import math
+from typing import Literal
 
 import numpy as np
 
@@ -112,24 +116,52 @@ class ProbabilisticFTR(RecoveryCriterion):
     """Resume once P(closest-approach offset > rpz) clears ``prob_threshold`` for both FTR
     criteria.
 
-    Both criteria compare the *intruder's* velocity (current, then desired if shared) against
-    ``own``'s **desired** velocity, never ``own``'s own noisy current one — same as
-    :class:`~opencdarr.crr.FTR`. Because ``own``'s side is therefore always its exact declared
-    intent, the two criteria's velocity uncertainty is **not** one shared number (unlike the
-    reference, which pulls a single flat ``Sigma_v`` from run config): criterion 1's uncertainty
-    is entirely the intruder's declared ``vel_ci95`` (its *current* velocity is a noisy
-    broadcast); criterion 2's is regularisation-only (both sides are exact declared intent, so it
-    is — deliberately — near-deterministic). This is possible, and more correct, precisely
-    because ``pos_ci95``/``vel_ci95`` now live per-aircraft on the state; the reference's
-    single-Sigma_v simplification predates that.
+    Both criteria compare the *intruder's* velocity (current, then desired) against ``own``'s
+    **desired** velocity, never ``own``'s own noisy current one — same as
+    :class:`~opencdarr.crr.FTR`. The intruder's "desired" is its declared intent when
+    intent-sharing is on, and otherwise the velocity perceived when the pair became active, which
+    :class:`~opencdarr.separation.SeparationManager` substitutes in — so criterion 2 stays live
+    either way, and matches the reference formulation's "intruder reverts to its velocity at
+    conflict initiation".
 
-    ``prob_threshold`` (default 0.9) and ``ktheta`` (angular integration resolution, default 256)
-    match the reference's defaults.
+    ``velocity_uncertainty`` selects which declared ``vel_ci95`` feed the relative-velocity
+    covariance:
+
+    - ``"both"`` (default) — ``Sigma_Vrel = Sigma_Vo + Sigma_Vi``, the independent-errors sum used
+      for the relative *position* covariance and stated for the relative velocity in the
+      uncertainty model.
+    - ``"intruder"`` — ``Sigma_Vrel = Sigma_Vi`` only. The argument for it: ``own``'s side of every
+      criterion is ``own.desired``, its own declared intent, which carries no measurement error —
+      an aircraft does not misread the velocity it is *about* to fly. Under this reading
+      ``Sigma_Vo`` describes ``own``'s perceived *current* velocity, which neither criterion uses.
+
+    Both readings are defensible and they disagree in how conservative recovery becomes, so the
+    choice is a knob rather than a hard-coded assumption. ``Sigma_rel`` (position) always sums both
+    sides — there both states genuinely are noisy measurements.
+
+    ``prob_threshold`` (default 0.999) is the confidence each criterion must clear; ``ktheta``
+    (angular integration resolution, default 256) is the quadrature grid size.
     """
 
-    def __init__(self, prob_threshold: float = 0.9, ktheta: int = 256) -> None:
+    def __init__(
+        self,
+        prob_threshold: float = 0.999,
+        ktheta: int = 256,
+        velocity_uncertainty: Literal["both", "intruder"] = "both",
+    ) -> None:
+        if velocity_uncertainty not in ("both", "intruder"):
+            raise ValueError(
+                f"velocity_uncertainty must be 'both' or 'intruder', got {velocity_uncertainty!r}"
+            )
         self.prob_threshold = prob_threshold
         self.ktheta = ktheta
+        self.velocity_uncertainty = velocity_uncertainty
+
+    def _sigma_v(self, own: AircraftState, intr: AircraftState) -> np.ndarray:
+        """Relative-velocity covariance: ``Sigma_Vo + Sigma_Vi``, or the intruder's alone."""
+        if self.velocity_uncertainty == "intruder":
+            return _iso_cov(intr.vel_ci95)
+        return _iso_cov(own.vel_ci95) + _iso_cov(intr.vel_ci95)
 
     def should_resume(self, own: AircraftState, intr: AircraftState, rpz: float) -> bool:
         if own.desired is None:
@@ -142,22 +174,21 @@ class ProbabilisticFTR(RecoveryCriterion):
         sigma_r = _iso_cov(own.pos_ci95) + _iso_cov(intr.pos_ci95)
 
         vo_e, vo_n = own.desired.v_east, own.desired.v_north  # desired velocity, read directly
+        sigma_v = self._sigma_v(own, intr)  # same relative-velocity covariance for both criteria
 
         # criterion 1: the intruder holds its current (observed, noisy) velocity
         vi_e, vi_n = velocity_enu(intr)
         mu_v1 = np.array([vi_e - vo_e, vi_n - vo_n])
-        sigma_v1 = _iso_cov(intr.vel_ci95)  # own's side is own.desired: exact, zero contribution
-        p1 = _p_offset_gt(rpz, mu_r, sigma_r, mu_v1, sigma_v1, self.ktheta)
+        p1 = _p_offset_gt(rpz, mu_r, sigma_r, mu_v1, sigma_v, self.ktheta)
         if p1 <= self.prob_threshold:
             return False
 
-        # criterion 2 (intent-based): the intruder reverts to its own desired velocity too —
-        # only if it shared it. Both sides are exact declared intent (regularisation-only).
+        # criterion 2 (intent-based): the intruder reverts to its own desired velocity too — its
+        # declared intent, or the onset velocity SeparationManager infers when intent isn't shared.
         if intr.desired is not None:
             vir_e, vir_n = intr.desired.v_east, intr.desired.v_north
             mu_v2 = np.array([vir_e - vo_e, vir_n - vo_n])
-            sigma_v2 = _iso_cov(0.0) + _iso_cov(0.0)
-            p2 = _p_offset_gt(rpz, mu_r, sigma_r, mu_v2, sigma_v2, self.ktheta)
+            p2 = _p_offset_gt(rpz, mu_r, sigma_r, mu_v2, sigma_v, self.ktheta)
             if p2 <= self.prob_threshold:
                 return False
 

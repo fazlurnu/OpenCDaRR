@@ -43,25 +43,30 @@ discretised over `ktheta` angle samples (default 256, matching the reference):
 
 $$ P(\lVert d\rVert > x) = \sum_{k} P(\lVert d\rVert > x \mid \theta_k)\; p_\Theta(\theta_k)\,\Delta\theta $$
 
-## Where $\Sigma_r$, $\Sigma_v$ come from — a deliberate departure from the reference
+## Where $\Sigma_r$, $\Sigma_v$ come from
 
-The reference pulls one flat `Sigma_r`/`Sigma_v` from run config, shared across both FTR
-criteria. We don't, because we now have **per-aircraft, per-quantity** declared uncertainty
-(`pos_ci95`/`vel_ci95` on `AircraftState`) that the reference's config-level model predates:
+Uncertainty is **per-aircraft, per-quantity** (`pos_ci95`/`vel_ci95` on `AircraftState`), not one
+flat pair of numbers from run config as in the reference. Both are converted to $\sigma$ by the
+same `CI95_TO_SIGMA` [[gps-noise]] uses.
 
-- **$\Sigma_r$** — both `own` and `intr`'s *position* are noisy perceived quantities (own's own
-  noisy self-measurement, `intr`'s noisy broadcast), so their declared `pos_ci95` **add**
-  ($\mathrm{Var}(A-B) = \mathrm{Var}(A) + \mathrm{Var}(B)$ for independent errors), converted to
-  $\sigma$ by the same `CI95_TO_SIGMA` [[gps-noise]] uses.
-- **$\Sigma_v$ — differs by criterion, unlike the reference's one shared value.** `own`'s side of
-  the relative velocity is **always `own.desired`** (its own exact, declared intent — never its
-  noisy current velocity, same as `FTR`). So:
-  - **Criterion 1** (intruder holds current velocity): only `intr.vel_ci95` contributes — that
-    velocity is a genuinely noisy broadcast.
-  - **Criterion 2** (intruder reverts to *its* desired velocity, intent-based, only if shared):
-    **both** sides are exact declared intent — `intr.desired` carries no measurement noise in
-    this model (it's a plan, not a GPS fix; see `crr/ftr.py`). $\Sigma_{v,2}$ is
-    regularisation-only, so criterion 2 is — deliberately — near-deterministic.
+- **$\Sigma_r = \Sigma_o + \Sigma_i$**, always. Both `own` and `intr`'s *position* are noisy
+  perceived quantities (own's own noisy self-measurement, `intr`'s noisy broadcast), so their
+  declared `pos_ci95` add ($\mathrm{Var}(A-B) = \mathrm{Var}(A) + \mathrm{Var}(B)$ for independent
+  errors).
+- **$\Sigma_v$ — a knob, `velocity_uncertainty`**, the same value for both criteria:
+  - `"both"` (default): $\Sigma_v = \Sigma_{v_o} + \Sigma_{v_i}$, the independent-errors sum, the
+    symmetric counterpart of $\Sigma_r$.
+  - `"intruder"`: $\Sigma_v = \Sigma_{v_i}$ alone. `own`'s side of *both* criteria is
+    `own.desired` — its own declared intent, which carries no measurement error, since an aircraft
+    does not misread the velocity it is about to fly. On this reading `own.vel_ci95` describes a
+    perceived *current* velocity that neither criterion consults.
+
+Neither reading is obviously wrong and they differ in how conservative recovery becomes, which is
+why it is a parameter. Both criteria share one $\Sigma_v$: `intr.desired` is the intruder's
+declared intent when shared, and otherwise the **onset velocity** — the velocity perceived when
+the pair became active, substituted by `SeparationManager` (`separation.py`, `FleetMemory`). That
+substituted value is a noisy observation, so it carries the intruder's velocity uncertainty just as
+its current velocity does.
 
 ## Known, deliberate divergence from `FTR` at zero uncertainty
 
@@ -87,7 +92,7 @@ there both formulas measure the same future closest approach.
 ## Result
 
 `ProbabilisticFTR.should_resume(own, intr, rpz)` resumes once both criteria's probability clear
-`prob_threshold` (default 0.9) — `FTR`'s boolean AND, replaced by two probability thresholds.
+`prob_threshold` (default 0.999) — `FTR`'s boolean AND, replaced by two probability thresholds.
 
 ## Notes
 

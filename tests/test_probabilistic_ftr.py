@@ -17,21 +17,26 @@ from opencdarr.state import AircraftState, DesiredVelocity
 _RPZ = 50.0
 
 
-def _own(desired: DesiredVelocity | None = None, pos_ci95: float = 0.0) -> AircraftState:
+def _own(
+    desired: DesiredVelocity | None = None, pos_ci95: float = 0.0, vel_ci95: float = 0.0,
+) -> AircraftState:
     d = desired if desired is not None else DesiredVelocity.from_track_speed(0.0, 10.0)
     return AircraftState(
-        id="OWN", lat=52.0, lon=4.0, trk=0.0, gs=10.0, desired=d, pos_ci95=pos_ci95
+        id="OWN", lat=52.0, lon=4.0, trk=0.0, gs=10.0, desired=d,
+        pos_ci95=pos_ci95, vel_ci95=vel_ci95,
     )
 
 
 def _ahead(
     dist_m: float, trk: float, gs: float,
     desired: DesiredVelocity | None = None, bearing: float = 0.0, pos_ci95: float = 0.0,
+    vel_ci95: float = 0.0,
 ) -> AircraftState:
     """An intruder placed dist_m along ``bearing`` from the ownship (0 = due north)."""
     lat, lon = geo.forward(52.0, 4.0, bearing, dist_m)
     return AircraftState(
-        id="INT", lat=lat, lon=lon, trk=trk, gs=gs, desired=desired, pos_ci95=pos_ci95
+        id="INT", lat=lat, lon=lon, trk=trk, gs=gs, desired=desired,
+        pos_ci95=pos_ci95, vel_ci95=vel_ci95,
     )
 
 
@@ -103,6 +108,35 @@ def test_ktheta_is_configurable_and_stays_a_valid_probability() -> None:
     coarse = ProbabilisticFTR(ktheta=32).should_resume(own, intr, _RPZ)
     fine = ProbabilisticFTR(ktheta=512).should_resume(own, intr, _RPZ)
     assert coarse == fine  # low resolution changes precision, not the qualitative answer here
+
+
+def test_default_threshold_is_the_paper_default() -> None:
+    assert ProbabilisticFTR().prob_threshold == 0.999
+
+
+def test_own_velocity_uncertainty_is_included_by_default_and_switchable() -> None:
+    """``"both"`` sums Sigma_Vo + Sigma_Vi, so declaring ownship velocity error widens the
+    velocity-direction spread and lowers confidence; ``"intruder"`` ignores it entirely."""
+    own = _own(pos_ci95=2.0, vel_ci95=4.0)
+    intr = _ahead(600.0, trk=175.0, gs=10.0, bearing=5.0, pos_ci95=2.0, vel_ci95=0.0)
+
+    assert ProbabilisticFTR(velocity_uncertainty="both").should_resume(own, intr, _RPZ) is False
+    # the ownship's own vel_ci95 is the only difference between the two:
+    assert ProbabilisticFTR(velocity_uncertainty="intruder").should_resume(own, intr, _RPZ) is True
+
+
+def test_intruder_only_ignores_own_vel_ci95_entirely() -> None:
+    """Under ``"intruder"`` the ownship's declared velocity accuracy cannot change the answer."""
+    intr = _ahead(420.0, trk=175.0, gs=10.0, bearing=5.0, pos_ci95=5.0, vel_ci95=1.0)
+    crit = ProbabilisticFTR(velocity_uncertainty="intruder")
+    quiet = crit.should_resume(_own(pos_ci95=5.0, vel_ci95=0.0), intr, _RPZ)
+    noisy = crit.should_resume(_own(pos_ci95=5.0, vel_ci95=8.0), intr, _RPZ)
+    assert quiet == noisy
+
+
+def test_unknown_velocity_uncertainty_mode_raises() -> None:
+    with pytest.raises(ValueError, match="velocity_uncertainty"):
+        ProbabilisticFTR(velocity_uncertainty="ownship")  # type: ignore[arg-type]
 
 
 def test_returns_a_bool() -> None:
