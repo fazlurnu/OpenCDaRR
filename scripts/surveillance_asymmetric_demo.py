@@ -91,7 +91,8 @@ def run(nav_noise: bool) -> Trace:
     comm_rng = np.random.default_rng(SEED + 1000)  # communication substream (reception/latency)
     cstate = CommState()
     truth = source_states()
-    receivers = ["AC1", "AC2", "AC3"]
+    # the roster as true states: `Comm.step` takes aircraft, not ids
+    receivers = [AircraftState(aid, LAT0, LON0, 0.0, GS) for aid in ("AC1", "AC2", "AC3")]
 
     tr = Trace([], [], [], [], [], [])
     next_bc = 0.0

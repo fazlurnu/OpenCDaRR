@@ -147,6 +147,33 @@ restructuring and not a re-basing.
   should not fire while the radio is already down), revisit — the current contract evaluates gates
   independently and that will not express it.
 
+## Follow-up — the second gate landed (2026-08-03)
+
+`SurveillanceRange(max_range)` is the hard-availability case §4 named ("out of range … a veto. This
+seam covers it"). It closes a directed link whenever the two aircraft are further apart than
+`max_range`, admitting at exactly that distance because the number is read off a *required* minimum
+surveillance distance (`d_surv_min`) — a system obliged to see out to it should work there. Scalar,
+not per-link: the range is an assumed performance of the equipment every aircraft carries, so a
+per-pair range would be describing different equipment on each link.
+
+Two things this settles that the decision above left open.
+
+**The gate contract needed geometry, and `receivers` was ids.** `CommunicationModel.step` and
+`LinkGate.evolve` now take `Sequence[AircraftState]` rather than `Sequence[str]`; `admits` still
+takes ids, and a geometry gate snapshots what it needs of the roster in `evolve`. The states are
+the **true** ones, not the broadcast fixes: whether a link physically closes is a fact about where
+the aircraft are, and reading the fix would let navigation error decide what is receivable. The
+change is representational only — both golden traces (`test_cns_communication.py`,
+`test_cns_transceiver.py`) and every text output of `examples/handbook/communication.ipynb` are
+unchanged, which is what pins it as a restructuring rather than a re-basing.
+
+**The obligation in the consequences below is discharged, not triggered.** It anticipated a range
+gate that "should not fire while the radio is already down". It does not need to: a link is offered
+only if *every* gate admits it, so range and radio health both closing it is the same outcome
+whatever order they are consulted in, and neither needs to observe the other. The independent
+contract holds. Revisit only if a gate ever needs to know that another *would have* vetoed —
+counting suppressed links for a diagnostic, say — which nothing does today.
+
 ## Relations
 
 - Extends [[0006-communication-model-design]] — its state shape, delivery timing and RNG layout all

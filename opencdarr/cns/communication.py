@@ -20,10 +20,11 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
+from opencdarr import geo
 from opencdarr.cns.base import (
     CommState,
     CommunicationModel,
@@ -33,6 +34,7 @@ from opencdarr.cns.base import (
     Message,
 )
 from opencdarr.cns.hazard import hazard, toggle
+from opencdarr.state import AircraftState
 
 
 def constant_latency(seconds: float) -> LatencyDistribution:
@@ -148,7 +150,7 @@ class Comm(CommunicationModel):
         in_flight: Sequence[InFlight],
         gate_states: Sequence[object],
         broadcasts: Sequence[Message],
-        receivers: Sequence[str],
+        receivers: Sequence[AircraftState],
         rng: np.random.Generator,
     ) -> list[InFlight]:
         """Offer each broadcast to every other aircraft, queueing whatever the link accepts.
@@ -165,7 +167,8 @@ class Comm(CommunicationModel):
         """
         queued = list(in_flight)
         for message in broadcasts:
-            for receiver in receivers:
+            for state in receivers:
+                receiver = state.id
                 if receiver == message.source:
                     continue  # an aircraft does not receive its own broadcast
                 if not all(
@@ -214,7 +217,7 @@ class Comm(CommunicationModel):
         self,
         state: CommState,
         broadcasts: Sequence[Message],
-        receivers: Sequence[str],
+        receivers: Sequence[AircraftState],
         t: float,
         rng: np.random.Generator,
     ) -> CommState:
@@ -320,7 +323,7 @@ class RadioHealth(LinkGate):
     def evolve(
         self,
         own: object,
-        receivers: Sequence[str],
+        receivers: Sequence[AircraftState],
         elapsed: float,
         rng: np.random.Generator,
     ) -> RadioHealthState:
@@ -336,9 +339,9 @@ class RadioHealth(LinkGate):
         p_tx_recover = hazard(self.tx_recover_rate, elapsed)
         p_rx_fail = hazard(self.rx_fail_rate, elapsed)
         p_rx_recover = hazard(self.rx_recover_rate, elapsed)
-        for aid in receivers:  # agent order: the fleet's, so the pairwise runner's at n = 2
-            toggle(tx_down, aid, p_tx_fail, p_tx_recover, rng)
-            toggle(rx_down, aid, p_rx_fail, p_rx_recover, rng)
+        for state in receivers:  # agent order: the fleet's, so the pairwise runner's at n = 2
+            toggle(tx_down, state.id, p_tx_fail, p_tx_recover, rng)
+            toggle(rx_down, state.id, p_rx_fail, p_rx_recover, rng)
         return RadioHealthState(tx_down=frozenset(tx_down), rx_down=frozenset(rx_down))
 
     def admits(self, own: object, source: str, receiver: str) -> bool:
@@ -360,6 +363,104 @@ def radio_health(state: CommState) -> RadioHealthState:
     raise ValueError(
         "this state carries no RadioHealth gate — it came from a model built without one"
     )
+
+
+@dataclass(frozen=True)
+class SurveillanceRangeState:
+    """Where every aircraft was when this tick began — :class:`SurveillanceRange`'s state.
+
+    A position snapshot rather than a set of closed links, because the roster reaches a gate at
+    :meth:`SurveillanceRange.evolve` and the per-link question is asked later, in
+    :meth:`SurveillanceRange.admits`. Taking it once per tick also means every link of that tick is
+    judged against one consistent geometry.
+
+    Absent from ``positions`` means that aircraft was not on the roster the channel was stepped
+    with — the same "absent ⇒ nothing has happened yet" reading
+    :attr:`~opencdarr.cns.base.CommState.held` uses, which is why :meth:`SurveillanceRange.initial`
+    needs no roster.
+    """
+
+    positions: Mapping[str, tuple[float, float]] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class SurveillanceRange(LinkGate):
+    """A hard surveillance range: beyond ``max_range`` metres, no message is ever received.
+
+    The gate closes a link on **geometry** rather than on hardware. Two aircraft further apart than
+    ``max_range`` exchange nothing at all; at exactly ``max_range``, or nearer, the link behaves
+    normally and :class:`Comm`'s ``reception_prob`` and ``latency`` apply to it as usual. The two
+    effects compose: a link that is in range can still drop a message.
+
+    ``max_range`` is a **scalar** applied to every link, unlike ``reception_prob``, which also
+    accepts a per-link mapping. That is the modelling claim, not a simplification for convenience:
+    the number is an assumed *performance* of the surveillance system every aircraft carries, so
+    quoting a different range per pair would be describing different equipment on each link. It is
+    usually read off a required minimum surveillance distance (``d_surv_min`` in the standards),
+    which is why the comparison admits **at** the range: a system required to see out to that
+    distance is expected to work there, and only beyond it to fail.
+
+    **Range is measured between true positions, not broadcast ones.** Whether a link physically
+    closes is a fact about where the aircraft are; what each of them believes about the other is
+    downstream of the link, and using it here would let navigation error decide whether a message
+    is receivable. The roster :meth:`evolve` is handed carries the truth, which is what that
+    argument is for.
+
+    **A veto, not ``reception_prob = 0``** — the distinction ADR 0019 §4 pins. An out-of-range link
+    spends no reception draw at all, so sweeping ``max_range`` moves which links close without
+    shifting the reception and latency stream underneath the links that stay open. Written as a
+    zero probability it would consume one draw per suppressed link and re-base every number after
+    it. A *soft* link budget, where reception falls off smoothly with range, is the other half of
+    that decision: it leaves the draw in place and belongs in ``Comm._reception_for``.
+
+    Like :class:`RadioHealth`, the veto is applied when a broadcast is **offered**. A message the
+    link already accepted stays in flight and is delivered when due, even if the pair flew apart in
+    the meantime; at the default ``latency=0`` the two readings coincide exactly.
+
+    Composes with :class:`RadioHealth` without either gate needing to see the other: a link is
+    offered only if **every** gate admits it, so "out of range" and "radio down" both close it and
+    the order they are consulted in cannot matter (this is the case ADR 0019's obligation clause
+    anticipated). Draws nothing, on every tick and at every ``max_range``, so it satisfies ADR 0006
+    §6's constant-consumption rule trivially.
+    """
+
+    max_range: float
+
+    def __post_init__(self) -> None:
+        if not self.max_range > 0.0:  # also rejects NaN, which would veto every link in silence
+            raise ValueError(f"max_range must be a distance > 0 [m], got {self.max_range}")
+
+    def initial(self) -> SurveillanceRangeState:
+        """No positions known yet — :meth:`evolve` runs before the first link is judged."""
+        return SurveillanceRangeState()
+
+    def evolve(
+        self,
+        own: object,
+        receivers: Sequence[AircraftState],
+        elapsed: float,
+        rng: np.random.Generator,
+    ) -> SurveillanceRangeState:
+        """Snapshot where everyone is. Draws nothing: this gate is deterministic given geometry."""
+        return SurveillanceRangeState(
+            positions={state.id: (state.lat, state.lon) for state in receivers}
+        )
+
+    def admits(self, own: object, source: str, receiver: str) -> bool:
+        """Whether the two are within ``max_range`` of each other, by great-circle distance."""
+        assert isinstance(own, SurveillanceRangeState)
+        try:
+            (lat1, lon1) = own.positions[source]
+            (lat2, lon2) = own.positions[receiver]
+        except KeyError as missing:
+            raise ValueError(
+                f"SurveillanceRange has no position for {missing.args[0]!r}: it was not on the "
+                "roster this channel was stepped with. A range gate cannot judge a link to an "
+                "aircraft it has never seen, and admitting one would silently mean 'always in "
+                "range'. Pass every aircraft that broadcasts or receives in `receivers`."
+            ) from missing
+        _, distance = geo.qdrdist(lat1, lon1, lat2, lon2)
+        return distance <= self.max_range
 
 
 class TransceiverComm(Comm):

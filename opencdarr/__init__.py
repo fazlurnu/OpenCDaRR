@@ -11,9 +11,9 @@ level exports what a contributor needs to *write* one and *run* it against the b
 - **contribution surfaces** — ``ConflictDetector``, ``ConflictResolver``, ``RecoveryCriterion``,
   ``Kinematics``, ``NavigationModel``, ``CommunicationModel``, ``SurveillanceModel``,
   ``NoiseDistribution``;
-- **reference implementations** to compare against — ``StateBased``, ``MVP``, ``VO``, ``PastCPA``,
-  ``FTR``, ``ProbabilisticFTR``, ``Multirotor``, ``FixedWing``, ``GnssNavigation``, ``Comm``,
-  ``TransceiverComm``, ``LastKnown``;
+- **reference implementations** to compare against — ``StateBased``, ``MVP``, ``VO``,
+  ``PastCPA``, ``FTR``, ``ProbabilisticFTR``, ``Multirotor``, ``FixedWing``,
+  ``GnssNavigation``, ``Comm``, ``TransceiverComm``, ``LastKnown``;
 - **runners and estimators** — ``run_encounter``, ``run_fleet``, ``estimate_ipr``,
   ``estimate_rare_prob``, ``run_one_experiment``;
 - **the values you construct** — ``AircraftState``, ``MotionCommand``, ``Performance``, ``Agent``,

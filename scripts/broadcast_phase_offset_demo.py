@@ -49,6 +49,12 @@ N_INT = 4
 COLORS = ["#4393c3", "#7fbf7b", "#d6604d", "#c2a5cf"]
 
 
+# EGO is the receiver, parked at the ring centre the intruders converge on. `Comm.step` takes
+# the roster as true states, so it needs one even though EGO never broadcasts here.
+def ego_true(t: float) -> AircraftState:
+    return AircraftState(id="EGO", lat=LAT0, lon=LON0, trk=0.0, gs=0.0)
+
+
 def intruder_true(i: int, t: float) -> AircraftState:
     """Intruder i flying straight from a ring position on its own heading."""
     bearing = 360.0 * i / N_INT
@@ -89,7 +95,7 @@ def run(phases: list[float]) -> tuple[list[float], list[list[float]], list[float
             if t + 1e-9 >= next_bc[i]:
                 broadcasts.append(Message(f"INT{i}", intruder_true(i, t), t))
                 next_bc[i] += INTERVAL
-        cstate = comm.step(cstate, broadcasts, ["EGO"], t, rng)
+        cstate = comm.step(cstate, broadcasts, [ego_true(t)], t, rng)
         ts.append(t)
         for i in range(N_INT):
             p = surveil.perceived(cstate, "EGO", f"INT{i}", t)

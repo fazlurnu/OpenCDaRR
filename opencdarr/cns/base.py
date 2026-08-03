@@ -258,6 +258,12 @@ class LinkGate(ABC):
     state is a threaded value that clones with the particle — the same split
     :class:`~opencdarr.cns.stack.CNS` makes against :class:`~opencdarr.cns.stack.CnsState`.
 
+    A gate whose veto depends on **geometry** — out of surveillance range, terrain-masked — reads
+    the roster handed to :meth:`evolve` and keeps whatever it needs of it in its own state;
+    :meth:`admits` is then a lookup by id. That is why :meth:`evolve` takes states while
+    :meth:`admits` takes ids: the tick's truth snapshot is taken once, at the fixed offset every
+    gate evolves at, rather than re-read per link.
+
     Implementations should be frozen dataclasses so ``experiment.identity`` can key a cache on them
     structurally; a plain object's ``repr`` carries a memory address and is not stable across
     processes.
@@ -271,11 +277,15 @@ class LinkGate(ABC):
     def evolve(
         self,
         own: object,
-        receivers: Sequence[str],
+        receivers: Sequence[AircraftState],
         elapsed: float,
         rng: np.random.Generator,
     ) -> object:
         """Advance this gate's state over ``elapsed`` seconds, before the channel runs.
+
+        ``receivers`` is the whole roster — every aircraft, in agent order, carrying its **true**
+        state. True and not the broadcast fix on purpose: whether a link physically closes is a
+        fact about where the aircraft are, not about what either of them believes.
 
         Called once per step at a fixed offset from the start, in gate-registration order, so the
         draws a gate makes sit at a predictable place in the stream and do not move with how the
@@ -316,11 +326,17 @@ class CommunicationModel(ABC):
         self,
         state: CommState,
         broadcasts: Sequence[Message],
-        receivers: Sequence[str],
+        receivers: Sequence[AircraftState],
         t: float,
         rng: np.random.Generator,
     ) -> CommState:
         """Return the comm state after offering ``broadcasts`` to ``receivers`` at time ``t``.
+
+        ``receivers`` is the roster as **true** states, not ids: a channel effect that depends on
+        geometry (range, terrain) needs the positions, and a model that does not simply reads
+        ``.id``. The truth is the right input because a link either physically closes or does not,
+        whatever the two ends believe about each other — what they believe is already the
+        broadcast's job (``broadcasts`` carry the noisy self-fix).
 
         Pure: the state is threaded, never mutated (see :class:`CommState`).
         """

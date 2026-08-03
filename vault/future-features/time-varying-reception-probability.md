@@ -1,5 +1,13 @@
 # Future feature — time-varying reception probability
 
+> **Half of this is done (2026-08-03).** The *hard* half — a link that is simply unavailable, out
+> of range or masked — shipped as `SurveillanceRange`, a `LinkGate` ([[0019-channel-extension-by-\
+link-gates]] §4). What remains open is only the **continuous** half described below: reception that
+> *degrades* smoothly rather than switching off. The two are genuinely different, and the
+> difference is a stream fact — a gate vetoes ahead of the reception draw and spends nothing, while
+> a falling `p` still draws. So the remaining work really is a widening of `_reception_for`'s
+> arguments, and it cannot be folded into the gate seam.
+
 **Target version: post-v1.0** (`docs/roadmap.md`'s "community long game, beyond v1.0" bucket) —
 tentative. Not urgent: revisit once there's an actual case that needs it, not on a schedule.
 

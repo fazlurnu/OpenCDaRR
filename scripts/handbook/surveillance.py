@@ -44,6 +44,12 @@ def true_gs(t: float) -> float:
     return 24.0 + 6.0 * math.sin(2.0 * math.pi * t / 40.0)
 
 
+def _obs() -> AircraftState:
+    """The observer as a true state — `Comm.step` takes aircraft, not ids. It never
+    broadcasts and nothing here gates on geometry, so its position is a placeholder."""
+    return AircraftState(id="OBS", lat=52.0, lon=4.0, trk=90.0, gs=10.0)
+
+
 def simulate() -> dict[str, list[float]]:
     """Step the source through the lossy link, recording the true and observed ground speed at
     every tick and which ticks delivered a fresh update."""
@@ -57,7 +63,7 @@ def simulate() -> dict[str, list[float]]:
     for k in range(int(DURATION / INTERVAL) + 1):
         t = k * INTERVAL
         source = AircraftState(id="SRC", lat=52.0, lon=4.0, trk=90.0, gs=true_gs(t), vel_ci95=0.0)
-        state = comm.step(state, [Message("SRC", source, t)], ["SRC", "OBS"], t, gen)
+        state = comm.step(state, [Message("SRC", source, t)], [source, _obs()], t, gen)
         held = surveil.perceived(state, "OBS", "SRC", t)
 
         times.append(t)
@@ -125,7 +131,8 @@ def simulate_pair() -> dict[tuple[str, str], dict[str, list[float]]]:
         t = k * INTERVAL
         states = {c: AircraftState(id=c, lat=52.0, lon=4.0, trk=90.0,
                                    gs=true_gs_for(c, t), vel_ci95=0.0) for c in ("A", "B")}
-        state = comm.step(state, [Message(c, states[c], t) for c in ("A", "B")], ["A", "B"], t, gen)
+        state = comm.step(state, [Message(c, states[c], t) for c in ("A", "B")],
+                          list(states.values()), t, gen)
         for src, rcv in links:
             held = surveil.perceived(state, rcv, src, t)
             rec = links[(src, rcv)]

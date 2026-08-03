@@ -36,6 +36,9 @@ from opencdarr.cns.navigation import GnssNavigation  # noqa: E402
 from opencdarr.state import AircraftState  # noqa: E402
 
 LAT0, LON0 = 52.0, 4.0
+# the roster `Comm.step` is handed: aircraft, not ids (nothing here gates on geometry)
+_ROSTER = (AircraftState(id="i", lat=LAT0, lon=LON0, trk=0.0, gs=0.0),
+           AircraftState(id="j", lat=LAT0, lon=LON0, trk=0.0, gs=0.0))
 POS_CI95 = 10.0  # 95% radial GNSS position accuracy [m], isotropic Gaussian
 SEED = 20260725
 # (track [deg], speed [m/s], reception-as-receiver)
@@ -94,7 +97,7 @@ def simulate(t_end: float = 1000.0, sample_dt: float = 0.5, poll: float = 0.02
         while nj < len(j_tx) and j_tx[nj] <= t + 1e-9:
             bcast.append(measured(J_TRACK, J_SPEED, "j", j_tx[nj], nav_j))
             nj += 1
-        state = comm.step(state, bcast, ["i", "j"], t, comm_rng)
+        state = comm.step(state, bcast, _ROSTER, t, comm_rng)
         if t + 1e-9 >= next_sample:
             # diagonals: a fresh self-measurement (no communication) -> pure navigation blur
             fi = measured(I_TRACK, I_SPEED, "i", t, self_i)

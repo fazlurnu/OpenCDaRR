@@ -37,16 +37,21 @@ from opencdarr.rng import children, generator, root_seed_sequence
 from opencdarr.scenario import create_conflict
 from opencdarr.state import AircraftState
 
-_RECEIVERS = ("OWN", "INT")
+
+def _at(aid: str, gs: float = 10.0) -> AircraftState:
+    return AircraftState(id=aid, lat=52.0, lon=4.0, trk=0.0, gs=gs)
+
+
+# the roster `step` is handed: true states, not ids, since a gate may read their geometry.
+# `RadioHealth` only ever reads `.id` off them, so `_ALL` is that roster as the id set its state
+# is keyed by.
+_RECEIVERS = (_at("OWN"), _at("INT"))
+_ALL = frozenset(s.id for s in _RECEIVERS)
 
 
 def _msg(source: str, t_meas: float, gs: float = 10.0) -> Message:
     """A broadcast from ``source``; ``gs`` tags it so we can tell messages apart."""
-    return Message(
-        source=source,
-        state=AircraftState(id=source, lat=52.0, lon=4.0, trk=0.0, gs=gs),
-        t_meas=t_meas,
-    )
+    return Message(source=source, state=_at(source, gs), t_meas=t_meas)
 
 
 def _rng() -> np.random.Generator:
@@ -84,7 +89,7 @@ def _time_to_first_failure(
     state = model.initial_state()
     t = 0.0
     while t <= t_max:
-        state = model.step(state, [], ("OWN",), t, rng)
+        state = model.step(state, [], (_at("OWN"),), t, rng)
         if radio_health(state).rx_down:
             return t
         t += dt
@@ -123,17 +128,17 @@ def test_nothing_fails_before_any_time_has_elapsed() -> None:
     assert first.t_prev == 0.0
     # ... and one second later, at that rate, both radios of both aircraft are certainly gone
     second = model.step(first, [], _RECEIVERS, 1.0, _rng())
-    assert radio_health(second).tx_down == frozenset(_RECEIVERS)
-    assert radio_health(second).rx_down == frozenset(_RECEIVERS)
+    assert radio_health(second).tx_down == _ALL
+    assert radio_health(second).rx_down == _ALL
 
 
 def test_a_failure_latches_unless_recovery_is_asked_for() -> None:
     """``recover_rate`` defaults to 0 — the permanent failure item 7 was written for."""
     down = _radio(rx_down={"OWN"}, t_prev=0.0)
-    latched = TransceiverComm().step(down, [], ("OWN",), 1000.0, _rng())
+    latched = TransceiverComm().step(down, [], (_at("OWN"),), 1000.0, _rng())
     assert radio_health(latched).rx_down == frozenset({"OWN"})  # 1000 s later, still out
 
-    healed = TransceiverComm(rx_recover_rate=36000.0).step(down, [], ("OWN",), 1000.0, _rng())
+    healed = TransceiverComm(rx_recover_rate=36000.0).step(down, [], (_at("OWN"),), 1000.0, _rng())
     assert radio_health(healed).rx_down == frozenset()
 
 
@@ -142,7 +147,7 @@ def test_the_two_subsystems_fail_independently() -> None:
     tx_only = TransceiverComm(tx_fail_rate=1e9)
     state = tx_only.step(tx_only.initial_state(), [], _RECEIVERS, 0.0, _rng())
     state = tx_only.step(state, [], _RECEIVERS, 1.0, _rng())
-    assert radio_health(state).tx_down == frozenset(_RECEIVERS)
+    assert radio_health(state).tx_down == _ALL
     assert radio_health(state).rx_down == frozenset()
 
 

@@ -46,6 +46,9 @@ IMG = Path.home() / "Projects/opencdarr.github.io/docs/assets/img"
 INTERVAL, N_TICKS, SEED = 1.0, 4000, 20260725
 BLUE, RED, ORANGE, PURPLE, GREY = "#1f77b4", "#d62728", "#ff7f0e", "#9467bd", "0.55"
 SRC = AircraftState(id="SRC", lat=52.0, lon=4.0, trk=0.0, gs=10.0)
+# the roster `Comm.step` is handed: aircraft, not ids. Nothing here gates on geometry, so the
+# receiver is a placeholder co-located with the source.
+_ROSTER = (SRC, AircraftState(id="RCV", lat=52.0, lon=4.0, trk=0.0, gs=10.0))
 
 # One latency shape across every figure, matching examples/handbook/communication.ipynb.
 LAT_MEDIAN, LAT_SIGMA = 0.2, 0.3
@@ -80,7 +83,7 @@ def update_intervals(
         while ti < len(tx_times) and tx_times[ti] <= t + 1e-9:
             broadcasts.append(Message("SRC", SRC, tx_times[ti]))
             ti += 1
-        state = comm.step(state, broadcasts, ["SRC", "RCV"], t, comm_rng)
+        state = comm.step(state, broadcasts, _ROSTER, t, comm_rng)
         held = state.held.get(("RCV", "SRC"))
         if held is not None and held.t_meas != last:  # a fresh message just landed at time t
             received_at.append(t)
@@ -101,7 +104,7 @@ def simulate(reception: float, seed: int) -> tuple[list[float], list[float], lis
     last_tmeas: float | None = None
     for k in range(N_TICKS):
         t = k * INTERVAL
-        state = comm.step(state, [Message(source="SRC", state=SRC, t_meas=t)], ["SRC", "RCV"],
+        state = comm.step(state, [Message(source="SRC", state=SRC, t_meas=t)], _ROSTER,
                           t, generator)
         held = state.held.get(("RCV", "SRC"))
         if held is None:
@@ -264,7 +267,7 @@ def _outage(subsystem: str) -> np.ndarray:
             Message(a, AircraftState(id=a, lat=52.0, lon=4.0, trk=0.0, gs=_gs(a, t)), t)
             for a in _FLEET
         ]
-        state = comm.step(state, broadcasts, _FLEET, t, generator)
+        state = comm.step(state, broadcasts, [b.state for b in broadcasts], t, generator)
 
         def seen(receiver: str, source: str, state: CommState = state, t: float = t) -> float:
             held = LastKnown().perceived(state, receiver, source, t)

@@ -29,7 +29,7 @@ lost, delayed, and arriving at irregular update intervals — not the message pr
 
 The layer is a publish–subscribe system in all but name. An aircraft whose broadcast clock is due
 publishes one measurement; the channel offers it to every other aircraft over an independent
-directed link; each receiver keeps the latest message it actually got. Six effects act on that
+directed link; each receiver keeps the latest message it actually got. Seven effects act on that
 path, and this notebook covers all of them:
 
 | Effect | Where it lives | Parameter | Unit |
@@ -40,6 +40,7 @@ path, and this notebook covers all of them:
 | Reception probability | `Comm` | `reception_prob` | probability |
 | Latency | `Comm` | `latency` | s |
 | Transmitter / receiver failure | `RadioHealth` | `tx_fail_rate`, `rx_fail_rate` | **per hour** |
+| Surveillance range | `SurveillanceRange` | `max_range` | m |
 
 The last section shows how to extend each of these: your own broadcast rate, latency model, link
 gate, or a whole channel of your own.
@@ -69,6 +70,7 @@ from opencdarr.cns import (
     Message,
     RadioHealth,
     RadioHealthState,
+    SurveillanceRange,
     TransceiverComm,
     age,
     constant_latency,
@@ -76,6 +78,7 @@ from opencdarr.cns import (
     radio_health,
     uniform_latency,
 )
+from opencdarr import geo
 from opencdarr.cns.base import CommunicationModel
 from opencdarr.cns.broadcast import BroadcastSchedule
 from opencdarr.state import AircraftState
@@ -89,6 +92,12 @@ def aircraft(aid: str, gs: float = 10.0, pos_ci95: float = 0.0, vel_ci95: float 
     """A minimal state; only the id and ground speed matter for these demonstrations."""
     return AircraftState(id=aid, lat=52.0, lon=4.0, trk=0.0, gs=gs,
                          pos_ci95=pos_ci95, vel_ci95=vel_ci95)
+
+
+# `Comm.step` takes the roster as aircraft, not ids: a gate may read their geometry. Nothing
+# in this notebook gates on range, so these are the same minimal co-located states.
+ROSTER = tuple(aircraft(aid) for aid in IDS)
+LINK_ROSTER = tuple(aircraft(aid) for aid in ("SRC", "RCV"))
 
 
 def message(aid: str, t: float, gs: float = 10.0) -> Message:
@@ -196,7 +205,7 @@ def update_ages(reception: float, seed: int, n_ticks: int = 4000):
     ages, arrivals, last = [], [], None
     for k in range(n_ticks):
         t = k * INTERVAL
-        state = comm.step(state, [message("SRC", t)], ["SRC", "RCV"], t, generator)
+        state = comm.step(state, [message("SRC", t)], LINK_ROSTER, t, generator)
         held = state.held.get(("RCV", "SRC"))
         if held is None:
             continue
@@ -288,7 +297,7 @@ def received_gaps(latency, reception=RECEPTION, seed=20260725, n_tx=800, poll=0.
         while ti < len(tx_times) and tx_times[ti] <= t + 1e-9:
             due.append(message("SRC", tx_times[ti]))
             ti += 1
-        state = comm.step(state, due, ["SRC", "RCV"], t, generator)
+        state = comm.step(state, due, LINK_ROSTER, t, generator)
         held = state.held.get(("RCV", "SRC"))
         if held is not None and held.t_meas != last:
             arrivals.append(t)
@@ -339,8 +348,8 @@ print(f"the median delay is {0.2 / INTERVAL:.0%} of a broadcast interval, and it
 
 # a straggler cannot overwrite a fresher fix
 comm = Comm(reception_prob=1.0, latency=constant_latency(0.0))
-state = comm.step(comm.initial_state(), [message("INT", 5.0, gs=99.0)], IDS, 5.0, comm_rng(0))
-state = comm.step(state, [message("INT", 1.0, gs=11.0)], IDS, 5.0, comm_rng(0))
+state = comm.step(comm.initial_state(), [message("INT", 5.0, gs=99.0)], ROSTER, 5.0, comm_rng(0))
+state = comm.step(state, [message("INT", 1.0, gs=11.0)], ROSTER, 5.0, comm_rng(0))
 held = state.held[("OWN", "INT")]
 print(f"\na t_meas=1.0 message arriving after a t_meas=5.0 one -> receiver still holds "
       f"t_meas {held.t_meas} (gs {held.state.gs})")
@@ -368,7 +377,7 @@ landed = {("OWN", "INT"): 0, ("INT", "OWN"): 0}
 n = 20000
 for k in range(n):
     state = comm.step(CommState(), [message("OWN", float(k)), message("INT", float(k))],
-                      IDS, float(k), generator)
+                      ROSTER, float(k), generator)
     for (receiver, source) in state.held:
         landed[(source, receiver)] += 1
 
@@ -411,6 +420,7 @@ picture of AC2 is the good one and of AC3 the poor one.
 
 code(r'''
 FLEET = ("AC1", "AC2", "AC3")
+FLEET_ROSTER = tuple(aircraft(a) for a in FLEET)
 T_FAIL, T_MAX = 15.0, 40.0
 # "from -> to": AC1's broadcasts reach AC2 on a good link and AC3 on a poor one, and the return
 # links match, so AC1's own picture of AC2 is the good one and of AC3 the poor one.
@@ -441,7 +451,7 @@ def outage(subsystem: str):
             down = {f"{subsystem}_down": frozenset({"AC1"})}
             state = replace(state, gates=(replace(radio_health(state), **down),))
         state = comm.step(state, [message(a, t, gs_of(a, t)) for a in FLEET],
-                          FLEET, t, generator)
+                          FLEET_ROSTER, t, generator)
 
         def believed(receiver: str, source: str) -> float:
             seen = LastKnown().perceived(state, receiver, source, t)
@@ -498,6 +508,264 @@ for subsystem, title, truth_col, series in panels:
               f"{d[-1, age_col]:4.0f} s old")
 ''')
 
+# ---------------------------------------------------------------- 9b. surveillance range
+md(r"""
+## Surveillance range
+
+Reception probability drops individual messages wherever the two aircraft happen to be. A
+surveillance *range* is a different statement: beyond `max_range` metres the link does not exist,
+so nothing is ever received, and at or inside it the link behaves normally.
+
+`SurveillanceRange` is a **link gate** — the same seam `RadioHealth` uses. A gate answers one
+question, "may this broadcast be offered on this directed link right now?", and a link is offered
+only if every gate admits it. Range and radio failure therefore compose without either knowing
+about the other.
+
+Three things about the parameter are deliberate.
+
+`max_range` is a **scalar** applied to every link, where `reception_prob` also accepts a per-link
+mapping. That is a modelling claim: the range is an assumed *performance* of the surveillance
+system every aircraft carries, so a different range per pair would be describing different
+equipment on each link. It is normally read off a required minimum surveillance distance,
+`d_surv_min` in the standards.
+
+The comparison **admits at exactly `max_range`** (`d <= max_range`). A system required to see out
+to `d_surv_min` is expected to work at that distance and to fail only beyond it.
+
+Range is measured between **true** positions, not broadcast ones. Whether a link physically closes
+is a fact about where the aircraft are; what each aircraft believes about the other is downstream
+of the link, so letting navigation error decide whether a message is receivable would be circular.
+This is why the channel is handed the roster as states rather than ids.
+
+A gate is a **veto, not `reception_prob = 0`**. An out-of-range link consumes no reception draw at
+all, so sweeping `max_range` changes which links close without shifting the random stream
+underneath the links that stay open. Written as a zero probability it would spend one draw per
+suppressed link and re-base every number after it. (A *soft* link budget, where reception falls off
+smoothly with range, is the opposite case: the draw still happens, so it would belong in the
+reception probability rather than in a gate.)
+""")
+
+code(r'''
+MAX_RANGE = 5000.0     # m -- the assumed surveillance performance
+MISS = 500.0           # m -- how close INT passes OWN
+CLOSING = 30.0         # m/s
+T_MAX = 800.0
+
+# OWN is parked; INT flies due east on a track offset MISS metres north of it, starting 12 km west.
+OWN_STATE = aircraft("OWN", gs=0.0)
+_track_lat, _track_lon = geo.forward(52.0, 4.0, 0.0, MISS)
+
+
+def int_at(t: float):
+    """INT after t seconds: 12 km west of the closest point, flying east at CLOSING."""
+    lat, lon = geo.forward(_track_lat, _track_lon, 90.0, -12_000.0 + CLOSING * t)
+    return AircraftState(id="INT", lat=lat, lon=lon, trk=90.0, gs=CLOSING)
+
+
+def fly(max_range: float, reception: float = 1.0, seed: int = 0):
+    """Step the pair past each other; per tick, the separation and OWN's belief about INT.
+
+    Columns: t, separation [m], 1 if a fresh message from INT landed this tick, age of OWN's held
+    message [s] (nan before first contact).
+    """
+    comm = Comm(reception_prob=reception, latency=0.0,
+                gates=(SurveillanceRange(max_range=max_range),))
+    generator, state, rows = comm_rng(seed), comm.initial_state(), []
+    for k in range(int(T_MAX) + 1):
+        t, intr = float(k), int_at(float(k))
+        roster = (OWN_STATE, intr)
+        state = comm.step(state, [Message("INT", intr, t)], roster, t, generator)
+        held = state.held.get(("OWN", "INT"))
+        _, separation = geo.qdrdist(OWN_STATE.lat, OWN_STATE.lon, intr.lat, intr.lon)
+        rows.append((t, separation,
+                     1.0 if held is not None and held.t_meas == t else 0.0,
+                     float("nan") if held is None else t - held.t_meas))
+    return np.array(rows)
+
+
+d = fly(MAX_RANGE)
+fresh = d[d[:, 2] == 1.0]
+print(f"max_range {MAX_RANGE:.0f} m, reception 1.0, {len(d)} broadcasts offered")
+print(f"  delivered on {len(fresh):.0f} ticks, from t={fresh[0, 0]:.0f}s to t={fresh[-1, 0]:.0f}s")
+print(f"  separation at first and last delivery: {fresh[0, 1]:.1f} m, {fresh[-1, 1]:.1f} m")
+print(f"  widest separation that ever delivered: {fresh[:, 1].max():.1f} m "
+      f"(max_range is {MAX_RANGE:.0f} m)")
+out = d[d[:, 2] == 0.0]
+print(f"  closest separation that never delivered: {out[:, 1].min():.1f} m")
+''')
+
+code(r'''
+fig, (a_sep, a_age) = plt.subplots(1, 2, figsize=(12.0, 5.0))
+
+# left: the separation history, with the ticks that actually delivered marked on it
+inside = d[:, 1] <= MAX_RANGE
+a_sep.plot(d[:, 0], d[:, 1] / 1000.0, color=GREY, lw=1.4, label="separation")
+a_sep.plot(d[inside, 0], d[inside, 1] / 1000.0, color=BLUE, lw=2.2, label="in range: delivered")
+a_sep.axhline(MAX_RANGE / 1000.0, color=RED, ls="--", lw=1.3,
+              label=f"max_range = {MAX_RANGE / 1000.0:.0f} km")
+a_sep.set_xlabel("time [s]")
+a_sep.set_ylabel("separation [km]")
+a_sep.set_title("Every tick below the line delivers, every tick above delivers nothing",
+                fontsize=10)
+a_sep.legend(fontsize=8)
+a_sep.set_box_aspect(1)
+
+# right: what that does to OWN's picture of INT -- the quantity a decision actually consumes
+a_age.plot(d[:, 0], d[:, 3], color=BLUE, lw=1.8)
+a_age.axvspan(d[inside, 0].min(), d[inside, 0].max(), color=BLUE, alpha=0.10, lw=0,
+              label="in range")
+a_age.set_xlim(0.0, T_MAX)  # the same span as the left panel, so the gap before contact shows
+a_age.set_xlabel("time [s]")
+a_age.set_ylabel("age of OWN's held message [s]")
+a_age.set_title("Nothing held before contact; frozen and ageing after it", fontsize=10)
+a_age.legend(fontsize=8)
+a_age.set_box_aspect(1)
+fig.tight_layout()
+plt.show()
+''')
+
+md(r"""
+The left panel is the gate itself: the switch happens exactly where the separation crosses
+`max_range`, in both directions, with no transition region. The right panel is why it matters —
+before first contact OWN holds nothing at all and flies nominal, and once INT passes back out of
+range OWN keeps its **last** message and goes on deciding against a belief that gets one second
+staler every second. That is the same hold-as-is behaviour a radio outage produces, and it is not
+the same experiment as switching the link off, which would leave OWN with no traffic at all.
+
+The two effects compose, and the composition is one-sided: reception probability thins out the
+deliveries inside the range and does nothing outside it, where there is nothing left to thin.
+""")
+
+code(r'''
+for reception in (1.0, 0.9, 0.5):
+    run = fly(MAX_RANGE, reception=reception, seed=4)
+    inside_ticks = run[run[:, 1] <= MAX_RANGE]
+    outside_ticks = run[run[:, 1] > MAX_RANGE]
+    print(f"reception {reception:.1f}: delivered on {inside_ticks[:, 2].sum():3.0f} of "
+          f"{len(inside_ticks)} in-range ticks, {outside_ticks[:, 2].sum():.0f} of "
+          f"{len(outside_ticks)} out-of-range ticks")
+''')
+
+md(r"""
+### Three aircraft: the range is per link, and it is not transitive
+
+Two aircraft can only be in range or out of it, so a pair cannot show what a *range* does to a
+fleet's picture of itself. Three can. Below, AC2 sits still while AC1 closes from the west and AC3
+from the east at a different speed, so all three pairwise separations differ at every instant and
+cross `max_range` at three different times.
+
+That produces a middle regime with no two-aircraft equivalent: AC2 is in contact with both
+neighbours while AC1 and AC3, further apart from each other than either is from AC2, hear nothing
+from one another at all. Range closes **links**, not aircraft, and being in range is not something
+that passes along a chain — the channel does not relay.
+""")
+
+code(r'''
+AC2_STATE = aircraft("AC2", gs=0.0)  # parked at the origin; the other two converge on it
+
+
+def trio_at(t: float):
+    """The three true states at time t. AC1 approaches from the west at 10 m/s, AC3 from the east
+    at 5 m/s, from different starting distances -- so no two pairwise separations ever coincide."""
+    west = 8000.0 - 10.0 * t   # AC1 -- AC2 separation
+    east = 6000.0 - 5.0 * t    # AC2 -- AC3 separation
+    lat1, lon1 = geo.forward(AC2_STATE.lat, AC2_STATE.lon, 270.0, west)
+    lat3, lon3 = geo.forward(AC2_STATE.lat, AC2_STATE.lon, 90.0, east)
+    return (AircraftState(id="AC1", lat=lat1, lon=lon1, trk=90.0, gs=10.0),
+            AC2_STATE,
+            AircraftState(id="AC3", lat=lat3, lon=lon3, trk=270.0, gs=5.0))
+
+
+PAIRS = (("AC1", "AC2"), ("AC2", "AC3"), ("AC1", "AC3"))
+T_TRIO = 700.0
+
+
+def fly_trio(max_range: float, seed: int = 0):
+    """Step all three past each other. Returns (times, separation per pair, contact per pair),
+    where contact is 1.0 on the ticks that pair actually exchanged a fresh message both ways."""
+    comm = Comm(reception_prob=1.0, latency=0.0,
+                gates=(SurveillanceRange(max_range=max_range),))
+    generator, state = comm_rng(seed), comm.initial_state()
+    times, separation = [], {p: [] for p in PAIRS}
+    contact = {p: [] for p in PAIRS}
+    for k in range(int(T_TRIO) + 1):
+        t, roster = float(k), trio_at(float(k))
+        by_id = {s.id: s for s in roster}
+        state = comm.step(state, [Message(s.id, s, t) for s in roster], roster, t, generator)
+        times.append(t)
+        for a, b in PAIRS:
+            _, d = geo.qdrdist(by_id[a].lat, by_id[a].lon, by_id[b].lat, by_id[b].lon)
+            separation[(a, b)].append(d)
+            fresh = [state.held.get((rcv, src)) for rcv, src in ((a, b), (b, a))]
+            contact[(a, b)].append(
+                1.0 if all(m is not None and m.t_meas == t for m in fresh) else 0.0
+            )
+    return (np.array(times),
+            {p: np.array(v) for p, v in separation.items()},
+            {p: np.array(v) for p, v in contact.items()})
+
+
+ts, sep, con = fly_trio(MAX_RANGE)
+print(f"max_range {MAX_RANGE:.0f} m")
+for pair in PAIRS:
+    live = ts[con[pair] == 1.0]
+    print(f"  {pair[0]}<->{pair[1]}: in contact from t={live[0]:.0f}s "
+          f"({sep[pair][con[pair] == 1.0][0]:.0f} m) onwards, {len(live):.0f} of {len(ts)} ticks")
+
+WATCH = 450.0  # inside the middle regime
+i = int(WATCH)
+print(f"\nat t={WATCH:.0f}s the three separations are all different:")
+for pair in PAIRS:
+    verdict = "in contact" if con[pair][i] else "hears nothing"
+    print(f"  {pair[0]}<->{pair[1]}: {sep[pair][i]:6.0f} m -> {verdict}")
+''')
+
+code(r'''
+fig, (a_sep, a_con) = plt.subplots(1, 2, figsize=(12.0, 5.0))
+colours = {("AC1", "AC2"): BLUE, ("AC2", "AC3"): ORANGE, ("AC1", "AC3"): PURPLE}
+
+# left: the three pairwise separations, each crossing max_range at its own moment
+for pair in PAIRS:
+    a_sep.plot(ts, sep[pair] / 1000.0, color=colours[pair], lw=1.8,
+               label=f"{pair[0]}-{pair[1]}")
+a_sep.axhline(MAX_RANGE / 1000.0, color=RED, ls="--", lw=1.3,
+              label=f"max_range = {MAX_RANGE / 1000.0:.0f} km")
+a_sep.axvline(WATCH, color="0.4", ls=":", lw=1.2)
+a_sep.set_xlabel("time [s]")
+a_sep.set_ylabel("separation [km]")
+a_sep.set_title("Three pairs, three crossings", fontsize=10)
+a_sep.legend(fontsize=8)
+a_sep.set_box_aspect(1)
+
+# right: which pairs are actually talking -- one row per pair, filled where a message got through
+for row, pair in enumerate(PAIRS):
+    live = con[pair] == 1.0
+    a_con.fill_between(ts, row - 0.35, row + 0.35, where=live, color=colours[pair], lw=0)
+a_con.axvline(WATCH, color="0.4", ls=":", lw=1.2)
+a_con.set_yticks(range(len(PAIRS)), [f"{a}-{b}" for a, b in PAIRS])
+a_con.set_ylim(-0.7, len(PAIRS) - 0.3)
+a_con.set_xlim(0.0, T_TRIO)
+a_con.set_xlabel("time [s]")
+a_con.set_title(f"Who is talking (dotted line: t = {WATCH:.0f} s)", fontsize=10)
+a_con.set_box_aspect(1)
+fig.tight_layout()
+plt.show()
+''')
+
+md(r"""
+Read the right panel down the dotted line. AC2 is talking to both of its neighbours, and AC1 and
+AC3 — the two furthest apart — are not talking to each other. Neither of them is out of touch with
+the fleet, and neither is malfunctioning; the single link between them is simply longer than the
+range. A fourth regime opens later, when the outer pair finally closes to within `max_range` and
+all three links are up.
+
+This is the same reason the radio-failure section needs three aircraft: at n = 2 there is one
+undirected pair, so every effect either applies or does not, and the *structure* an effect imposes
+on the fleet's picture of itself is invisible. A study of surveillance range should be run at n ≥ 3
+for that reason — the pairwise reduction will report the range faithfully and tell you nothing
+about the connectivity it produces.
+""")
+
 # ---------------------------------------------------------------- 10. reproducibility
 md(r"""
 ## Reproducibility
@@ -518,7 +786,7 @@ def run_once(seed: int, reception: float = 0.7):
     generator, state = comm_rng(seed), comm.initial_state()
     for k in range(50):
         state = comm.step(state, [message("OWN", float(k)), message("INT", float(k))],
-                          IDS, float(k), generator)
+                          ROSTER, float(k), generator)
     return {k: v.t_meas for k, v in state.held.items()}
 
 
@@ -643,7 +911,7 @@ comm = Comm(reception_prob=1.0, gates=(DutyCycle(period=4.0, on_time=1.0),))
 state, generator, offered = comm.initial_state(), comm_rng(0), []
 for k in range(12):
     t = float(k)
-    state = comm.step(state, [message("INT", t)], IDS, t, generator)
+    state = comm.step(state, [message("INT", t)], ROSTER, t, generator)
     held = state.held.get(("OWN", "INT"))
     offered.append("on " if held is not None and held.t_meas == t else "off")
 print("duty cycle 1 s on / 4 s period:", " ".join(offered))
@@ -688,9 +956,11 @@ class TokenBucket(CommunicationModel):
         return TokenState(tokens=self.capacity)
 
     def step(self, state, broadcasts, receivers, t, rng) -> TokenState:
+        # `receivers` is the roster as *states*, not ids -- the channel is handed the aircraft so
+        # that a geometry-dependent effect can read their positions. This model only needs `.id`.
         budget, held = self.capacity, dict(state.held)
         for msg in broadcasts:
-            for receiver in receivers:
+            for receiver in (r.id for r in receivers):
                 if receiver == msg.source or budget == 0:
                     continue
                 held[(receiver, msg.source)] = msg
@@ -700,7 +970,7 @@ class TokenBucket(CommunicationModel):
 
 comm = TokenBucket(capacity=1)
 state = comm.initial_state()
-state = comm.step(state, [message("OWN", 0.0), message("INT", 0.0)], IDS, 0.0, comm_rng(0))
+state = comm.step(state, [message("OWN", 0.0), message("INT", 0.0)], ROSTER, 0.0, comm_rng(0))
 print(f"capacity 1: {len(state.held)} of 2 offered links delivered -> {sorted(state.held)}")
 print(f"tokens left: {state.tokens}")
 

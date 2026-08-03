@@ -33,6 +33,11 @@ DT = 0.05  # true-state sampling for the smooth ground-truth curve
 T_MAX = 30.0
 
 
+def _ac(aid: str) -> AircraftState:
+    """A placeholder true state: `Comm.step` takes the roster as aircraft, not ids."""
+    return AircraftState(id=aid, lat=52.0, lon=4.0, trk=90.0, gs=10.0)
+
+
 def true_gs(t: float) -> float:
     """A hand-shaped ground-speed profile: ramp up, hold, ramp down, hold — never flat for long,
     so any drop is visible as perceived failing to track it."""
@@ -69,7 +74,7 @@ def run() -> dict:
                 state=AircraftState(id=SOURCE, lat=52.0, lon=4.0, trk=90.0, gs=true_gs(t)),
                 t_meas=t,
             )
-            state = comm.step(state, [msg], (SOURCE, RECEIVER), t, rng)
+            state = comm.step(state, [msg], (_ac(SOURCE), _ac(RECEIVER)), t, rng)
             next_broadcast += BROADCAST_INTERVAL
 
         perceived = surveillance.perceived(state, RECEIVER, SOURCE, t)

@@ -35,6 +35,14 @@ N_TICKS = 4000
 TIMELINE_S = 60.0
 
 
+def _ac(aid: str) -> AircraftState:
+    return AircraftState(id=aid, lat=52.0, lon=4.0, trk=0.0, gs=10.0)
+
+
+# the roster `Comm.step` is handed: true states, not ids (a gate may read their geometry)
+ROSTER = tuple(_ac(aid) for aid in RECEIVERS)
+
+
 def _broadcast(source: str, t: float) -> Message:
     return Message(
         source=source,
@@ -59,7 +67,7 @@ def run() -> dict:
 
     for i in range(N_TICKS):
         t = i * BROADCAST_INTERVAL
-        state = comm.step(state, [_broadcast(s, t) for s in RECEIVERS], RECEIVERS, t, rng)
+        state = comm.step(state, [_broadcast(s, t) for s in RECEIVERS], ROSTER, t, rng)
 
         for source, receiver in LINKS:
             offered[(source, receiver)] += 1

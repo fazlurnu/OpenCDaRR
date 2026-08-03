@@ -40,6 +40,11 @@ N_TICKS = 4000
 BLUE, ORANGE = "#1f77b4", "#ff7f0e"
 
 
+def _ac(aid: str) -> AircraftState:
+    """A placeholder true state: `Comm.step` takes the roster as aircraft, not ids."""
+    return AircraftState(id=aid, lat=52.0, lon=4.0, trk=0.0, gs=10.0)
+
+
 def _msg(t: float) -> Message:
     return Message(SRC, AircraftState(id=SRC, lat=52.0, lon=4.0, trk=0.0, gs=10.0), t_meas=t)
 
@@ -64,7 +69,7 @@ def run(jitter: float) -> tuple[list[float], np.ndarray]:
     state = CommState()
     arrivals: list[float] = []  # deliver_t of every message this link actually accepted
     for t in tx:
-        state = comm.step(state, [_msg(t)], [EGO], t, rng)
+        state = comm.step(state, [_msg(t)], [_ac(EGO)], t, rng)
         for pending in state.in_flight:
             if pending.message.source == SRC and pending.message.t_meas == t:
                 arrivals.append(pending.deliver_t)

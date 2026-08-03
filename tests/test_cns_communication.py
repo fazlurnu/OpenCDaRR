@@ -29,16 +29,19 @@ from opencdarr.performance import M600
 from opencdarr.scenario import create_conflict
 from opencdarr.state import AircraftState
 
-_RECEIVERS = ("OWN", "INT")
+
+def _at(aid: str, gs: float = 10.0) -> AircraftState:
+    return AircraftState(id=aid, lat=52.0, lon=4.0, trk=0.0, gs=gs)
+
+
+# the roster `step` is handed: true states, since a gate may read their geometry (ADR 0019 §4).
+# Co-located here because nothing in this file gates on range — these tests are the plain channel.
+_RECEIVERS = (_at("OWN"), _at("INT"))
 
 
 def _msg(source: str, t_meas: float, gs: float = 10.0) -> Message:
     """A broadcast from ``source``; ``gs`` tags it so we can tell messages apart."""
-    return Message(
-        source=source,
-        state=AircraftState(id=source, lat=52.0, lon=4.0, trk=0.0, gs=gs),
-        t_meas=t_meas,
-    )
+    return Message(source=source, state=_at(source, gs), t_meas=t_meas)
 
 
 def _rng() -> np.random.Generator:
@@ -266,7 +269,7 @@ class _TickCountingComm(Comm):
         self,
         state: CommState,
         broadcasts: Sequence[Message],
-        receivers: Sequence[str],
+        receivers: Sequence[AircraftState],
         t: float,
         rng: np.random.Generator,
     ) -> CommState:

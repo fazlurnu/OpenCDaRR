@@ -187,14 +187,16 @@ class CNS:
         if self.communication is not None and streams.comm is not None:
             # each firing aircraft's transmit is offered to every receiver over its own directed
             # link (per-link reception + latency). Broadcasts and receivers stay in agent order so
-            # the draw sequence is the pairwise runner's at n = 2.
+            # the draw sequence is the pairwise runner's at n = 2. The roster goes down as **true**
+            # states, not ids: a geometry-dependent gate reads the positions from it, and the model
+            # itself only ever needs `.id` (ADR 0019 §4's hard-availability half).
             broadcasts = [
                 Message(source=states[i].id, state=tx, t_meas=t)
                 for i in firing
                 if (tx := last_tx[i]) is not None  # always true for a firing aircraft
             ]
             comm_state = self.communication.step(
-                comm_state, broadcasts, [s.id for s in states], t, streams.comm
+                comm_state, broadcasts, states, t, streams.comm
             )
 
         surveil = self.surveillance or _DEFAULT_SURVEILLANCE
