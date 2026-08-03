@@ -43,6 +43,13 @@ discretised over `ktheta` angle samples (default 256, matching the reference):
 
 $$ P(\lVert d\rVert > x) = \sum_{k} P(\lVert d\rVert > x \mid \theta_k)\; p_\Theta(\theta_k)\,\Delta\theta $$
 
+**The uniform grid is the weak point of this formula, not the formula itself.** The same high-SNR
+regime that forces the log-space evaluation also makes $p_\Theta$ a spike of width $\approx 1/$SNR,
+which a grid of fixed spacing $2\pi/\texttt{ktheta}$ does not resolve — at `ktheta = 256` and
+`vel_ci95 = 1` m/s only four nodes land inside it, and the sum becomes a one-point estimate.
+[[probftr-angular-grid]] measures the error this causes and tests a grid centred on the mean
+velocity direction instead. Not fixed here; `ktheta = 256` uniform is still what ships.
+
 ## Where $\Sigma_r$, $\Sigma_v$ come from
 
 Uncertainty is **per-aircraft, per-quantity** (`pos_ci95`/`vel_ci95` on `AircraftState`), not one

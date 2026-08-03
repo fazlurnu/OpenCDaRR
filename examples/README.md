@@ -96,6 +96,12 @@ above — one module per notebook — and several of them generate the figures t
   over sixteen conditions. Builds up from a single encounter to the full grid, and reports two
   metrics rather than one: P(LoS) for how often separation was lost, and the median achieved
   minimum separation for how much room was left when it was not.
+- [`handbook/probftr_angular_grid.ipynb`](handbook/probftr_angular_grid.ipynb) — the quadrature
+  inside `ProbabilisticFTR`, and whether its uniform grid of `ktheta` angles is fine enough. Plots
+  where the shipped grid puts its samples against where the integrand actually has mass, then
+  compares a grid centred on the mean velocity direction on accuracy and on cost. Verifies its own
+  reference against a Monte Carlo estimate that uses no quadrature at all. Research notebook rather
+  than a tutorial, and it reaches into module internals on purpose.
 - [`handbook/rare_event_ips.ipynb`](handbook/rare_event_ips.ipynb) — running the interacting
   particle system (IPS) estimator in `opencdarr.ips` on a loss of separation too rare for plain
   Monte Carlo, parallelised across replications and particles with `opencdarr.parallel`.
