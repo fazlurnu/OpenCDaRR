@@ -1,0 +1,8 @@
+IPS — 4/4 cells to run, 600 particles x 8 reps, per-cell ladders from probe_results.json
+  2deg  ci95=(10m,3m/s)  MVP                   P(LoS)=1.112e-03  CI [8.28e-04, 1.34e-03]  collapsed 0/8  (703s)
+  2deg  ci95=(10m,3m/s)  RMVP0.95              P(LoS)=7.614e-05  CI [5.86e-05, 9.09e-05]  collapsed 0/8  (1033s)
+  30deg  ci95=(10m,3m/s)  MVP                  P(LoS)=1.915e-04  CI [9.15e-05, 2.50e-04]  collapsed 0/8  (527s)
+  30deg  ci95=(10m,3m/s)  RMVP0.95             P(LoS)=3.009e-06  CI [1.16e-06, 4.55e-06]  collapsed 0/8  (442s)
+
+wrote /Users/mfrahman/Projects/OpenCDaRR/robust-mvp/ips_results.json (4 cells)
+(2705 s)

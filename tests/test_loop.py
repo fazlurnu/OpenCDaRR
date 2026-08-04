@@ -7,6 +7,8 @@ the loop are doing real work.
 
 from __future__ import annotations
 
+import pytest
+
 from opencdarr.cd import StateBased
 from opencdarr.cns import GnssNavigation
 from opencdarr.cr import MVP, VO
@@ -128,6 +130,10 @@ def test_kinematics_is_pluggable() -> None:
 # never exceed the minimum of its own endpoints — and ``test_segment_minimum_never_exceeds_the_
 # sampled_comb`` pins that as a property so a future change cannot move one of these *up*
 # unnoticed. The trajectories themselves are untouched: nothing in the decision path reads min_sep.
+#
+# Compared with pytest.approx(rel=1e-8), not ==: trig calls compounded over many steps land on a
+# different last bit depending on the platform's libm (e.g. macOS vs glibc), even with identical
+# code and seed. The tolerance is tight enough to still catch a real modelling regression.
 _ANCHOR_NOISELESS_MVP = 109.29398339330471
 _ANCHOR_NOISELESS_VO = 109.82844921479813
 _ANCHOR_NOISY_MVP = 267.74238306504367
@@ -141,7 +147,7 @@ def test_bit_for_bit_noiseless_mvp() -> None:
         own, intr, perf=M600, rpz=_RPZ, t_lookahead=_LOOKAHEAD, dt=_DT,
         detector=StateBased(), resolver=MVP(margin=1.1), recovery=PastCPA(),
     )
-    assert out.min_sep == _ANCHOR_NOISELESS_MVP
+    assert out.min_sep == pytest.approx(_ANCHOR_NOISELESS_MVP, rel=1e-8)
 
 
 def test_bit_for_bit_noiseless_vo() -> None:
@@ -151,7 +157,7 @@ def test_bit_for_bit_noiseless_vo() -> None:
         own, intr, perf=M600, rpz=_RPZ, t_lookahead=_LOOKAHEAD, dt=_DT,
         detector=StateBased(), resolver=VO(margin=1.1), recovery=PastCPA(),
     )
-    assert out.min_sep == _ANCHOR_NOISELESS_VO
+    assert out.min_sep == pytest.approx(_ANCHOR_NOISELESS_VO, rel=1e-8)
 
 
 def _noisy_encounter(resolver: MVP | VO) -> float:
@@ -171,12 +177,12 @@ def _noisy_encounter(resolver: MVP | VO) -> float:
 
 def test_bit_for_bit_noisy_mvp() -> None:
     """Seeded GPS-noisy MVP encounter reproduces the pre-refactor min_sep exactly (noisy path)."""
-    assert _noisy_encounter(MVP(margin=1.05)) == _ANCHOR_NOISY_MVP
+    assert _noisy_encounter(MVP(margin=1.05)) == pytest.approx(_ANCHOR_NOISY_MVP, rel=1e-8)
 
 
 def test_bit_for_bit_noisy_vo() -> None:
     """Seeded GPS-noisy VO encounter reproduces the pre-refactor min_sep exactly (noisy path)."""
-    assert _noisy_encounter(VO(margin=1.05)) == _ANCHOR_NOISY_VO
+    assert _noisy_encounter(VO(margin=1.05)) == pytest.approx(_ANCHOR_NOISY_VO, rel=1e-8)
 
 
 # --- 5a wind plumbing: passing wind=NO_WIND explicitly is byte-identical to omitting it, for both

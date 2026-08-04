@@ -5,6 +5,8 @@ from __future__ import annotations
 import dataclasses
 import math
 
+import pytest
+
 from opencdarr import geo
 from opencdarr.cd import StateBased
 from opencdarr.cns import GnssNavigation
@@ -129,7 +131,9 @@ def test_golden_ipr_at_midrange_noise() -> None:
     )
     assert (result.n_los, result.n_conflict) == (22, 200)
     assert result.ipr == 0.89
-    assert result.median_min_sep == 126.45469556207351
+    # rel=1e-8, not ==: trig calls accumulated over many steps land on a different last bit
+    # depending on the platform's libm (e.g. macOS vs glibc), even with identical code and seed.
+    assert result.median_min_sep == pytest.approx(126.45469556207351, rel=1e-8)
 
 
 def test_min_seps_is_the_record_p_los_was_thresholded_from() -> None:

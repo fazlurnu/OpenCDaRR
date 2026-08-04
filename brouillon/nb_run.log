@@ -1,0 +1,413 @@
+/Users/mfrahman/anaconda3/lib/python3.11/site-packages/nbformat/__init__.py:93: MissingIDFieldWarning: Code cell is missing an id field, this will become a hard error in future nbformat versions. You may want to use `normalize()` on your notebooks before validations (available since nbformat 5.1.4). Previous versions of nbformat are fixing this issue transparently, and will stop doing so in the future.
+  validate(nb)
+0.00s - Debugger warning: It seems that frozen modules are being used, which may
+0.00s - make the debugger miss breakpoints. Please pass -Xfrozen_modules=off
+0.00s - to python to disable frozen modules.
+0.00s - Note: Debugging will proceed. Set PYDEVD_DISABLE_FILE_VALIDATION=1 to disable this validation.
+0.00s - Debugger warning: It seems that frozen modules are being used, which may
+0.00s - make the debugger miss breakpoints. Please pass -Xfrozen_modules=off
+0.00s - to python to disable frozen modules.
+0.00s - Note: Debugging will proceed. Set PYDEVD_DISABLE_FILE_VALIDATION=1 to disable this validation.
+FAILED after 2394 s: CellExecutionError: An error occurred while executing the following cell:
+------------------
+N_PARTICLES = 200
+REPS = 3
+IPS_SEED = 20260803
+EVENT = RPZ
+
+LADDER = [100.0, 90.0, 80.0, 72.0, 66.0, 62.0, 59.0, 57.0,
+          56.0, 55.0, 54.0, 53.0, 52.0, 51.0, EVENT]
+print(f"{len(LADDER)} shells: {LADDER}")
+
+
+def make_start(method: str, dpsi: float) -> Particle:
+    """The single starting particle: geometry is pinned, so every particle begins identically and
+    all the spread comes from the forward CNS noise IPS splits on."""
+    own = AircraftState(id="OWN", lat=52.0, lon=4.0, trk=0.0, gs=SPEED,
+                        pos_ci95=POS_CI95, vel_ci95=VEL_CI95)
+    intr = create_conflict(own, intr_id="INT", dpsi=dpsi, dcpa=DCPA,
+                           tlos=TLOS, rpz=RPZ, side=1)
+    agents = [Agent(own, M600), Agent(intr, M600)]
+    env = build_env(agents, rpz=RPZ, t_lookahead=T_LOOKAHEAD, dt=DT,
+                    detector=StateBased(), resolver=MVP(MARGIN),
+                    recovery=METHODS[method][1](), navigation=GnssNavigation(),
+                    t_max=T_MAX, done_timeout=10.0)
+    return Particle(env=env, state=env.initial_state(agents))
+
+
+def run_ips(method: str, dpsi: float):
+    """The IPS estimate for one cell, read from disk when this exact run is already there."""
+    params = {
+        "estimator": "ips", "method": method, "dpsi": dpsi, "dcpa": DCPA, "tlos": TLOS,
+        "speed": SPEED, "rpz": RPZ, "t_lookahead": T_LOOKAHEAD, "margin": MARGIN,
+        "pos_ci95": POS_CI95, "vel_ci95": VEL_CI95, "gamma": GAMMA,
+        "dt": DT, "t_max": T_MAX, "levels": list(LADDER),
+        "n_particles": N_PARTICLES, "reps": REPS,
+    }
+    key = cache.run_key(params, seed=IPS_SEED)
+    start = make_start(method, dpsi)
+    return cache.load_or_run(key, lambda: estimate_rare_prob(
+        lambda seq, s=start: s, LADDER,
+        n_particles=N_PARTICLES, reps=REPS, seed=IPS_SEED, n_jobs=N_JOBS))
+
+
+ips = {}
+t0 = time.perf_counter()
+for method in METHODS:
+    for dpsi in ANGLES:
+        est = ips[method, dpsi] = run_ips(method, dpsi)
+        tag = "" if est.n_collapsed == 0 else f"  [{est.n_collapsed}/{REPS} collapsed]"
+        print(f"{method:18s} dpsi={dpsi:5.0f}  P(LoS) = {est.prob:.3e}{tag}")
+print(f"\nIPS pass: {time.perf_counter() - t0:.0f} s")
+------------------
+
+----- stdout -----
+15 shells: [100.0, 90.0, 80.0, 72.0, 66.0, 62.0, 59.0, 57.0, 56.0, 55.0, 54.0, 53.0, 52.0, 51.0, 50.0]
+----- stdout -----
+prob_ftr_both      dpsi=    2  P(LoS) = 4.884e-05
+----- stdout -----
+prob_ftr_both      dpsi=    5  P(LoS) = 5.729e-05
+----- stdout -----
+prob_ftr_both      dpsi=   10  P(LoS) = 2.731e-05
+----- stdout -----
+prob_ftr_both      dpsi=   45  P(LoS) = 9.752e-07
+----- stdout -----
+prob_ftr_both      dpsi=   90  P(LoS) = 0.000e+00  [3/3 collapsed]
+----- stdout -----
+prob_ftr_both      dpsi=  180  P(LoS) = 0.000e+00  [3/3 collapsed]
+----- stdout -----
+prob_ftr_intruder  dpsi=    2  P(LoS) = 2.702e-05
+------------------
+
+[0;31m---------------------------------------------------------------------------[0m
+[0;31mKeyboardInterrupt[0m                         Traceback (most recent call last)
+Cell [0;32mIn[4], line 46[0m
+[1;32m     44[0m [38;5;28;01mfor[39;00m method [38;5;129;01min[39;00m METHODS:
+[1;32m     45[0m     [38;5;28;01mfor[39;00m dpsi [38;5;129;01min[39;00m ANGLES:
+[0;32m---> 46[0m         est [38;5;241m=[39m ips[method, dpsi] [38;5;241m=[39m run_ips(method, dpsi)
+[1;32m     47[0m         tag [38;5;241m=[39m [38;5;124m"[39m[38;5;124m"[39m [38;5;28;01mif[39;00m est[38;5;241m.[39mn_collapsed [38;5;241m==[39m [38;5;241m0[39m [38;5;28;01melse[39;00m [38;5;124mf[39m[38;5;124m"[39m[38;5;124m  [[39m[38;5;132;01m{[39;00mest[38;5;241m.[39mn_collapsed[38;5;132;01m}[39;00m[38;5;124m/[39m[38;5;132;01m{[39;00mREPS[38;5;132;01m}[39;00m[38;5;124m collapsed][39m[38;5;124m"[39m
+[1;32m     48[0m         [38;5;28mprint[39m([38;5;124mf[39m[38;5;124m"[39m[38;5;132;01m{[39;00mmethod[38;5;132;01m:[39;00m[38;5;124m18s[39m[38;5;132;01m}[39;00m[38;5;124m dpsi=[39m[38;5;132;01m{[39;00mdpsi[38;5;132;01m:[39;00m[38;5;124m5.0f[39m[38;5;132;01m}[39;00m[38;5;124m  P(LoS) = [39m[38;5;132;01m{[39;00mest[38;5;241m.[39mprob[38;5;132;01m:[39;00m[38;5;124m.3e[39m[38;5;132;01m}[39;00m[38;5;132;01m{[39;00mtag[38;5;132;01m}[39;00m[38;5;124m"[39m)
+
+Cell [0;32mIn[4], line 37[0m, in [0;36mrun_ips[0;34m(method, dpsi)[0m
+[1;32m     35[0m key [38;5;241m=[39m cache[38;5;241m.[39mrun_key(params, seed[38;5;241m=[39mIPS_SEED)
+[1;32m     36[0m start [38;5;241m=[39m make_start(method, dpsi)
+[0;32m---> 37[0m [38;5;28;01mreturn[39;00m cache[38;5;241m.[39mload_or_run(key, [38;5;28;01mlambda[39;00m: estimate_rare_prob(
+[1;32m     38[0m     [38;5;28;01mlambda[39;00m seq, s[38;5;241m=[39mstart: s, LADDER,
+[1;32m     39[0m     n_particles[38;5;241m=[39mN_PARTICLES, reps[38;5;241m=[39mREPS, seed[38;5;241m=[39mIPS_SEED, n_jobs[38;5;241m=[39mN_JOBS))
+
+File [0;32m~/Projects/OpenCDaRR/opencdarr/cache.py:93[0m, in [0;36mload_or_run[0;34m(key, compute, cache_dir)[0m
+[1;32m     91[0m     [38;5;28;01mexcept[39;00m (pickle[38;5;241m.[39mUnpicklingError, [38;5;167;01mEOFError[39;00m, [38;5;167;01mAttributeError[39;00m, [38;5;167;01mModuleNotFoundError[39;00m):
+[1;32m     92[0m         [38;5;28;01mpass[39;00m  [38;5;66;03m# corrupt or written by incompatible code — fall through and recompute[39;00m
+[0;32m---> 93[0m result [38;5;241m=[39m compute()
+[1;32m     94[0m [38;5;28;01mwith[39;00m path[38;5;241m.[39mopen([38;5;124m"[39m[38;5;124mwb[39m[38;5;124m"[39m) [38;5;28;01mas[39;00m handle:
+[1;32m     95[0m     pickle[38;5;241m.[39mdump(result, handle)
+
+Cell [0;32mIn[4], line 37[0m, in [0;36mrun_ips.<locals>.<lambda>[0;34m()[0m
+[1;32m     35[0m key [38;5;241m=[39m cache[38;5;241m.[39mrun_key(params, seed[38;5;241m=[39mIPS_SEED)
+[1;32m     36[0m start [38;5;241m=[39m make_start(method, dpsi)
+[0;32m---> 37[0m [38;5;28;01mreturn[39;00m cache[38;5;241m.[39mload_or_run(key, [38;5;28;01mlambda[39;00m: estimate_rare_prob(
+[1;32m     38[0m     [38;5;28;01mlambda[39;00m seq, s[38;5;241m=[39mstart: s, LADDER,
+[1;32m     39[0m     n_particles[38;5;241m=[39mN_PARTICLES, reps[38;5;241m=[39mREPS, seed[38;5;241m=[39mIPS_SEED, n_jobs[38;5;241m=[39mN_JOBS))
+
+File [0;32m~/Projects/OpenCDaRR/opencdarr/parallel.py:338[0m, in [0;36mestimate_rare_prob[0;34m(build_initial, levels, n_particles, reps, seed, n_jobs, oversubscribe, min_shard, verbose)[0m
+[1;32m    320[0m [38;5;28;01mdef[39;00m[38;5;250m [39m[38;5;21mestimate_rare_prob[39m(
+[1;32m    321[0m     build_initial: BuildInitial,
+[1;32m    322[0m     levels: Sequence[[38;5;28mfloat[39m],
+[0;32m   (...)[0m
+[1;32m    330[0m     verbose: [38;5;28mint[39m [38;5;241m=[39m [38;5;241m0[39m,
+[1;32m    331[0m ) [38;5;241m-[39m[38;5;241m>[39m RareEventEstimate:
+[1;32m    332[0m [38;5;250m    [39m[38;5;124;03m"""The parallel twin of :func:`opencdarr.ips.estimate_rare_prob` — same result, more cores.[39;00m
+[1;32m    333[0m 
+[1;32m    334[0m [38;5;124;03m    Unlike the serial version, the worker count is independent of ``reps``: pick ``reps`` for the[39;00m
+[1;32m    335[0m [38;5;124;03m    confidence interval you want (ADR 0017 §5) and ``n_jobs`` for the machine you have.[39;00m
+[1;32m    336[0m [38;5;124;03m    """[39;00m
+[1;32m    337[0m     [38;5;28;01mreturn[39;00m combine_replications(
+[0;32m--> 338[0m         ips_replications(
+[1;32m    339[0m             build_initial,
+[1;32m    340[0m             levels,
+[1;32m    341[0m             n_particles,
+[1;32m    342[0m             replication_seeds(seed, reps),
+[1;32m    343[0m             n_jobs[38;5;241m=[39mn_jobs,
+[1;32m    344[0m             oversubscribe[38;5;241m=[39moversubscribe,
+[1;32m    345[0m             min_shard[38;5;241m=[39mmin_shard,
+[1;32m    346[0m             verbose[38;5;241m=[39mverbose,
+[1;32m    347[0m         )
+[1;32m    348[0m     )
+
+File [0;32m~/Projects/OpenCDaRR/opencdarr/parallel.py:308[0m, in [0;36mips_replications[0;34m(build_initial, levels, n_particles, seqs, n_jobs, oversubscribe, min_shard, verbose)[0m
+[1;32m    302[0m     results: [38;5;28mlist[39m[IPSResult] [38;5;241m=[39m [38;5;28mlist[39m(
+[1;32m    303[0m         parallel_cls(n_jobs[38;5;241m=[39mworkers, verbose[38;5;241m=[39mverbose)(
+[1;32m    304[0m             delayed(ips_once)(build_initial, levels, n_particles, s) [38;5;28;01mfor[39;00m s [38;5;129;01min[39;00m seqs
+[1;32m    305[0m         )
+[1;32m    306[0m     )
+[1;32m    307[0m     [38;5;28;01mreturn[39;00m results
+[0;32m--> 308[0m [38;5;28;01mreturn[39;00m _lockstep(
+[1;32m    309[0m     build_initial,
+[1;32m    310[0m     levels,
+[1;32m    311[0m     n_particles,
+[1;32m    312[0m     seqs,
+[1;32m    313[0m     workers[38;5;241m=[39mworkers,
+[1;32m    314[0m     oversubscribe[38;5;241m=[39moversubscribe,
+[1;32m    315[0m     min_shard[38;5;241m=[39mmin_shard,
+[1;32m    316[0m     verbose[38;5;241m=[39mverbose,
+[1;32m    317[0m )
+
+File [0;32m~/Projects/OpenCDaRR/opencdarr/parallel.py:232[0m, in [0;36m_lockstep[0;34m(build_initial, levels, n_particles, seqs, workers, oversubscribe, min_shard, verbose)[0m
+[1;32m    230[0m bounds [38;5;241m=[39m _shard_bounds(n_particles, shards)
+[1;32m    231[0m plan [38;5;241m=[39m [(r, lo, hi) [38;5;28;01mfor[39;00m r [38;5;129;01min[39;00m live [38;5;28;01mfor[39;00m lo, hi [38;5;129;01min[39;00m bounds]
+[0;32m--> 232[0m done [38;5;241m=[39m run(
+[1;32m    233[0m     delayed(_evolve_slice)(clouds[r][lo:hi], target, level_seqs[r][k], lo, hi)
+[1;32m    234[0m     [38;5;28;01mfor[39;00m r, lo, hi [38;5;129;01min[39;00m plan
+[1;32m    235[0m )
+[1;32m    237[0m [38;5;66;03m# results arrive in submission order, so appending by plan order rebuilds each[39;00m
+[1;32m    238[0m [38;5;66;03m# replication's evolved list in exactly the order the serial loop produced it[39;00m
+[1;32m    239[0m regrouped: [38;5;28mdict[39m[[38;5;28mint[39m, [38;5;28mlist[39m[FleetState]] [38;5;241m=[39m {r: [] [38;5;28;01mfor[39;00m r [38;5;129;01min[39;00m live}
+
+File [0;32m~/anaconda3/lib/python3.11/site-packages/joblib/parallel.py:1098[0m, in [0;36mParallel.__call__[0;34m(self, iterable)[0m
+[1;32m   1095[0m     [38;5;28mself[39m[38;5;241m.[39m_iterating [38;5;241m=[39m [38;5;28;01mFalse[39;00m
+[1;32m   1097[0m [38;5;28;01mwith[39;00m [38;5;28mself[39m[38;5;241m.[39m_backend[38;5;241m.[39mretrieval_context():
+[0;32m-> 1098[0m     [38;5;28mself[39m[38;5;241m.[39mretrieve()
+[1;32m   1099[0m [38;5;66;03m# Make sure that we get a last message telling us we are done[39;00m
+[1;32m   1100[0m elapsed_time [38;5;241m=[39m time[38;5;241m.[39mtime() [38;5;241m-[39m [38;5;28mself[39m[38;5;241m.[39m_start_time
+
+File [0;32m~/anaconda3/lib/python3.11/site-packages/joblib/parallel.py:975[0m, in [0;36mParallel.retrieve[0;34m(self)[0m
+[1;32m    973[0m [38;5;28;01mtry[39;00m:
+[1;32m    974[0m     [38;5;28;01mif[39;00m [38;5;28mgetattr[39m([38;5;28mself[39m[38;5;241m.[39m_backend, [38;5;124m'[39m[38;5;124msupports_timeout[39m[38;5;124m'[39m, [38;5;28;01mFalse[39;00m):
+[0;32m--> 975[0m         [38;5;28mself[39m[38;5;241m.[39m_output[38;5;241m.[39mextend(job[38;5;241m.[39mget(timeout[38;5;241m=[39m[38;5;28mself[39m[38;5;241m.[39mtimeout))
+[1;32m    976[0m     [38;5;28;01melse[39;00m:
+[1;32m    977[0m         [38;5;28mself[39m[38;5;241m.[39m_output[38;5;241m.[39mextend(job[38;5;241m.[39mget())
+
+File [0;32m~/anaconda3/lib/python3.11/site-packages/joblib/_parallel_backends.py:567[0m, in [0;36mLokyBackend.wrap_future_result[0;34m(future, timeout)[0m
+[1;32m    564[0m [38;5;250m[39m[38;5;124;03m"""Wrapper for Future.result to implement the same behaviour as[39;00m
+[1;32m    565[0m [38;5;124;03mAsyncResults.get from multiprocessing."""[39;00m
+[1;32m    566[0m [38;5;28;01mtry[39;00m:
+[0;32m--> 567[0m     [38;5;28;01mreturn[39;00m future[38;5;241m.[39mresult(timeout[38;5;241m=[39mtimeout)
+[1;32m    568[0m [38;5;28;01mexcept[39;00m CfTimeoutError [38;5;28;01mas[39;00m e:
+[1;32m    569[0m     [38;5;28;01mraise[39;00m [38;5;167;01mTimeoutError[39;00m [38;5;28;01mfrom[39;00m[38;5;250m [39m[38;5;21;01me[39;00m
+
+File [0;32m~/anaconda3/lib/python3.11/concurrent/futures/_base.py:451[0m, in [0;36mFuture.result[0;34m(self, timeout)[0m
+[1;32m    448[0m [38;5;28;01melif[39;00m [38;5;28mself[39m[38;5;241m.[39m_state [38;5;241m==[39m FINISHED:
+[1;32m    449[0m     [38;5;28;01mreturn[39;00m [38;5;28mself[39m[38;5;241m.[39m__get_result()
+[0;32m--> 451[0m [38;5;28mself[39m[38;5;241m.[39m_condition[38;5;241m.[39mwait(timeout)
+[1;32m    453[0m [38;5;28;01mif[39;00m [38;5;28mself[39m[38;5;241m.[39m_state [38;5;129;01min[39;00m [CANCELLED, CANCELLED_AND_NOTIFIED]:
+[1;32m    454[0m     [38;5;28;01mraise[39;00m CancelledError()
+
+File [0;32m~/anaconda3/lib/python3.11/threading.py:327[0m, in [0;36mCondition.wait[0;34m(self, timeout)[0m
+[1;32m    325[0m [38;5;28;01mtry[39;00m:    [38;5;66;03m# restore state no matter what (e.g., KeyboardInterrupt)[39;00m
+[1;32m    326[0m     [38;5;28;01mif[39;00m timeout [38;5;129;01mis[39;00m [38;5;28;01mNone[39;00m:
+[0;32m--> 327[0m         waiter[38;5;241m.[39macquire()
+[1;32m    328[0m         gotit [38;5;241m=[39m [38;5;28;01mTrue[39;00m
+[1;32m    329[0m     [38;5;28;01melse[39;00m:
+
+[0;31mKeyboardInterrupt[0m: 
+
+Traceback (most recent call last):
+  File "/Users/mfrahman/Projects/OpenCDaRR/brouillon/run_nb.py", line 54, in <module>
+    main()
+  File "/Users/mfrahman/Projects/OpenCDaRR/brouillon/run_nb.py", line 44, in main
+    client.execute(cleanup_kc=False)
+  File "/Users/mfrahman/anaconda3/lib/python3.11/site-packages/jupyter_core/utils/__init__.py", line 173, in wrapped
+    return loop.run_until_complete(inner)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/mfrahman/anaconda3/lib/python3.11/asyncio/base_events.py", line 653, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/Users/mfrahman/anaconda3/lib/python3.11/site-packages/nbclient/client.py", line 705, in async_execute
+    await self.async_execute_cell(
+  File "/Users/mfrahman/anaconda3/lib/python3.11/site-packages/nbclient/client.py", line 1058, in async_execute_cell
+    await self._check_raise_for_error(cell, cell_index, exec_reply)
+  File "/Users/mfrahman/anaconda3/lib/python3.11/site-packages/nbclient/client.py", line 914, in _check_raise_for_error
+    raise CellExecutionError.from_cell_and_msg(cell, exec_reply_content)
+nbclient.exceptions.CellExecutionError: An error occurred while executing the following cell:
+------------------
+N_PARTICLES = 200
+REPS = 3
+IPS_SEED = 20260803
+EVENT = RPZ
+
+LADDER = [100.0, 90.0, 80.0, 72.0, 66.0, 62.0, 59.0, 57.0,
+          56.0, 55.0, 54.0, 53.0, 52.0, 51.0, EVENT]
+print(f"{len(LADDER)} shells: {LADDER}")
+
+
+def make_start(method: str, dpsi: float) -> Particle:
+    """The single starting particle: geometry is pinned, so every particle begins identically and
+    all the spread comes from the forward CNS noise IPS splits on."""
+    own = AircraftState(id="OWN", lat=52.0, lon=4.0, trk=0.0, gs=SPEED,
+                        pos_ci95=POS_CI95, vel_ci95=VEL_CI95)
+    intr = create_conflict(own, intr_id="INT", dpsi=dpsi, dcpa=DCPA,
+                           tlos=TLOS, rpz=RPZ, side=1)
+    agents = [Agent(own, M600), Agent(intr, M600)]
+    env = build_env(agents, rpz=RPZ, t_lookahead=T_LOOKAHEAD, dt=DT,
+                    detector=StateBased(), resolver=MVP(MARGIN),
+                    recovery=METHODS[method][1](), navigation=GnssNavigation(),
+                    t_max=T_MAX, done_timeout=10.0)
+    return Particle(env=env, state=env.initial_state(agents))
+
+
+def run_ips(method: str, dpsi: float):
+    """The IPS estimate for one cell, read from disk when this exact run is already there."""
+    params = {
+        "estimator": "ips", "method": method, "dpsi": dpsi, "dcpa": DCPA, "tlos": TLOS,
+        "speed": SPEED, "rpz": RPZ, "t_lookahead": T_LOOKAHEAD, "margin": MARGIN,
+        "pos_ci95": POS_CI95, "vel_ci95": VEL_CI95, "gamma": GAMMA,
+        "dt": DT, "t_max": T_MAX, "levels": list(LADDER),
+        "n_particles": N_PARTICLES, "reps": REPS,
+    }
+    key = cache.run_key(params, seed=IPS_SEED)
+    start = make_start(method, dpsi)
+    return cache.load_or_run(key, lambda: estimate_rare_prob(
+        lambda seq, s=start: s, LADDER,
+        n_particles=N_PARTICLES, reps=REPS, seed=IPS_SEED, n_jobs=N_JOBS))
+
+
+ips = {}
+t0 = time.perf_counter()
+for method in METHODS:
+    for dpsi in ANGLES:
+        est = ips[method, dpsi] = run_ips(method, dpsi)
+        tag = "" if est.n_collapsed == 0 else f"  [{est.n_collapsed}/{REPS} collapsed]"
+        print(f"{method:18s} dpsi={dpsi:5.0f}  P(LoS) = {est.prob:.3e}{tag}")
+print(f"\nIPS pass: {time.perf_counter() - t0:.0f} s")
+------------------
+
+----- stdout -----
+15 shells: [100.0, 90.0, 80.0, 72.0, 66.0, 62.0, 59.0, 57.0, 56.0, 55.0, 54.0, 53.0, 52.0, 51.0, 50.0]
+----- stdout -----
+prob_ftr_both      dpsi=    2  P(LoS) = 4.884e-05
+----- stdout -----
+prob_ftr_both      dpsi=    5  P(LoS) = 5.729e-05
+----- stdout -----
+prob_ftr_both      dpsi=   10  P(LoS) = 2.731e-05
+----- stdout -----
+prob_ftr_both      dpsi=   45  P(LoS) = 9.752e-07
+----- stdout -----
+prob_ftr_both      dpsi=   90  P(LoS) = 0.000e+00  [3/3 collapsed]
+----- stdout -----
+prob_ftr_both      dpsi=  180  P(LoS) = 0.000e+00  [3/3 collapsed]
+----- stdout -----
+prob_ftr_intruder  dpsi=    2  P(LoS) = 2.702e-05
+------------------
+
+[0;31m---------------------------------------------------------------------------[0m
+[0;31mKeyboardInterrupt[0m                         Traceback (most recent call last)
+Cell [0;32mIn[4], line 46[0m
+[1;32m     44[0m [38;5;28;01mfor[39;00m method [38;5;129;01min[39;00m METHODS:
+[1;32m     45[0m     [38;5;28;01mfor[39;00m dpsi [38;5;129;01min[39;00m ANGLES:
+[0;32m---> 46[0m         est [38;5;241m=[39m ips[method, dpsi] [38;5;241m=[39m run_ips(method, dpsi)
+[1;32m     47[0m         tag [38;5;241m=[39m [38;5;124m"[39m[38;5;124m"[39m [38;5;28;01mif[39;00m est[38;5;241m.[39mn_collapsed [38;5;241m==[39m [38;5;241m0[39m [38;5;28;01melse[39;00m [38;5;124mf[39m[38;5;124m"[39m[38;5;124m  [[39m[38;5;132;01m{[39;00mest[38;5;241m.[39mn_collapsed[38;5;132;01m}[39;00m[38;5;124m/[39m[38;5;132;01m{[39;00mREPS[38;5;132;01m}[39;00m[38;5;124m collapsed][39m[38;5;124m"[39m
+[1;32m     48[0m         [38;5;28mprint[39m([38;5;124mf[39m[38;5;124m"[39m[38;5;132;01m{[39;00mmethod[38;5;132;01m:[39;00m[38;5;124m18s[39m[38;5;132;01m}[39;00m[38;5;124m dpsi=[39m[38;5;132;01m{[39;00mdpsi[38;5;132;01m:[39;00m[38;5;124m5.0f[39m[38;5;132;01m}[39;00m[38;5;124m  P(LoS) = [39m[38;5;132;01m{[39;00mest[38;5;241m.[39mprob[38;5;132;01m:[39;00m[38;5;124m.3e[39m[38;5;132;01m}[39;00m[38;5;132;01m{[39;00mtag[38;5;132;01m}[39;00m[38;5;124m"[39m)
+
+Cell [0;32mIn[4], line 37[0m, in [0;36mrun_ips[0;34m(method, dpsi)[0m
+[1;32m     35[0m key [38;5;241m=[39m cache[38;5;241m.[39mrun_key(params, seed[38;5;241m=[39mIPS_SEED)
+[1;32m     36[0m start [38;5;241m=[39m make_start(method, dpsi)
+[0;32m---> 37[0m [38;5;28;01mreturn[39;00m cache[38;5;241m.[39mload_or_run(key, [38;5;28;01mlambda[39;00m: estimate_rare_prob(
+[1;32m     38[0m     [38;5;28;01mlambda[39;00m seq, s[38;5;241m=[39mstart: s, LADDER,
+[1;32m     39[0m     n_particles[38;5;241m=[39mN_PARTICLES, reps[38;5;241m=[39mREPS, seed[38;5;241m=[39mIPS_SEED, n_jobs[38;5;241m=[39mN_JOBS))
+
+File [0;32m~/Projects/OpenCDaRR/opencdarr/cache.py:93[0m, in [0;36mload_or_run[0;34m(key, compute, cache_dir)[0m
+[1;32m     91[0m     [38;5;28;01mexcept[39;00m (pickle[38;5;241m.[39mUnpicklingError, [38;5;167;01mEOFError[39;00m, [38;5;167;01mAttributeError[39;00m, [38;5;167;01mModuleNotFoundError[39;00m):
+[1;32m     92[0m         [38;5;28;01mpass[39;00m  [38;5;66;03m# corrupt or written by incompatible code — fall through and recompute[39;00m
+[0;32m---> 93[0m result [38;5;241m=[39m compute()
+[1;32m     94[0m [38;5;28;01mwith[39;00m path[38;5;241m.[39mopen([38;5;124m"[39m[38;5;124mwb[39m[38;5;124m"[39m) [38;5;28;01mas[39;00m handle:
+[1;32m     95[0m     pickle[38;5;241m.[39mdump(result, handle)
+
+Cell [0;32mIn[4], line 37[0m, in [0;36mrun_ips.<locals>.<lambda>[0;34m()[0m
+[1;32m     35[0m key [38;5;241m=[39m cache[38;5;241m.[39mrun_key(params, seed[38;5;241m=[39mIPS_SEED)
+[1;32m     36[0m start [38;5;241m=[39m make_start(method, dpsi)
+[0;32m---> 37[0m [38;5;28;01mreturn[39;00m cache[38;5;241m.[39mload_or_run(key, [38;5;28;01mlambda[39;00m: estimate_rare_prob(
+[1;32m     38[0m     [38;5;28;01mlambda[39;00m seq, s[38;5;241m=[39mstart: s, LADDER,
+[1;32m     39[0m     n_particles[38;5;241m=[39mN_PARTICLES, reps[38;5;241m=[39mREPS, seed[38;5;241m=[39mIPS_SEED, n_jobs[38;5;241m=[39mN_JOBS))
+
+File [0;32m~/Projects/OpenCDaRR/opencdarr/parallel.py:338[0m, in [0;36mestimate_rare_prob[0;34m(build_initial, levels, n_particles, reps, seed, n_jobs, oversubscribe, min_shard, verbose)[0m
+[1;32m    320[0m [38;5;28;01mdef[39;00m[38;5;250m [39m[38;5;21mestimate_rare_prob[39m(
+[1;32m    321[0m     build_initial: BuildInitial,
+[1;32m    322[0m     levels: Sequence[[38;5;28mfloat[39m],
+[0;32m   (...)[0m
+[1;32m    330[0m     verbose: [38;5;28mint[39m [38;5;241m=[39m [38;5;241m0[39m,
+[1;32m    331[0m ) [38;5;241m-[39m[38;5;241m>[39m RareEventEstimate:
+[1;32m    332[0m [38;5;250m    [39m[38;5;124;03m"""The parallel twin of :func:`opencdarr.ips.estimate_rare_prob` — same result, more cores.[39;00m
+[1;32m    333[0m 
+[1;32m    334[0m [38;5;124;03m    Unlike the serial version, the worker count is independent of ``reps``: pick ``reps`` for the[39;00m
+[1;32m    335[0m [38;5;124;03m    confidence interval you want (ADR 0017 §5) and ``n_jobs`` for the machine you have.[39;00m
+[1;32m    336[0m [38;5;124;03m    """[39;00m
+[1;32m    337[0m     [38;5;28;01mreturn[39;00m combine_replications(
+[0;32m--> 338[0m         ips_replications(
+[1;32m    339[0m             build_initial,
+[1;32m    340[0m             levels,
+[1;32m    341[0m             n_particles,
+[1;32m    342[0m             replication_seeds(seed, reps),
+[1;32m    343[0m             n_jobs[38;5;241m=[39mn_jobs,
+[1;32m    344[0m             oversubscribe[38;5;241m=[39moversubscribe,
+[1;32m    345[0m             min_shard[38;5;241m=[39mmin_shard,
+[1;32m    346[0m             verbose[38;5;241m=[39mverbose,
+[1;32m    347[0m         )
+[1;32m    348[0m     )
+
+File [0;32m~/Projects/OpenCDaRR/opencdarr/parallel.py:308[0m, in [0;36mips_replications[0;34m(build_initial, levels, n_particles, seqs, n_jobs, oversubscribe, min_shard, verbose)[0m
+[1;32m    302[0m     results: [38;5;28mlist[39m[IPSResult] [38;5;241m=[39m [38;5;28mlist[39m(
+[1;32m    303[0m         parallel_cls(n_jobs[38;5;241m=[39mworkers, verbose[38;5;241m=[39mverbose)(
+[1;32m    304[0m             delayed(ips_once)(build_initial, levels, n_particles, s) [38;5;28;01mfor[39;00m s [38;5;129;01min[39;00m seqs
+[1;32m    305[0m         )
+[1;32m    306[0m     )
+[1;32m    307[0m     [38;5;28;01mreturn[39;00m results
+[0;32m--> 308[0m [38;5;28;01mreturn[39;00m _lockstep(
+[1;32m    309[0m     build_initial,
+[1;32m    310[0m     levels,
+[1;32m    311[0m     n_particles,
+[1;32m    312[0m     seqs,
+[1;32m    313[0m     workers[38;5;241m=[39mworkers,
+[1;32m    314[0m     oversubscribe[38;5;241m=[39moversubscribe,
+[1;32m    315[0m     min_shard[38;5;241m=[39mmin_shard,
+[1;32m    316[0m     verbose[38;5;241m=[39mverbose,
+[1;32m    317[0m )
+
+File [0;32m~/Projects/OpenCDaRR/opencdarr/parallel.py:232[0m, in [0;36m_lockstep[0;34m(build_initial, levels, n_particles, seqs, workers, oversubscribe, min_shard, verbose)[0m
+[1;32m    230[0m bounds [38;5;241m=[39m _shard_bounds(n_particles, shards)
+[1;32m    231[0m plan [38;5;241m=[39m [(r, lo, hi) [38;5;28;01mfor[39;00m r [38;5;129;01min[39;00m live [38;5;28;01mfor[39;00m lo, hi [38;5;129;01min[39;00m bounds]
+[0;32m--> 232[0m done [38;5;241m=[39m run(
+[1;32m    233[0m     delayed(_evolve_slice)(clouds[r][lo:hi], target, level_seqs[r][k], lo, hi)
+[1;32m    234[0m     [38;5;28;01mfor[39;00m r, lo, hi [38;5;129;01min[39;00m plan
+[1;32m    235[0m )
+[1;32m    237[0m [38;5;66;03m# results arrive in submission order, so appending by plan order rebuilds each[39;00m
+[1;32m    238[0m [38;5;66;03m# replication's evolved list in exactly the order the serial loop produced it[39;00m
+[1;32m    239[0m regrouped: [38;5;28mdict[39m[[38;5;28mint[39m, [38;5;28mlist[39m[FleetState]] [38;5;241m=[39m {r: [] [38;5;28;01mfor[39;00m r [38;5;129;01min[39;00m live}
+
+File [0;32m~/anaconda3/lib/python3.11/site-packages/joblib/parallel.py:1098[0m, in [0;36mParallel.__call__[0;34m(self, iterable)[0m
+[1;32m   1095[0m     [38;5;28mself[39m[38;5;241m.[39m_iterating [38;5;241m=[39m [38;5;28;01mFalse[39;00m
+[1;32m   1097[0m [38;5;28;01mwith[39;00m [38;5;28mself[39m[38;5;241m.[39m_backend[38;5;241m.[39mretrieval_context():
+[0;32m-> 1098[0m     [38;5;28mself[39m[38;5;241m.[39mretrieve()
+[1;32m   1099[0m [38;5;66;03m# Make sure that we get a last message telling us we are done[39;00m
+[1;32m   1100[0m elapsed_time [38;5;241m=[39m time[38;5;241m.[39mtime() [38;5;241m-[39m [38;5;28mself[39m[38;5;241m.[39m_start_time
+
+File [0;32m~/anaconda3/lib/python3.11/site-packages/joblib/parallel.py:975[0m, in [0;36mParallel.retrieve[0;34m(self)[0m
+[1;32m    973[0m [38;5;28;01mtry[39;00m:
+[1;32m    974[0m     [38;5;28;01mif[39;00m [38;5;28mgetattr[39m([38;5;28mself[39m[38;5;241m.[39m_backend, [38;5;124m'[39m[38;5;124msupports_timeout[39m[38;5;124m'[39m, [38;5;28;01mFalse[39;00m):
+[0;32m--> 975[0m         [38;5;28mself[39m[38;5;241m.[39m_output[38;5;241m.[39mextend(job[38;5;241m.[39mget(timeout[38;5;241m=[39m[38;5;28mself[39m[38;5;241m.[39mtimeout))
+[1;32m    976[0m     [38;5;28;01melse[39;00m:
+[1;32m    977[0m         [38;5;28mself[39m[38;5;241m.[39m_output[38;5;241m.[39mextend(job[38;5;241m.[39mget())
+
+File [0;32m~/anaconda3/lib/python3.11/site-packages/joblib/_parallel_backends.py:567[0m, in [0;36mLokyBackend.wrap_future_result[0;34m(future, timeout)[0m
+[1;32m    564[0m [38;5;250m[39m[38;5;124;03m"""Wrapper for Future.result to implement the same behaviour as[39;00m
+[1;32m    565[0m [38;5;124;03mAsyncResults.get from multiprocessing."""[39;00m
+[1;32m    566[0m [38;5;28;01mtry[39;00m:
+[0;32m--> 567[0m     [38;5;28;01mreturn[39;00m future[38;5;241m.[39mresult(timeout[38;5;241m=[39mtimeout)
+[1;32m    568[0m [38;5;28;01mexcept[39;00m CfTimeoutError [38;5;28;01mas[39;00m e:
+[1;32m    569[0m     [38;5;28;01mraise[39;00m [38;5;167;01mTimeoutError[39;00m [38;5;28;01mfrom[39;00m[38;5;250m [39m[38;5;21;01me[39;00m
+
+File [0;32m~/anaconda3/lib/python3.11/concurrent/futures/_base.py:451[0m, in [0;36mFuture.result[0;34m(self, timeout)[0m
+[1;32m    448[0m [38;5;28;01melif[39;00m [38;5;28mself[39m[38;5;241m.[39m_state [38;5;241m==[39m FINISHED:
+[1;32m    449[0m     [38;5;28;01mreturn[39;00m [38;5;28mself[39m[38;5;241m.[39m__get_result()
+[0;32m--> 451[0m [38;5;28mself[39m[38;5;241m.[39m_condition[38;5;241m.[39mwait(timeout)
+[1;32m    453[0m [38;5;28;01mif[39;00m [38;5;28mself[39m[38;5;241m.[39m_state [38;5;129;01min[39;00m [CANCELLED, CANCELLED_AND_NOTIFIED]:
+[1;32m    454[0m     [38;5;28;01mraise[39;00m CancelledError()
+
+File [0;32m~/anaconda3/lib/python3.11/threading.py:327[0m, in [0;36mCondition.wait[0;34m(self, timeout)[0m
+[1;32m    325[0m [38;5;28;01mtry[39;00m:    [38;5;66;03m# restore state no matter what (e.g., KeyboardInterrupt)[39;00m
+[1;32m    326[0m     [38;5;28;01mif[39;00m timeout [38;5;129;01mis[39;00m [38;5;28;01mNone[39;00m:
+[0;32m--> 327[0m         waiter[38;5;241m.[39macquire()
+[1;32m    328[0m         gotit [38;5;241m=[39m [38;5;28;01mTrue[39;00m
+[1;32m    329[0m     [38;5;28;01melse[39;00m:
+
+[0;31mKeyboardInterrupt[0m: 
+

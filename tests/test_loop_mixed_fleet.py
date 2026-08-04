@@ -17,6 +17,8 @@ multirotor ``min_sep`` anchors in ``test_loop.py``.
 
 from __future__ import annotations
 
+import pytest
+
 from opencdarr.cd import StateBased
 from opencdarr.cns import GnssNavigation
 from opencdarr.cr import MVP, VO
@@ -39,6 +41,8 @@ _TLOS = 60.0
 
 # Deterministic (noiseless) min_sep anchors — a moved bit means the mixed-fleet physics changed.
 # All six moved **down** for the segment-minimum measurement (see ``test_loop.py``'s anchor block).
+# Compared with pytest.approx(rel=1e-8), not ==: the platform's libm gives trig calls a different
+# last bit (see ``test_loop.py``'s anchor block for why).
 _ANCHOR_MIXED_MVP = 95.87550302578735
 _ANCHOR_MIXED_VO = 96.11937007400364
 # Seeded noisy anchors (seed 0, single substream) through the full GPS-noise self-fix path.
@@ -87,7 +91,7 @@ def test_mixed_fleet_mvp_resolves() -> None:
     assert out.conflict is True
     assert out.los is False
     assert out.min_sep >= _RPZ
-    assert out.min_sep == _ANCHOR_MIXED_MVP  # deterministic anchor
+    assert out.min_sep == pytest.approx(_ANCHOR_MIXED_MVP, rel=1e-8)  # deterministic anchor
 
 
 def test_mixed_fleet_vo_resolves() -> None:
@@ -96,7 +100,7 @@ def test_mixed_fleet_vo_resolves() -> None:
     assert out.conflict is True
     assert out.los is False
     assert out.min_sep >= _RPZ
-    assert out.min_sep == _ANCHOR_MIXED_VO
+    assert out.min_sep == pytest.approx(_ANCHOR_MIXED_VO, rel=1e-8)
 
 
 def test_mixed_fleet_noisy_is_reproducible() -> None:
@@ -104,8 +108,8 @@ def test_mixed_fleet_noisy_is_reproducible() -> None:
     mvp = _mixed(MVP(margin=1.05), dt=0.2, noisy=True)
     vo = _mixed(VO(margin=1.05), dt=0.2, noisy=True)
     assert mvp.los is False and vo.los is False
-    assert mvp.min_sep == _ANCHOR_MIXED_NOISY_MVP
-    assert vo.min_sep == _ANCHOR_MIXED_NOISY_VO
+    assert mvp.min_sep == pytest.approx(_ANCHOR_MIXED_NOISY_MVP, rel=1e-8)
+    assert vo.min_sep == pytest.approx(_ANCHOR_MIXED_NOISY_VO, rel=1e-8)
     # bit-for-bit on re-run: same seed -> identical outcome (the reproducibility the IPR rests on)
     assert _mixed(MVP(margin=1.05), dt=0.2, noisy=True) == mvp
 
@@ -148,11 +152,11 @@ def test_fixedwing_mvp_ipr_reanchor() -> None:
     """Fixed-wing MVP re-anchor (deferred to 4e by ADR 0013): clears, exact min_sep pinned."""
     out = _both_fixedwing(MVP(margin=1.1))
     assert out.los is False
-    assert out.min_sep == _ANCHOR_FW_MVP
+    assert out.min_sep == pytest.approx(_ANCHOR_FW_MVP, rel=1e-8)
 
 
 def test_fixedwing_vo_ipr_reanchor() -> None:
     """Fixed-wing VO re-anchor: clears, exact min_sep pinned."""
     out = _both_fixedwing(VO(margin=1.1))
     assert out.los is False
-    assert out.min_sep == _ANCHOR_FW_VO
+    assert out.min_sep == pytest.approx(_ANCHOR_FW_VO, rel=1e-8)

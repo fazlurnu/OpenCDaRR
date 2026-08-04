@@ -12,6 +12,8 @@ the same entry point the IPR sweeps use (``wind=`` threaded since 5a). Two prope
 
 from __future__ import annotations
 
+import pytest
+
 from opencdarr.cd import StateBased
 from opencdarr.cns import GnssNavigation
 from opencdarr.cr import MVP, VO
@@ -33,6 +35,8 @@ _WIND = WindField.from_met(270.0, 6.0)  # 6 m/s from the west — a crosswind on
 # changed. VO clears by only ~0.9 m — the wind pushes this geometry close to the rpz limit, and the
 # segment-minimum measurement (see ``test_loop.py``'s anchor block) took another 0.17 m off it: this
 # is the case where reading separation only at step endpoints most flatters the result.
+# Compared with pytest.approx(rel=1e-8), not ==: the platform's libm gives trig calls a different
+# last bit (see ``test_loop.py``'s anchor block for why).
 _ANCHOR_WIND_MVP = 54.839298823969486
 _ANCHOR_WIND_VO = 50.85881790533006
 # Seeded noisy anchor (seed 0, single substream) through the full GPS-noise self-fix path.
@@ -66,7 +70,7 @@ def test_mixed_fleet_in_wind_mvp_resolves() -> None:
     assert out.conflict is True
     assert out.los is False
     assert out.min_sep >= _RPZ
-    assert out.min_sep == _ANCHOR_WIND_MVP
+    assert out.min_sep == pytest.approx(_ANCHOR_WIND_MVP, rel=1e-8)
 
 
 def test_mixed_fleet_in_wind_vo_resolves() -> None:
@@ -74,7 +78,7 @@ def test_mixed_fleet_in_wind_vo_resolves() -> None:
     out = _mixed(VO(margin=1.1))
     assert out.los is False
     assert out.min_sep >= _RPZ
-    assert out.min_sep == _ANCHOR_WIND_VO
+    assert out.min_sep == pytest.approx(_ANCHOR_WIND_VO, rel=1e-8)
 
 
 def test_wind_changes_the_outcome() -> None:
@@ -88,5 +92,5 @@ def test_mixed_fleet_in_wind_noisy_is_reproducible() -> None:
     """A seeded GPS-noisy encounter in wind reproduces an exact min_sep and re-runs identically."""
     out = _mixed(MVP(margin=1.05), dt=0.2, noisy=True)
     assert out.los is False
-    assert out.min_sep == _ANCHOR_WIND_NOISY_MVP
+    assert out.min_sep == pytest.approx(_ANCHOR_WIND_NOISY_MVP, rel=1e-8)
     assert _mixed(MVP(margin=1.05), dt=0.2, noisy=True) == out
