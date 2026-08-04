@@ -108,6 +108,14 @@ above — one module per notebook — and several of them generate the figures t
 - [`handbook/rare_event_ips_illustrated.ipynb`](handbook/rare_event_ips_illustrated.ipynb) — the
   same estimate with the loop opened up: the particles, the resampling step, the splitting
   genealogy, the importance function, and how survival fractions become the final probability.
+- [`handbook/ring_mc_vs_ips.ipynb`](handbook/ring_mc_vs_ips.ipynb) — the same probability measured
+  twice. Two, three and four drones on the ring of `circle_scenario`, flown with `MVP` +
+  `ProbabilisticFTR` under a 10 m / 1 m/s fix, estimated first by counting losses over 2000
+  Monte-Carlo encounters and then by the splitting estimator in `opencdarr.ips`. Counting reads zero
+  for the pair and rests on one and two events for the larger fleets; IPS returns an interval in all
+  three, and the intervals overlap wherever Monte Carlo has anything to say. Also shows where a
+  shell ladder comes from — the Monte-Carlo run's own minimum-separation record — and why its run-in
+  has to be fine through the wall MVP's margin builds at `rpz × 1.05`.
 
 ## How the figures are made
 
