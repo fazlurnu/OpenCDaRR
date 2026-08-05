@@ -52,6 +52,12 @@ class SimulationConfig:
     broadcast_interval: float = 1.0  # CDR/measurement cadence [s] (ADS-L rate); held between ticks
     broadcast_jitter: float = 0.0  # per-transmission slot dither U(-j, +j) [s]; 0 = fixed gaps
     broadcast_random_phase: bool = False  # draw each aircraft's start offset in [0, interval)
+    # Mission-completion stop [m]: end the run once every goal-carrying aircraft is within this
+    # distance of its final waypoint. Reaches both estimators, so MC and IPS stop identically —
+    # which they must, since for IPS this is the drop condition and so sets the survival fractions.
+    # None keeps the clear-and-wait stop (``done_timeout``); a scenario whose aircraft have no goal
+    # (a cruise-to-cruise pairwise encounter) ignores it either way.
+    stop_within: float | None = None
 
 
 @dataclass(frozen=True)

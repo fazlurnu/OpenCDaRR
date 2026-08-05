@@ -487,7 +487,7 @@ def _run_ips(condition: Condition, base: Config, methods: Methods, backend: IPS,
             dt=cfg.simulation.dt, detector=m.detector, resolver=m.resolver, recovery=m.recovery,
             navigation=m.navigation, communication=m.communication, surveillance=m.surveillance,
             t_max=cfg.simulation.t_max, done_timeout=cfg.simulation.done_timeout,
-            wind=m.wind,
+            stop_within=cfg.simulation.stop_within, wind=m.wind,
             # built through the same schedule_for MC uses, so the two cannot drift apart
             schedule=schedule_for(
                 len(agents), cfg.simulation.broadcast_interval, geom_rng,

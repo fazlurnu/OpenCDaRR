@@ -30,11 +30,11 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
-from opencdarr.fleet import CnsStreams, FleetEnv, FleetState, FleetStreams
+from opencdarr.fleet import CnsStreams, FleetEnv, FleetState, FleetStreams, los_counts
 from opencdarr.rng import children, generator, root_seed_sequence, spawn
 
 # A particle's initial-state factory: sample one geometry from a seed → its env + world state.
@@ -65,6 +65,37 @@ class IPSResult:
     survival: tuple[float, ...]  # S_k / N per crossed level
     n_particles: int
     collapsed_at: int | None  # index of the level where S_k = 0, or None
+    # --- tail measurements, only when ips_once(..., tail=True) --------------------------------
+    tail_los_pairs: tuple[int, ...] = ()  # K per survivor, flown on to termination
+    tail_los_aircraft: tuple[int, ...] = ()  # A per survivor
+    n_aircraft: int = 0  # N, the fleet size
+    n_lineages: int = 0  # distinct survivors behind the cloud — the effective sample size
+
+    @property
+    def mean_los_pairs(self) -> float:
+        """``E[K | reached the rare set]``, from the continued survivors."""
+        return (sum(self.tail_los_pairs) / len(self.tail_los_pairs)
+                if self.tail_los_pairs else float("nan"))
+
+    @property
+    def expected_los_pairs(self) -> float:
+        """``E[K] = P̂ · E[K | rare set]`` — the mean number of losing pairs per encounter."""
+        return self.prob * self.mean_los_pairs
+
+    @property
+    def p_ac(self) -> float:
+        """``P_ac = P̂ · E[A | rare set] / N`` — the per-aircraft probability (Blom & Bakker).
+
+        The rare set is the same event for all three metrics, because a run has a loss of
+        separation exactly when ``min_sep`` crosses the last shell. So the splitting estimate of
+        ``P_run`` carries over, and the survivors supply the conditional means. Precision here is
+        set by :attr:`n_lineages`, **not** by ``n_particles`` — resampling fills the cloud with
+        clones of a few survivors, and a clone adds no independent information about ``A``.
+        """
+        if not self.tail_los_aircraft or not self.n_aircraft:
+            return float("nan")
+        mean_a = sum(self.tail_los_aircraft) / len(self.tail_los_aircraft)
+        return self.prob * mean_a / self.n_aircraft
 
 
 @dataclass(frozen=True)
@@ -99,6 +130,19 @@ def _evolve_to_shell(particle: Particle, target: float, streams: FleetStreams) -
     """
     env, state = particle.env, particle.state
     while state.min_sep > target and not env.is_terminal(state):
+        state = env.advance(state, streams)
+    return state
+
+
+def _evolve_to_end(particle: Particle, streams: FleetStreams) -> FleetState:
+    """Fly a particle from wherever it is to ``is_terminal`` — the **tail leg**.
+
+    :func:`_evolve_to_shell` stops a particle the instant it crosses, so at the last shell it is
+    frozen at its *first* loss of separation. K and A need the rest of the encounter: a second
+    loss, or a third aircraft drawn in, happens after that instant. This leg supplies it.
+    """
+    env, state = particle.env, particle.state
+    while not env.is_terminal(state):
         state = env.advance(state, streams)
     return state
 
@@ -147,6 +191,8 @@ def ips_once(
     levels: Sequence[float],
     n_particles: int,
     seq: np.random.SeedSequence,
+    *,
+    tail: bool = False,
 ) -> IPSResult:
     """One fixed-effort multilevel-splitting run: ``P̂ = Π_k S_k/N`` over the shells ``levels``.
 
@@ -161,8 +207,14 @@ def ips_once(
     sequence comes back untouched. That matters because ``SeedSequence.spawn`` is *stateful* —
     spawning from ``seq`` here would mean a second call on the same object walked a different tree
     and quietly returned a different answer, a difference nothing in the result would reveal.
+
+    ``tail=True`` adds a final leg that flies every survivor on to termination, which is what
+    :attr:`IPSResult.p_ac` and :attr:`IPSResult.expected_los_pairs` need. It costs roughly
+    ``n_particles`` full encounter tails on top of the splitting, so it is off by default; ``prob``
+    is unaffected either way. The tail draws from child index 2, so the splitting itself stays
+    bit-identical to a ``tail=False`` run of the same seed.
     """
-    init_seq, evolve_seq = children(seq, 0, 2)
+    init_seq, evolve_seq, tail_seq = children(seq, 0, 3)
     particles = [build_initial(s) for s in children(init_seq, 0, n_particles)]
     level_seqs = children(evolve_seq, 0, len(levels))
 
@@ -177,8 +229,25 @@ def ips_once(
             return IPSResult(prob=0.0, levels=tuple(levels), survival=tuple(survival),
                              n_particles=n_particles, collapsed_at=k)
 
-    return IPSResult(prob=float(np.prod(survival)), levels=tuple(levels),
-                     survival=tuple(survival), n_particles=n_particles, collapsed_at=None)
+    result = IPSResult(prob=float(np.prod(survival)), levels=tuple(levels),
+                       survival=tuple(survival), n_particles=n_particles, collapsed_at=None)
+    if not tail:
+        return result
+
+    # clones share their state object, so identity counts the distinct survivors behind the cloud
+    lineages = len({id(p.state) for p in particles})
+    ends = [
+        _evolve_to_end(p, _streams(s))
+        for p, s in zip(particles, children(tail_seq, 0, n_particles), strict=True)
+    ]
+    counts = [los_counts(len(e.states), e.los_pairs) for e in ends]
+    return replace(
+        result,
+        tail_los_pairs=tuple(k for k, _ in counts),
+        tail_los_aircraft=tuple(a for _, a in counts),
+        n_aircraft=len(ends[0].states) if ends else 0,
+        n_lineages=lineages,
+    )
 
 
 def _log_ci(probs: list[float], z: float = 1.96) -> tuple[float, float]:
@@ -221,6 +290,7 @@ def estimate_rare_prob(
     n_particles: int,
     reps: int,
     seed: int,
+    tail: bool = False,
 ) -> RareEventEstimate:
     """Estimate the rare-event probability with a CI from ``reps`` independent IPS replications.
 
@@ -228,8 +298,11 @@ def estimate_rare_prob(
     combined by :func:`combine_replications`. Serial — a caller wanting parallel replications runs
     :func:`ips_once` over :func:`replication_seeds` itself (e.g. joblib) and calls
     :func:`combine_replications`, for the identical result.
+
+    ``tail=True`` is passed through to every replication, so each carries the per-aircraft and
+    per-pair measurements as well as ``prob``. It does not change ``prob``.
     """
-    results = [ips_once(build_initial, levels, n_particles, s)
+    results = [ips_once(build_initial, levels, n_particles, s, tail=tail)
                for s in replication_seeds(seed, reps)]
     return combine_replications(results)
 

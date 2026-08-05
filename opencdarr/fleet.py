@@ -149,8 +149,10 @@ class FleetOutcome:
     it is a separate tool (:mod:`opencdarr.viz`)."""
 
     conflict: bool  # was any directed pair predicted in conflict at any step?
-    los: bool  # was any pair ever in loss of separation?
+    los: bool  # was any pair ever in loss of separation?  (== n_los_pairs >= 1)
     min_sep: float  # minimum pairwise separation reached across all pairs [m]
+    n_los_pairs: int = 0  # K: how many pairs lost separation at any point
+    n_los_aircraft: int = 0  # A: how many aircraft were in at least one of those losses
     frames: StatesLog | None = None  # states log, only when record=True
 
 
@@ -178,6 +180,7 @@ class FleetState:
     conflict: bool
     los: bool
     min_sep: float
+    los_pairs: tuple[bool, ...] = ()  # cumulative per-pair loss flags, in the i < j order
 
 
 @dataclass(frozen=True, repr=False)
@@ -235,7 +238,7 @@ def _pairwise_relative(
 
     The vector form of :func:`_pairwise_min_sep` — same one ``geo.qdrdist`` per pair, so it costs
     essentially the same, but it returns the geometry rather than only its magnitude. That is what
-    :func:`_segment_min_sep` needs to close the gap *between* two sampled instants.
+    :func:`_segment_min_sep_pairs` needs to close the gap *between* two sampled instants.
     """
     return tuple(
         relative_enu(states[i], states[j])
@@ -244,8 +247,36 @@ def _pairwise_relative(
     )
 
 
-def _segment_min_sep(pre: tuple[Relative, ...], post: tuple[Relative, ...]) -> float:
-    """Smallest separation over all pairs across a whole ``dt`` step, endpoints included [m].
+def _pair_ids(n: int) -> tuple[tuple[int, int], ...]:
+    """The ``(i, j)`` behind each pair slot, in the same ``i < j`` order as
+    :func:`_pairwise_relative` — the index that turns per-pair bookkeeping back into aircraft."""
+    return tuple((i, j) for i in range(n) for j in range(i + 1, n))
+
+
+def los_counts(n: int, los_pairs: Sequence[bool]) -> tuple[int, int]:
+    """``(K, A)`` from a run's per-pair loss flags: losing **pairs**, and **aircraft** involved.
+
+    ``K`` counts multiplicity, ``A`` does not — an aircraft that loses separation against two
+    others at once contributes 2 to ``K`` and 1 to ``A``. That is why ``A <= 2K``, with equality
+    only when the losing pairs are disjoint. The per-aircraft count is Blom & Bakker's
+    normalisation (JAIS 2015): ``P_ac = sum_r A(r) / (n * N)``.
+    """
+    involved: set[int] = set()
+    k = 0
+    for (i, j), lost in zip(_pair_ids(n), los_pairs, strict=True):
+        if lost:
+            k += 1
+            involved.add(i)
+            involved.add(j)
+    return k, len(involved)
+
+
+def _segment_min_sep_pairs(
+    pre: tuple[Relative, ...],
+    post: tuple[Relative, ...],
+    mask: tuple[bool, ...] | None = None,
+) -> tuple[float, ...]:
+    """Per-pair separation over a whole ``dt`` step, endpoints included, in ``i < j`` order [m].
 
     Interpolates each pair's relative position linearly between the two ends of the step and takes
     the closed-form minimum of that segment. Sampling separation only at the step *endpoints*
@@ -255,13 +286,20 @@ def _segment_min_sep(pre: tuple[Relative, ...], post: tuple[Relative, ...]) -> f
     ``P(min_sep <= d)`` goes as ``(v_rel*dt)^2 / (24 d^2)``, i.e. it grows as the target tightens.
     See ``vault/observations/segment-min-separation.md`` for the measurements.
 
+    Keeping every pair's minimum rather than only the smallest is what lets one pass serve
+    ``min_sep`` (its minimum), ``K`` and ``A`` (which pairs crossed ``rpz``) — so the three can
+    never disagree. ``mask`` is the :class:`MeasurementArea` gate: a masked-out pair gets ``inf``,
+    so it can neither set ``min_sep`` nor record a loss.
+
     The per-pair algebra is :func:`~opencdarr.relative.segment_min_range`, shared with
     :func:`~opencdarr.loop.run_encounter` so the two runners cannot drift apart on the n = 2
     reduction.
     """
-    return min(
-        (segment_min_range(r0, r1) for r0, r1 in zip(pre, post, strict=True)),
-        default=float("inf"),
+    if mask is None:
+        return tuple(segment_min_range(r0, r1) for r0, r1 in zip(pre, post, strict=True))
+    return tuple(
+        segment_min_range(r0, r1) if keep else float("inf")
+        for r0, r1, keep in zip(pre, post, mask, strict=True)
     )
 
 
@@ -324,17 +362,6 @@ def _measured_pairs(
         in_pre[i] and in_pre[j] and in_post[i] and in_post[j]
         for i in range(len(pre))
         for j in range(i + 1, len(pre))
-    )
-
-
-def _segment_min_sep_masked(
-    pre: tuple[Relative, ...], post: tuple[Relative, ...], mask: tuple[bool, ...]
-) -> float:
-    """:func:`_segment_min_sep` over the masked pairs only; ``inf`` when none qualify."""
-    return min(
-        (segment_min_range(r0, r1)
-         for r0, r1, keep in zip(pre, post, mask, strict=True) if keep),
-        default=float("inf"),
     )
 
 
@@ -414,6 +441,7 @@ class FleetEnv:
             conflict=False,
             los=False,
             min_sep=float("inf"),
+            los_pairs=tuple(False for _ in _pair_ids(n)),
         )
 
     def is_terminal(self, state: FleetState) -> bool:
@@ -509,13 +537,19 @@ class FleetEnv:
         # from t=0 (the first segment's left end) rather than at a comb of sampled instants
         rel_post = _pairwise_relative(states)
         if self.measure_within is None:
-            cur = _segment_min_sep(rel_pre, rel_post)
+            per_pair = _segment_min_sep_pairs(rel_pre, rel_post)
         else:  # only pairs inside the experimental area, at both ends of the step
-            cur = _segment_min_sep_masked(
+            per_pair = _segment_min_sep_pairs(
                 rel_pre, rel_post, _measured_pairs(self.measure_within, state.states, states)
             )
+        cur = min(per_pair, default=float("inf"))
         min_sep = min(state.min_sep, cur)
-        los = state.los or cur < self.rpz
+        # per-pair flags are cumulative, so K and A read off the terminal state alone; `los` stays
+        # exactly `min_sep < rpz` because both come from the same masked per-pair minima
+        los_pairs = tuple(
+            was or d < self.rpz for was, d in zip(state.los_pairs, per_pair, strict=True)
+        )
+        los = any(los_pairs)
 
         clear = _all_clear(states, tuple(mems), self.rpz)
         done_timer = state.done_timer + self.dt if clear else 0.0
@@ -532,6 +566,7 @@ class FleetEnv:
             conflict=conflict,
             los=los,
             min_sep=min_sep,
+            los_pairs=los_pairs,
         )
 
 
@@ -685,7 +720,9 @@ def run_fleet(
         state = env.advance(state, streams)
         if frames is not None:
             frames.append(state)
+    n_pairs, n_aircraft = los_counts(len(state.states), state.los_pairs)
     return FleetOutcome(
         conflict=state.conflict, los=state.los, min_sep=state.min_sep,
+        n_los_pairs=n_pairs, n_los_aircraft=n_aircraft,
         frames=StatesLog(tuple(frames)) if frames is not None else None,
     )
