@@ -232,3 +232,41 @@ def estimate_rare_prob(
     results = [ips_once(build_initial, levels, n_particles, s)
                for s in replication_seeds(seed, reps)]
     return combine_replications(results)
+
+
+def ladder_from_record(
+    min_seps: Sequence[float],
+    rpz: float,
+    *,
+    halving: float = 0.5,
+    min_count: int = 30,
+    step: float = 0.5,
+) -> list[float]:
+    """Build a shell ladder from a pilot run's own minimum-separation record.
+
+    ADR 0017 accepts fixed shells with hand-tuned spacing and defers adaptive levels; this is the
+    middle ground that has done the work in practice. Shells are placed where the *measured*
+    distribution says a fraction ``halving`` of the survivors will reach the next one, for as long
+    as the pilot can still resolve a quantile (at least ``min_count`` encounters below it). Below
+    that floor there is no data left, and the ladder falls back to a uniform ``step`` — which is
+    the region through a resolver's own margin, where the descent has to be slow anyway.
+
+    Spacing by the distribution rather than by a geometric descent in distance matters because the
+    distribution moves: a ladder that works for one fleet size collapses at another.
+    """
+    ms = np.asarray([m for m in min_seps if math.isfinite(m)], dtype=float)
+    if ms.size == 0:
+        raise ValueError("no finite minimum separations to build a ladder from")
+    shells: list[float] = []
+    p, floor = halving, min_count / ms.size
+    while p >= floor:
+        d = float(np.percentile(ms, p * 100))
+        if d > rpz and (not shells or d < shells[-1] - step):
+            shells.append(d)
+        p *= halving
+    d = (shells[-1] if shells else float(ms.max())) - step
+    while d > rpz:
+        shells.append(d)
+        d -= step
+    shells.append(rpz)
+    return [round(x, 2) for x in shells]

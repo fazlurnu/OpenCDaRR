@@ -12,7 +12,7 @@ while eight aircraft all steer for one point. Written 2026-07-25. Reproduce with
 
 ## The four scenarios and their outcomes
 
-The builders live in [`opencdarr/scenario.py`](../../opencdarr/scenario.py) (Phase 6d); each returns
+The builders live in [`opencdarr/scenario.py`](../../opencdarr/scenario/) (Phase 6d); each returns
 a fleet that, flown straight, collides. Cooperative MVP (margin 1.1) + Past-CPA over `rpz = 50 m`,
 `t_lookahead = 30 s`, 10 m/s multirotors:
 

@@ -28,6 +28,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from opencdarr.autopilot import WaypointAutopilot
 from opencdarr.cd.base import ConflictDetector
 from opencdarr.cns.base import CommunicationModel, NavigationModel, SurveillanceModel
 from opencdarr.cns.broadcast import schedule_for
@@ -36,9 +37,15 @@ from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr.base import RecoveryCriterion
 from opencdarr.fleet import Agent, Airframe, run_fleet
 from opencdarr.kinematics import Kinematics
+from opencdarr.mission import Mission
 from opencdarr.performance import Performance
 from opencdarr.rng import generator, root_seed_sequence, spawn
-from opencdarr.scenario import Draw, sample_pairwise
+from opencdarr.scenario import (
+    Draw,
+    FleetScenario,
+    PairwiseEncounter,
+    Scenario,
+)
 from opencdarr.wind import NO_WIND, WindField
 
 
@@ -176,6 +183,109 @@ def combine_ipr(results: Sequence[IPRResult]) -> IPRResult:
     )
 
 
+def estimate_ipr_over(
+    scenario: Scenario,
+    config: Config,
+    perf: Performance,
+    detector: ConflictDetector,
+    resolver: ConflictResolver | None,
+    recovery: RecoveryCriterion | None,
+    navigation: NavigationModel | None = None,
+    communication: CommunicationModel | None = None,
+    surveillance: SurveillanceModel | None = None,
+    *,
+    kinematics: Kinematics | None = None,
+    airframes: Sequence[Airframe] | None = None,
+    wind: WindField = NO_WIND,
+    share_intent: bool = False,
+    seqs: Sequence[np.random.SeedSequence] | None = None,
+) -> IPRResult:
+    """Plain Monte Carlo over whatever encounter a :class:`~opencdarr.scenario.Scenario` draws.
+
+    The generalisation of :func:`estimate_ipr` past two aircraft: identical seed tree, identical
+    draw order, with the geometry coming from ``scenario.draw`` instead of being open-coded. A
+    :class:`~opencdarr.scenario.PairwiseEncounter` therefore reproduces :func:`estimate_ipr`
+    encounter for encounter, which is what lets that function delegate here rather than keep a
+    second copy of the loop.
+    """
+    min_seps: list[float] = []
+    n_conflict = 0
+    n_los = 0
+    encounters = (
+        spawn(root_seed_sequence(config.seed), config.n_encounters) if seqs is None else seqs
+    )
+    for seq in encounters:
+        # always 4 substreams (geometry, navigation, communication, broadcast) whatever the
+        # scenario or the CNS stack: the tree stays config-invariant (ADR 0006 §6).
+        geom_seq, nav_seq, comm_seq, bc_seq = spawn(seq, 4)
+        geom_rng = generator(geom_seq)
+        fleet = scenario.draw(geom_rng, config)
+        # the transmit timing draws *after* the geometry from the same generator, so enabling it
+        # appends draws rather than shifting the ones already taken
+        schedule = schedule_for(
+            len(fleet),
+            config.simulation.broadcast_interval,
+            geom_rng,
+            jitter=config.simulation.broadcast_jitter,
+            random_phase=config.simulation.broadcast_random_phase,
+        )
+        outcome = run_fleet(
+            agents_for(fleet, perf, kinematics=kinematics, airframes=airframes),
+            rpz=config.conflict.rpz,
+            t_lookahead=config.conflict.t_lookahead,
+            dt=config.simulation.dt,
+            detector=detector,
+            resolver=resolver,
+            recovery=recovery,
+            navigation=navigation,
+            rng=generator(nav_seq),
+            communication=communication,
+            surveillance=surveillance,
+            comm_rng=generator(comm_seq),
+            t_max=config.simulation.t_max,
+            done_timeout=config.simulation.done_timeout,
+            schedule=schedule,
+            broadcast_rng=generator(bc_seq),
+            wind=wind,
+            share_intent=share_intent,
+            measure_within=scenario.measurement_area(),
+        )
+        min_seps.append(outcome.min_sep)
+        n_conflict += int(outcome.conflict)
+        n_los += int(outcome.los)
+
+    return IPRResult(min_seps=tuple(min_seps), n_los=n_los, n_conflict=n_conflict)
+
+
+def agents_for(
+    fleet: FleetScenario,
+    perf: Performance,
+    *,
+    kinematics: Kinematics | None = None,
+    airframes: Sequence[Airframe] | None = None,
+    capture_radius: float = 30.0,
+) -> list[Agent]:
+    """Put a scenario's states in the air: an airframe each, and guidance for those with a goal.
+
+    The one place a :class:`~opencdarr.scenario.FleetScenario` meets the airframe it flies, which
+    is what keeps scenarios airframe-neutral. A goal of ``None`` gets no autopilot, so the fleet
+    builder falls back to holding cruise.
+    """
+    if airframes is not None and len(airframes) != len(fleet):
+        raise ValueError(
+            f"airframes has {len(airframes)} entries but the scenario drew {len(fleet)} aircraft"
+        )
+    out: list[Agent] = []
+    for k, (state, goal) in enumerate(fleet):
+        ap = (WaypointAutopilot(Mission(goto=goal), capture_radius=capture_radius)
+              if goal is not None else None)
+        if airframes is None:
+            out.append(Agent(state, perf, kinematics=kinematics, autopilot=ap))
+        else:
+            out.append(airframes[k].agent(state, ap))
+    return out
+
+
 def estimate_ipr(
     config: Config,
     perf: Performance,
@@ -224,76 +334,19 @@ def estimate_ipr(
     serial run. That is the reproducible way to chunk; offsetting the seed per chunk (``seed + i``)
     is not, because those trees can correlate and their union is not the serial run's tree at all.
     """
-    min_seps: list[float] = []
-    n_conflict = 0
-    n_los = 0
-    encounters = (
-        spawn(root_seed_sequence(config.seed), config.n_encounters) if seqs is None else seqs
+    return estimate_ipr_over(
+        PairwiseEncounter(dpsi=dpsi, dcpa=dcpa, side=side, gs_intr=gs_intr),
+        config,
+        perf,
+        detector,
+        resolver,
+        recovery,
+        navigation,
+        communication,
+        surveillance,
+        kinematics=kinematics,
+        airframes=airframes,
+        wind=wind,
+        share_intent=share_intent,
+        seqs=seqs,
     )
-    for seq in encounters:
-        # always 4 substreams (geometry, navigation, communication, broadcast), regardless of which
-        # CNS layers or transmit-timing options are enabled — the stream tree stays
-        # config-invariant (ADR 0006 §6). The broadcast child was added last precisely so it could
-        # be: a SeedSequence's i-th child depends only on i and its parent, so spawning four leaves
-        # the first three bit-identical to the three-child tree every published number came from.
-        geom_seq, nav_seq, comm_seq, bc_seq = spawn(seq, 4)
-        geom_rng = generator(geom_seq)
-        own, intr = sample_pairwise(
-            geom_rng,
-            speed=config.scenario.speed,
-            dcpa_max=config.scenario.dcpa_max,
-            tlos=config.scenario.tlos,
-            rpz=config.conflict.rpz,
-            pos_ci95=config.scenario.pos_ci95,
-            vel_ci95=config.scenario.vel_ci95,
-            pos_ci95_declared=config.scenario.pos_ci95_declared,
-            vel_ci95_declared=config.scenario.vel_ci95_declared,
-            dpsi=dpsi,
-            dcpa=dcpa,
-            side=side,
-            gs_intr=gs_intr,
-        )
-        # the transmit timing, built the same way IPS builds it (:func:`schedule_for`). The phase
-        # draws from ``geom_rng`` — which the geometry has finished with — so switching it on
-        # appends draws instead of shifting the ones already there.
-        schedule = schedule_for(
-            2,
-            config.simulation.broadcast_interval,
-            geom_rng,
-            jitter=config.simulation.broadcast_jitter,
-            random_phase=config.simulation.broadcast_random_phase,
-        )
-        if airframes is None:
-            pair = [Agent(own, perf, kinematics=kinematics),
-                    Agent(intr, perf, kinematics=kinematics)]
-        else:  # mixed fleet: one airframe per aircraft, ownship first
-            pair = [af.agent(ac) for af, ac in zip(airframes, (own, intr), strict=True)]
-        outcome = run_fleet(
-            pair,
-            rpz=config.conflict.rpz,
-            t_lookahead=config.conflict.t_lookahead,
-            dt=config.simulation.dt,
-            detector=detector,
-            resolver=resolver,
-            recovery=recovery,
-            navigation=navigation,
-            rng=generator(nav_seq),
-            communication=communication,
-            surveillance=surveillance,
-            comm_rng=generator(comm_seq),
-            t_max=config.simulation.t_max,
-            done_timeout=config.simulation.done_timeout,
-            schedule=schedule,
-            broadcast_rng=generator(bc_seq),
-            wind=wind,
-            share_intent=share_intent,
-        )
-        # counted unconditionally, and independently of each other: a lost separation is a lost
-        # separation whether or not the detector ever flagged that encounter. (The old code nested
-        # the LoS count inside the conflict count, so an undetected breach was silently dropped
-        # from the numerator as well as the denominator.)
-        min_seps.append(outcome.min_sep)
-        n_conflict += int(outcome.conflict)
-        n_los += int(outcome.los)
-
-    return IPRResult(min_seps=tuple(min_seps), n_los=n_los, n_conflict=n_conflict)

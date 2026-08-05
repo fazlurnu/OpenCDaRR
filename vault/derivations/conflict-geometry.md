@@ -6,7 +6,7 @@ Place an intruder in conflict with a given ownship: crossing angle `dpsi`, miss 
 velocity = intr − own; no wind; no vertical). It is the encounter generator the scenario
 layer samples.
 
-- Implemented by: [`opencdarr/scenario.py`](../../opencdarr/scenario.py) (`create_conflict`)
+- Implemented by: [`opencdarr/scenario.py`](../../opencdarr/scenario/pairwise.py) (`create_conflict`)
 - Validated by: [`tests/test_scenario.py`](../../tests/test_scenario.py) — the generated pair,
   fed back through the CPA equations, reproduces the requested `dcpa` and `tlos`.
 - Sibling: [`cpa-detection.md`](cpa-detection.md) (same relative-motion algebra, inverted).

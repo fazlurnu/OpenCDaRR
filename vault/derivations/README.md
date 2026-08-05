@@ -4,15 +4,17 @@ The math, worked out — dCPA distance, projected-normal, IPS level crossings �
 each linked to the module that implements it and the test that checks it. Duplication of an
 equation here that helps a reviewer verify it is worth it (design-philosophy #11).
 
-12 notes so far, covering every shipped algorithm: `conflict-geometry`, `cpa-detection`,
+13 notes so far, covering every shipped algorithm: `conflict-geometry`, `cpa-detection`,
 `mvp-resolution`, `dh-orca-resolution`, `ftr-recovery`, `pastcpa-recovery`,
 `probabilistic-ftr-recovery`, `l1-guidance`, `gps-noise`, `step-dynamics-m600`,
-`fixedwing-coordinated-turn`, `robust-mvp-resolution`. Two are exceptions.
-`dh-orca-resolution` derives the ORCA half-plane, the linear program, and DH-ORCA's second
-constraint, but the implementations were removed, so it stands as a derivation ahead of the code
-rather than a record of it. `robust-mvp-resolution` is the reverse case: the code exists but lives
-in the `robust-mvp/` prototype folder, not in `opencdarr/`, so the note records a candidate rather
-than a shipped algorithm.
+`fixedwing-coordinated-turn`, `robust-mvp-resolution`, `random-spawn-conflict-probability`. Three
+are exceptions. `dh-orca-resolution` derives the ORCA half-plane, the linear program, and DH-ORCA's
+second constraint, but the implementations were removed, so it stands as a derivation ahead of the
+code rather than a record of it. `robust-mvp-resolution` is the reverse case: the code exists but
+lives in the `robust-mvp/` prototype folder, not in `opencdarr/`, so the note records a candidate
+rather than a shipped algorithm. `random-spawn-conflict-probability` derives no algorithm at all —
+it works out what a *scenario* hands the separation manager before any of it runs, and is the one
+note whose result is checked by switching the resolver off rather than on.
 
 Like the ADRs they are dated records: `step-dynamics-m600` derives the M600 kinematics that phase
 4 later folded into `opencdarr/dynamics/multirotor.py`, so a module path in an older note may name

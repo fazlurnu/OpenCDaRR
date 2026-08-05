@@ -62,14 +62,19 @@ from opencdarr.config import Config
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr import ProbabilisticFTR
 from opencdarr.crr.base import RecoveryCriterion
-from opencdarr.estimator import IPRResult, estimate_ipr
-from opencdarr.fleet import Agent, Airframe, build_env
-from opencdarr.ips import Particle, RareEventEstimate, estimate_rare_prob
+from opencdarr.estimator import IPRResult, agents_for, estimate_ipr_over
+from opencdarr.fleet import Airframe, build_env
+from opencdarr.ips import (
+    Particle,
+    RareEventEstimate,
+    estimate_rare_prob,
+    ladder_from_record,
+)
 from opencdarr.kinematics import Kinematics
 from opencdarr.parallel import _joblib, resolve_jobs
 from opencdarr.performance import Performance
 from opencdarr.rng import generator
-from opencdarr.scenario import sample_pairwise
+from opencdarr.scenario import PairwiseEncounter, Scenario
 from opencdarr.wind import NO_WIND, WindField
 
 # --- what can be declared -------------------------------------------------------------------
@@ -92,7 +97,7 @@ _GEOMETRY_SLOTS = frozenset({"dpsi", "dcpa", "side", "gs_intr"})
 # same way — `wind=Sweep([NO_WIND, WindField.from_met(270, 8)])`.
 _COMPONENTS = frozenset(
     {"detector", "resolver", "recovery", "navigation", "communication", "surveillance",
-     "kinematics", "perf", "wind", "airframes"}
+     "kinematics", "perf", "wind", "airframes", "scenario"}
 )
 _KNOWN_KEYS = (
     _SCENARIO_FIELDS | _CONFLICT_FIELDS | _SIMULATION_FIELDS | _GEOMETRY_SLOTS | _COMPONENTS
@@ -169,24 +174,29 @@ class IPS:
     """Rare-event interacting particle system: fixed-effort multilevel splitting (ADR 0017).
 
     ``shells`` is the decreasing sequence of running-minimum separations to split on, ending at the
-    rare boundary (``rpz`` for loss of separation). They are **explicit and per-experiment**, not
-    derived: ADR 0017 accepts fixed shells with hand-tuned spacing and defers adaptive levels, and
-    a ladder spaced too aggressively collapses (reported as ``n_collapsed``, never as a real zero).
+    rare boundary (``rpz`` for loss of separation) — either an explicit ladder, which is what
+    reproduces a published run exactly, or a :class:`Ladder` that derives one per condition from a
+    pilot Monte-Carlo run. ADR 0017 accepts fixed shells and defers adaptive levels; the pilot form
+    is the middle ground, and either way a ladder spaced too aggressively collapses (reported as
+    ``n_collapsed``, never as a real zero).
 
     ``reps`` is structural, not a convenience: particles within one run interact through
     resampling, so a valid interval comes only from independent replications (ADR 0017 §5).
     """
 
-    shells: tuple[float, ...]
+    shells: tuple[float, ...] | Ladder
     n_particles: int
     reps: int
 
-    def __init__(self, shells: Sequence[float], n_particles: int, reps: int) -> None:
-        ladder = tuple(float(s) for s in shells)
-        if not ladder:
-            raise ValueError("IPS needs at least one shell")
-        if any(b >= a for a, b in zip(ladder, ladder[1:], strict=False)):
-            raise ValueError(f"shells must be strictly decreasing, got {ladder}")
+    def __init__(self, shells: Sequence[float] | Ladder, n_particles: int, reps: int) -> None:
+        if isinstance(shells, Ladder):
+            ladder: tuple[float, ...] | Ladder = shells
+        else:
+            ladder = tuple(float(x) for x in shells)
+            if not ladder:
+                raise ValueError("IPS needs at least one shell")
+            if any(b >= a for a, b in zip(ladder, ladder[1:], strict=False)):
+                raise ValueError(f"shells must be strictly decreasing, got {ladder}")
         if n_particles <= 0 or reps <= 0:
             raise ValueError(f"require n_particles > 0 and reps > 0, got {n_particles}, {reps}")
         object.__setattr__(self, "shells", ladder)
@@ -198,6 +208,24 @@ Backend = MC | IPS
 
 
 # --- the methods bundle ---------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Ladder:
+    """Derive each condition's shells from a pilot Monte-Carlo run of *that* condition.
+
+    ``IPS(shells=[...])`` pins one ladder for the whole sweep, which is right for reproducing a
+    published run and wrong for a sweep whose conditions differ in rarity — the shells that suit
+    one fleet size collapse at another. This runs ``pilot`` encounters per condition first and
+    places the shells on that cell's own minimum-separation record
+    (:func:`~opencdarr.ips.ladder_from_record`). The ladder actually used is reported per
+    condition, so the run stays reproducible after the fact.
+    """
+
+    pilot: int = 2000
+    halving: float = 0.5
+    min_count: int = 30
+    step: float = 0.5
 
 
 @dataclass(frozen=True)
@@ -234,6 +262,9 @@ class Methods:
     perf: Performance | None = None
     wind: WindField = NO_WIND
     airframes: Sequence[Airframe] | None = None
+    # what an encounter *is*. The default reproduces the pairwise study this layer began as, so a
+    # declaration that never mentions a scenario behaves exactly as it did before scenarios existed
+    scenario: Scenario = PairwiseEncounter()
 
     def __post_init__(self) -> None:
         # One spelling for one thing. ``perf``/``kinematics`` say "every aircraft is this
@@ -389,20 +420,41 @@ def _validate_declared_accuracy_is_read(
         )
 
 
+def _scenario_for(condition: Condition, methods: Methods) -> Scenario:
+    """This condition's scenario, with any pairwise geometry slots folded into it.
+
+    ``dpsi`` / ``dcpa`` / ``side`` / ``gs_intr`` predate scenarios and are kept working as sugar
+    over :class:`~opencdarr.scenario.PairwiseEncounter` — ``{"dpsi": Sweep([...])}`` still means
+    what it always did. Declaring one *alongside* a scenario that has no such slot is refused
+    rather than ignored: silently dropping a declared axis is the failure mode this layer exists
+    to prevent.
+    """
+    scenario = methods.scenario
+    geometry = {k: v for k, v in dict(condition.values).items() if k in _GEOMETRY_SLOTS}
+    if not geometry:
+        return scenario
+    if not isinstance(scenario, PairwiseEncounter):
+        raise ValueError(
+            f"the geometry slots {sorted(geometry)} only apply to a PairwiseEncounter, but this "
+            f"condition declares {type(scenario).__name__}. Put the geometry in the scenario "
+            f"itself — e.g. Sweep([...], build=lambda v: {type(scenario).__name__}(...))."
+        )
+    return dataclasses.replace(scenario, **geometry)
+
+
 def _run_mc(condition: Condition, base: Config, methods: Methods, backend: MC,
             seed: int) -> IPRResult:
-    """One MC cell: ``estimate_ipr`` over this condition's config, components and geometry pins."""
+    """One MC cell: this condition's scenario, drawn ``n_encounters`` times and flown."""
     cfg = _config_for(condition, base, backend.n_encounters)
     m = _resolved_methods(condition, methods)
-    geometry = {k: v for k, v in dict(condition.values).items() if k in _GEOMETRY_SLOTS}
-    return estimate_ipr(
+    return estimate_ipr_over(
+        _scenario_for(condition, m),
         dataclasses.replace(cfg, seed=seed),
         _base_perf(m),
         m.detector, m.resolver, m.recovery, m.navigation, m.communication, m.surveillance,
         kinematics=m.kinematics,
         airframes=m.airframes,
         wind=m.wind,
-        **geometry,
     )
 
 
@@ -410,53 +462,58 @@ def _run_ips(condition: Condition, base: Config, methods: Methods, backend: IPS,
              seed: int) -> RareEventEstimate:
     """One IPS cell: split the *same* environment MC just ran, over this condition's shells.
 
-    ``build_initial`` samples one geometry per particle from that particle's own seed — the initial
-    cloud is drawn from the encounter distribution MC integrates over (ADR 0017 §4), which is what
-    keeps the two backends comparable. The forward CNS streams are spawned per particle per level
-    inside :func:`~opencdarr.ips.ips_once`, not here.
+    ``build_initial`` draws one encounter per particle from that particle's own seed — the same
+    distribution MC integrates over (ADR 0017 §4), which is what keeps the two backends
+    comparable. The forward CNS streams are spawned per particle per level inside
+    :func:`~opencdarr.ips.ips_once`, not here.
     """
     cfg = _config_for(condition, base, backend.n_particles)
     m = _resolved_methods(condition, methods)
-    geometry = {k: v for k, v in dict(condition.values).items() if k in _GEOMETRY_SLOTS}
+    scenario = _scenario_for(condition, m)
     perf = _base_perf(m)
+    if not scenario.supports_splitting():
+        raise ValueError(
+            f"{type(scenario).__name__} does not support splitting: over an open-ended stream "
+            "the running minimum stops discriminating between particles and 'at least one loss' "
+            "stops being rare, so IPS would return a number near 1. Use MC for this scenario."
+        )
 
     def build_initial(seq: np.random.SeedSequence) -> Particle:
         geom_rng = generator(seq)
-        own, intr = sample_pairwise(
-            geom_rng,
-            speed=cfg.scenario.speed, dcpa_max=cfg.scenario.dcpa_max, tlos=cfg.scenario.tlos,
-            rpz=cfg.conflict.rpz, pos_ci95=cfg.scenario.pos_ci95,
-            vel_ci95=cfg.scenario.vel_ci95,
-            pos_ci95_declared=cfg.scenario.pos_ci95_declared,
-            vel_ci95_declared=cfg.scenario.vel_ci95_declared, **geometry,
-        )
-        if m.airframes is None:
-            agents = [
-                Agent(own, perf, kinematics=m.kinematics),
-                Agent(intr, perf, kinematics=m.kinematics),
-            ]
-        else:  # mixed fleet: one airframe per aircraft, ownship first
-            agents = [af.agent(ac) for af, ac in zip(m.airframes, (own, intr), strict=True)]
+        fleet = scenario.draw(geom_rng, cfg)
+        agents = agents_for(fleet, perf, kinematics=m.kinematics, airframes=m.airframes)
         env = build_env(
             agents, rpz=cfg.conflict.rpz, t_lookahead=cfg.conflict.t_lookahead,
             dt=cfg.simulation.dt, detector=m.detector, resolver=m.resolver, recovery=m.recovery,
             navigation=m.navigation, communication=m.communication, surveillance=m.surveillance,
             t_max=cfg.simulation.t_max, done_timeout=cfg.simulation.done_timeout,
             wind=m.wind,
-            # the transmit timing, which this call omitted entirely: build_env then fell back to
-            # the 1 s default, so a declared broadcast_interval reached MC and was silently
-            # dropped by IPS. Built through the same schedule_for MC uses, so the two cannot
-            # drift apart again (the particle's broadcast stream comes from ips._streams).
+            # built through the same schedule_for MC uses, so the two cannot drift apart
             schedule=schedule_for(
                 len(agents), cfg.simulation.broadcast_interval, geom_rng,
                 jitter=cfg.simulation.broadcast_jitter,
                 random_phase=cfg.simulation.broadcast_random_phase,
             ),
+            measure_within=scenario.measurement_area(),
         )
         return Particle(env=env, state=env.initial_state(agents))
 
+    shells = backend.shells
+    if isinstance(shells, Ladder):
+        pilot = estimate_ipr_over(
+            scenario,
+            dataclasses.replace(cfg, seed=seed, n_encounters=shells.pilot),
+            perf,
+            m.detector, m.resolver, m.recovery, m.navigation, m.communication, m.surveillance,
+            kinematics=m.kinematics, airframes=m.airframes, wind=m.wind,
+        )
+        shells = ladder_from_record(
+            pilot.min_seps, cfg.conflict.rpz,
+            halving=shells.halving, min_count=shells.min_count, step=shells.step,
+        )
+
     return estimate_rare_prob(
-        build_initial, backend.shells,
+        build_initial, shells,
         n_particles=backend.n_particles, reps=backend.reps, seed=seed,
     )
 

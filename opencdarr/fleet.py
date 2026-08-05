@@ -41,7 +41,8 @@ regression (ADR 0004). Pure given its inputs; no globals.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+import math
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, replace
 
 import numpy as np
@@ -61,7 +62,7 @@ from opencdarr.crr.base import RecoveryCriterion
 from opencdarr.kinematics import Kinematics, MotionCommand
 from opencdarr.loop import _DEFAULT_KINEMATICS, _setpoint_adapter
 from opencdarr.performance import Performance
-from opencdarr.relative import Relative, relative_enu, segment_min_range
+from opencdarr.relative import Relative, relative_enu, segment_min_range, velocity_enu
 from opencdarr.separation import INACTIVE, FleetMemory, SeparationManager, SetpointAdapter
 from opencdarr.state import AircraftState, DesiredVelocity
 from opencdarr.wind import NO_WIND, WindField
@@ -264,6 +265,79 @@ def _segment_min_sep(pre: tuple[Relative, ...], post: tuple[Relative, ...]) -> f
     )
 
 
+@dataclass(frozen=True)
+class MeasurementArea:
+    """A disc that separation is **measured inside** — the experimental area of a traffic study.
+
+    Aircraft fly the whole scenario as usual; what changes is the bookkeeping. A pair contributes
+    to ``FleetState.min_sep`` (and so to ``los``) only while *both* of its aircraft are inside the
+    disc, at both ends of the step. That is what lets a scenario release traffic outside the area
+    and measure only what happens within it — the outer/inner split of Groot et al. (2024), and
+    the reason :func:`~opencdarr.scenario.random_traffic` takes two radii.
+
+    **This is load-bearing for the rare-event path, not a reporting convenience.** IPS splits on
+    ``min_sep``, so gating it means both estimators are still measuring one quantity; gating only
+    at the end would leave the splitting chasing a different event from the one being reported.
+
+    ``stop_when_departed`` also ends the run once every aircraft is outside the disc and moving
+    away, since nothing measurable can follow. It is a pure saving — checked identical run for run
+    against a plain ``t_max`` cap over 300 encounters at N = 4 and N = 8 — but it truncates the
+    log, so turn it off when recording a trajectory for plotting.
+    """
+
+    centre: tuple[float, float]  # (lat, lon)
+    radius: float  # m
+    stop_when_departed: bool = True
+
+    def inside(self, states: Sequence[AircraftState]) -> tuple[bool, ...]:
+        """Which aircraft are within ``radius`` of ``centre`` right now."""
+        return tuple(
+            geo.qdrdist(self.centre[0], self.centre[1], ac.lat, ac.lon)[1] <= self.radius
+            for ac in states
+        )
+
+    def departed(self, states: Sequence[AircraftState]) -> bool:
+        """Is every aircraft outside the disc and not heading back in?"""
+        for ac in states:
+            qdr, dist = geo.qdrdist(self.centre[0], self.centre[1], ac.lat, ac.lon)
+            if dist <= self.radius:
+                return False
+            outward = math.radians(qdr)
+            v_e, v_n = velocity_enu(ac)
+            if v_e * math.sin(outward) + v_n * math.cos(outward) < 0.0:
+                return False
+        return True
+
+
+def _measured_pairs(
+    area: MeasurementArea,
+    pre: Sequence[AircraftState],
+    post: Sequence[AircraftState],
+) -> tuple[bool, ...]:
+    """Per-pair mask in the same ``i < j`` order as :func:`_pairwise_relative`.
+
+    A pair counts only if both aircraft are inside at both ends of the step, so a pair straddling
+    the boundary is dropped rather than half-measured.
+    """
+    in_pre, in_post = area.inside(pre), area.inside(post)
+    return tuple(
+        in_pre[i] and in_pre[j] and in_post[i] and in_post[j]
+        for i in range(len(pre))
+        for j in range(i + 1, len(pre))
+    )
+
+
+def _segment_min_sep_masked(
+    pre: tuple[Relative, ...], post: tuple[Relative, ...], mask: tuple[bool, ...]
+) -> float:
+    """:func:`_segment_min_sep` over the masked pairs only; ``inf`` when none qualify."""
+    return min(
+        (segment_min_range(r0, r1)
+         for r0, r1, keep in zip(pre, post, mask, strict=True) if keep),
+        default=float("inf"),
+    )
+
+
 def level(state: FleetState) -> float:
     """The importance function IPS splits on: the fleet's **current** minimum pairwise separation
     [m], smaller = closer to the rare event (ADR 0004's starting point; a Phase-8 ADR may refine
@@ -311,6 +385,8 @@ class FleetEnv:
     done_timeout: float
     # if set, also stop once every goal-carrying aircraft is within this many metres of its goal
     stop_within: float | None = None
+    # if set, measure separation only between aircraft inside this disc (see MeasurementArea)
+    measure_within: MeasurementArea | None = None
 
     def initial_state(self, agents: list[Agent]) -> FleetState:
         """The particle at ``t = 0``: each aircraft's intent stamped on its true state, its first
@@ -349,6 +425,9 @@ class FleetEnv:
         that many metres of its final waypoint — a mission-completion stop, independent of the
         conflict clearing (see :meth:`Autopilot.goal`)."""
         if state.t >= self.t_max or state.done_timer >= self.done_timeout:
+            return True
+        area = self.measure_within
+        if area is not None and area.stop_when_departed and area.departed(state.states):
             return True
         return self.stop_within is not None and self._at_goals(state, self.stop_within)
 
@@ -428,7 +507,13 @@ class FleetEnv:
         # measure separation over the whole step just flown, not only at its ends — consecutive
         # segments share an endpoint, so the running minimum covers the trajectory continuously
         # from t=0 (the first segment's left end) rather than at a comb of sampled instants
-        cur = _segment_min_sep(rel_pre, _pairwise_relative(states))
+        rel_post = _pairwise_relative(states)
+        if self.measure_within is None:
+            cur = _segment_min_sep(rel_pre, rel_post)
+        else:  # only pairs inside the experimental area, at both ends of the step
+            cur = _segment_min_sep_masked(
+                rel_pre, rel_post, _measured_pairs(self.measure_within, state.states, states)
+            )
         min_sep = min(state.min_sep, cur)
         los = state.los or cur < self.rpz
 
@@ -468,6 +553,7 @@ def build_env(
     schedule: BroadcastSchedule = _DEFAULT_SCHEDULE,
     share_intent: bool = False,
     stop_within: float | None = None,
+    measure_within: MeasurementArea | None = None,
 ) -> FleetEnv:
     """Assemble the fixed rules of a fleet encounter into a :class:`FleetEnv` (the shared,
     immutable half of the estimator interface). This is the composition root :func:`run_fleet`
@@ -516,6 +602,7 @@ def build_env(
         t_max=t_max,
         done_timeout=done_timeout,
         stop_within=stop_within,
+        measure_within=measure_within,
     )
 
 
@@ -540,6 +627,7 @@ def run_fleet(
     broadcast_rng: np.random.Generator | None = None,
     share_intent: bool = False,
     stop_within: float | None = None,
+    measure_within: MeasurementArea | None = None,
     record: bool = False,
 ) -> FleetOutcome:
     """Advance the fleet to termination and report its outcome (see the module docstring).
@@ -587,7 +675,7 @@ def run_fleet(
         agents, rpz=rpz, t_lookahead=t_lookahead, dt=dt, detector=detector, resolver=resolver,
         recovery=recovery, wind=wind, navigation=navigation, communication=communication,
         surveillance=surveillance, t_max=t_max, done_timeout=done_timeout, schedule=schedule,
-        share_intent=share_intent, stop_within=stop_within,
+        share_intent=share_intent, stop_within=stop_within, measure_within=measure_within,
     )
     streams = FleetStreams(cns=CnsStreams(nav=rng, comm=comm_rng), broadcast=broadcast_rng)
 

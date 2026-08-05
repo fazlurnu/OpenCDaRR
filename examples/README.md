@@ -108,6 +108,15 @@ above — one module per notebook — and several of them generate the figures t
 - [`handbook/rare_event_ips_illustrated.ipynb`](handbook/rare_event_ips_illustrated.ipynb) — the
   same estimate with the loop opened up: the particles, the resampling step, the splitting
   genealogy, the importance function, and how survival fractions become the final probability.
+- [`handbook/declaring_experiments.ipynb`](handbook/declaring_experiments.ipynb) — how one
+  declaration covers three kinds of study. A `Scenario` is the only thing that differs between a
+  pairwise angle sweep, a ring and a disc of random traffic, so `run_experiment` sweeps it like any
+  other parameter and compares resolvers *across* all three in one cross-product. Also shows the
+  `Ladder` that derives IPS shells per condition from a pilot run, why the collapse count is read
+  before the probability, and ends with a complete build-your-own scenario — an overtaking
+  encounter — including the two traps it walked into: a multirotor given a waypoint flies at its
+  envelope's `v_max` rather than the speed the scenario set, and an encounter specified by a fixed
+  gap rather than a time-to-pass measures the `t_max` truncation instead of the geometry.
 - [`handbook/ring_mc_vs_ips.ipynb`](handbook/ring_mc_vs_ips.ipynb) — the same probability measured
   twice. Two, three and four drones on the ring of `circle_scenario`, flown with `MVP` +
   `ProbabilisticFTR` under a 10 m / 1 m/s fix, estimated first by counting losses over 2000
@@ -115,7 +124,11 @@ above — one module per notebook — and several of them generate the figures t
   for the pair and rests on one and two events for the larger fleets; IPS returns an interval in all
   three, and the intervals overlap wherever Monte Carlo has anything to say. Also shows where a
   shell ladder comes from — the Monte-Carlo run's own minimum-separation record — and why its run-in
-  has to be fine through the wall MVP's margin builds at `rpz × 1.05`.
+  has to be fine through the wall MVP's margin builds at `rpz × 1.05`. Both scenarios are shipped
+  rather than written in the notebook: `crossing_ring(n, radius=...)` and
+  `random_traffic(n, rng, r_inner=..., r_outer=...)` build the traffic, and
+  `run_fleet(..., measure_within=MeasurementArea(centre, radius))` restricts the measurement to the
+  experimental disc — so the fleet size and the radii are the knobs to turn.
 
 ## How the figures are made
 

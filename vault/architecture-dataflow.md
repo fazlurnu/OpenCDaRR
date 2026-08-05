@@ -54,7 +54,7 @@ flowchart TB
     EST -->|"per encounter: spawn(4)"| SEQS["geom_seq · nav_seq · comm_seq · bc_seq"]
     EST -. builds .-> ROOT
 
-    subgraph scen["scenario.py — encounter geometry"]
+    subgraph scen["scenario/ — encounter geometry"]
         SAMP["sample_pairwise(rng, speed,<br/>dcpa_max, tlos, rpz, ci95)"]
         CREATE["create_conflict(own, dpsi,<br/>dcpa, tlos, rpz)"]
         SAMP --> CREATE
@@ -379,13 +379,13 @@ Every `.py` in `opencdarr/`, its public surface, and what flows in/out.
 
 | Module | Symbol | Input | Output |
 |---|---|---|---|
-| `scenario.py` | `sample_pairwise(rng, speed, dcpa_max, tlos, rpz, ci95…)` | RNG + distribution params | `(own, intr): AircraftState` |
-| `scenario.py` | `create_conflict(own, dpsi, dcpa, tlos, rpz, …)` | ownship + geometry | intruder `AircraftState` |
+| `scenario/pairwise.py` | `sample_pairwise(rng, speed, dcpa_max, tlos, rpz, ci95…)` | RNG + distribution params | `(own, intr): AircraftState` |
+| `scenario/pairwise.py` | `create_conflict(own, dpsi, dcpa, tlos, rpz, …)` | ownship + geometry | intruder `AircraftState` |
 | `state.py` | `AircraftState` / `DesiredVelocity` | — | frozen kinematic value |
 | `state.py` | `create_aircraft(perf, …)` | `Performance` + fields | envelope-validated `AircraftState` |
 | `performance.py` | `Performance`, `M600`, `SMALL_FIXEDWING` | — | frozen envelope limits |
 | `mission.py` | `Waypoint`, `Mission(goto, flight_plan)` | — | the route an autopilot flies (ADR 0014) |
-| `scenario.py` | `swap_pair` / `swap_ring` / `converging_ring` / `near_parallel` | geometry params | N-aircraft `FleetScenario` builders |
+| `scenario/ring.py`, `pairwise.py` | `swap_pair` / `swap_ring` / `crossing_ring` / `converging_ring` / `near_parallel` / `random_traffic` | geometry params | N-aircraft `FleetScenario` builders |
 
 ### Kinematics (ADR 0007, 0010, 0020)
 

@@ -1,13 +1,12 @@
-"""Conflict-encounter geometry — the scenario layer's generator.
+"""Two aircraft in one conflict — the geometry, the sampler, and the declarable scenario.
 
-`create_conflict` places an intruder in conflict with a given ownship at a chosen crossing
-angle, miss distance, and time-to-loss-of-separation — the horizontal part of BlueSky's
-`creconfs`, re-derived in our convention (relative velocity = intr − own; no wind; 2D).
-
-Two levels, deliberately: `create_conflict` builds **one named geometry**, while `sample_pairwise`
-turns **one seed into one encounter** — drawing whichever of the crossing angle, miss distance,
-passing side and intruder speed the caller has not pinned. Between them they cover the range from a
-single fixed crossing to a fully sampled encounter distribution without a second code path.
+``create_conflict`` builds **one named geometry**: an intruder placed in conflict with a given
+ownship at a chosen crossing angle, miss distance and time-to-loss-of-separation. It is the
+horizontal part of BlueSky's ``creconfs``, re-derived in our convention (relative velocity =
+intr − own; no wind; 2D). ``sample_pairwise`` turns **one seed into one encounter**, drawing
+whichever parameters the caller has not pinned, and :class:`PairwiseEncounter` is that sampler as
+a declarable value. The two fixed geometries here — a head-on swap and a shallow crossing — are
+named cases of the same construction.
 
 Governing equations: ``vault/derivations/conflict-geometry.md``.
 """
@@ -15,11 +14,13 @@ Governing equations: ``vault/derivations/conflict-geometry.md``.
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+from dataclasses import dataclass
 
 import numpy as np
 
 from opencdarr import geo
+from opencdarr.config import Config
+from opencdarr.scenario.base import Draw, FleetScenario, Scenario, _heading_to
 from opencdarr.state import AircraftState
 
 _PARALLEL_EPS = 1e-9  # |v_rel| below this = no closing geometry
@@ -91,11 +92,6 @@ def create_conflict(
         pos_ci95_declared=own.pos_ci95_declared,
         vel_ci95_declared=own.vel_ci95_declared,
     )
-
-
-Draw = Callable[[np.random.Generator], float]
-"""A per-encounter draw of one geometry parameter from that encounter's generator."""
-
 
 def _resolve(spec: float | Draw | None, rng: np.random.Generator, drawn: float) -> float:
     """One geometry slot's value: the built-in draw, a pinned constant, or a custom distribution.
@@ -192,22 +188,6 @@ def sample_pairwise(
     )
     return own, intr
 
-
-# --- N-aircraft fleet scenarios (Phase 6d) --------------------------------------------------
-# Each builder returns a list of ``(AircraftState, goto_target)`` pairs — an aircraft heading at
-# its destination ``(lat, lon)``, the geometry the fleet loop needs. The caller wraps each in a
-# ``WaypointAutopilot`` mission + its airframe (an ``Agent``); the scenario stays airframe-neutral.
-
-FleetScenario = list[tuple[AircraftState, tuple[float, float]]]
-
-
-def _heading_to(lat: float, lon: float, target: tuple[float, float], speed: float,
-                ac_id: str) -> AircraftState:
-    """An aircraft at ``(lat, lon)`` flying at ``speed`` toward ``target`` (nose on the bearing)"""
-    trk, _ = geo.qdrdist(lat, lon, target[0], target[1])
-    return AircraftState(id=ac_id, lat=lat, lon=lon, trk=trk % 360.0, gs=speed)
-
-
 def swap_pair(
     *, speed: float = 10.0, span: float = 3000.0, lat0: float = 52.0, lon0: float = 4.0
 ) -> FleetScenario:
@@ -220,35 +200,6 @@ def swap_pair(
         (_heading_to(a[0], a[1], (b[0], b[1]), speed, "A"), (b[0], b[1])),
         (_heading_to(b[0], b[1], (a[0], a[1]), speed, "B"), (a[0], a[1])),
     ]
-
-
-def swap_ring(
-    n: int = 8, *, speed: float = 10.0, radius: float = 1500.0,
-    lat0: float = 52.0, lon0: float = 4.0,
-) -> FleetScenario:
-    """``n`` aircraft uniformly on a ring, each flying to the **diametrically-opposite** start
-    (Phase-6 scenario 2) — ``n/2`` head-on pairs all crossing the centre.
-    """
-    starts = [geo.forward(lat0, lon0, 360.0 * k / n, radius) for k in range(n)]
-    out: FleetScenario = []
-    for k in range(n):
-        target = starts[(k + n // 2) % n]
-        out.append((_heading_to(starts[k][0], starts[k][1], target, speed, f"A{k}"), target))
-    return out
-
-
-def converging_ring(
-    n: int = 8, *, speed: float = 10.0, radius: float = 1500.0,
-    lat0: float = 52.0, lon0: float = 4.0,
-) -> FleetScenario:
-    """``n`` aircraft uniformly on a circle, all flying to the **same** waypoint — the ring centre
-    (Phase-6 scenario 3), the symmetric converging superconflict. They cannot all occupy the centre
-    (``rpz`` forbids it), so the DAA can only hold them apart as they converge.
-    """
-    centre = (lat0, lon0)
-    ring = [geo.forward(lat0, lon0, 360.0 * k / n, radius) for k in range(n)]
-    return [(_heading_to(s[0], s[1], centre, speed, f"A{k}"), centre) for k, s in enumerate(ring)]
-
 
 def near_parallel(
     *, speed: float = 10.0, dpsi: float = 5.0, tlos: float = 90.0, rpz: float = 50.0,
@@ -265,3 +216,38 @@ def near_parallel(
         target = geo.forward(ac.lat, ac.lon, ac.trk, reach)
         out.append((ac, (target[0], target[1])))
     return out
+
+@dataclass(frozen=True)
+class PairwiseEncounter(Scenario):
+    """Two aircraft in a sampled conflict — :func:`sample_pairwise` as a declarable value.
+
+    Every geometry slot left ``None`` is drawn per encounter; pinning one (``dpsi=90``) fixes it
+    without disturbing the others' draws. This is the default scenario, and the historical one:
+    it reproduces what ``run_experiment`` did before scenarios existed, encounter for encounter.
+    """
+
+    dpsi: float | Draw | None = None
+    dcpa: float | Draw | None = None
+    side: int | Draw | None = None
+    gs_intr: float | Draw | None = None
+
+    def draw(self, rng: np.random.Generator, config: Config) -> FleetScenario:
+        own, intr = sample_pairwise(
+            rng,
+            speed=config.scenario.speed,
+            dcpa_max=config.scenario.dcpa_max,
+            tlos=config.scenario.tlos,
+            rpz=config.conflict.rpz,
+            pos_ci95=config.scenario.pos_ci95,
+            vel_ci95=config.scenario.vel_ci95,
+            pos_ci95_declared=config.scenario.pos_ci95_declared,
+            vel_ci95_declared=config.scenario.vel_ci95_declared,
+            dpsi=self.dpsi,
+            dcpa=self.dcpa,
+            side=self.side,
+            gs_intr=self.gs_intr,
+        )
+        return [(own, None), (intr, None)]  # no destination: the geometry is the experiment
+
+    def size(self) -> int:
+        return 2

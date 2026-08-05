@@ -1,4 +1,4 @@
-"""The Phase-6 fleet scenarios (6d) — builders in ``scenario.py``, run through ``run_fleet``.
+"""The Phase-6 fleet scenarios (6d) — builders in ``scenario/``, run through ``run_fleet``.
 
 Each scenario, unresolved, collides; with cooperative MVP three of the four clear (min-sep ≥ rpz).
 The **converging ring** (all aircraft to the *same* centre point) is the exception: the goal itself

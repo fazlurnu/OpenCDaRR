@@ -36,16 +36,23 @@ from typing import Any
 import numpy as np
 from joblib import Parallel, delayed
 
-from opencdarr import M600, MVP, Agent, GnssNavigation, StateBased, create_aircraft
+from opencdarr import (
+    M600,
+    MVP,
+    Agent,
+    GnssNavigation,
+    MeasurementArea,
+    StateBased,
+    crossing_ring,
+    random_traffic,
+)
 from opencdarr.autopilot import WaypointAutopilot
 from opencdarr.crr import ProbabilisticFTR
 from opencdarr.estimator import wilson_interval
-from opencdarr.fleet import CnsStreams, FleetEnv, FleetState, FleetStreams, build_env
-from opencdarr.geo import forward, qdrdist
+from opencdarr.fleet import CnsStreams, FleetEnv, FleetStreams, build_env
 from opencdarr.ips import Particle
 from opencdarr.mission import Mission
 from opencdarr.parallel import estimate_rare_prob, resolve_jobs
-from opencdarr.relative import relative_enu, segment_min_range, velocity_enu
 from opencdarr.rng import children, generator, root_seed_sequence
 
 CENTRE = (52.0, 4.0)
@@ -56,11 +63,26 @@ MARGIN = 1.05         # MVP resolution margin
 POS_CI95 = 10.0       # GNSS fix, declared and drawn [m]
 VEL_CI95 = 1.0        # [m/s]
 
-RING_RADIUS = 500.0   # part 1
-R_INNER = 1000.0      # part 2: the measured disc
-R_OUTER = 1200.0      # part 2: the spawn circle
-
 PERF = dataclasses.replace(M600, v_max=SPEED, v_min=-SPEED)
+
+
+@dataclasses.dataclass(frozen=True)
+class Arena:
+    """The geometry every cell is run in — the part a user is expected to change.
+
+    ``ring_radius`` is half the ring's diameter; ``r_inner`` is the measured disc and ``r_outer``
+    the circle traffic is released on, far enough out that a pair starting close has room to
+    resolve before it counts. Carried as a value rather than read from globals so it survives the
+    trip into a worker process.
+    """
+
+    ring_radius: float = 500.0
+    r_inner: float = 1000.0
+    r_outer: float = 1200.0
+    centre: tuple[float, float] = CENTRE
+
+
+DEFAULT_ARENA = Arena()
 
 
 def rules(dt: float, t_max: float) -> dict[str, Any]:
@@ -73,29 +95,29 @@ def rules(dt: float, t_max: float) -> dict[str, Any]:
 
 
 # --- part 1: the ring ---------------------------------------------------------------------------
-def ring(n: int) -> list[Agent]:
+def _agents(fleet) -> list[Agent]:
+    """Wrap a scenario in the airframe and guidance this study flies."""
+    return [
+        Agent(state, PERF, autopilot=WaypointAutopilot(Mission(goto=goal), capture_radius=30.0))
+        for state, goal in fleet
+    ]
+
+
+def ring(n: int, arena: Arena) -> list[Agent]:
     """n multirotors on the ring, each aimed at the point diametrically opposite."""
-    agents = []
-    for i in range(n):
-        bearing = 360.0 * i / n
-        start = forward(*CENTRE, bearing, RING_RADIUS)
-        goal = forward(*CENTRE, (bearing + 180.0) % 360.0, RING_RADIUS)
-        state = create_aircraft(PERF, id=f"D{i}", lat=start[0], lon=start[1],
-                                trk=(bearing + 180.0) % 360.0, gs=SPEED,
-                                pos_ci95=POS_CI95, vel_ci95=VEL_CI95)
-        agents.append(Agent(state, PERF, autopilot=WaypointAutopilot(
-            Mission(goto=goal), capture_radius=30.0)))
-    return agents
+    return _agents(crossing_ring(n, speed=SPEED, radius=arena.ring_radius,
+                                 lat0=arena.centre[0], lon0=arena.centre[1],
+                                 pos_ci95=POS_CI95, vel_ci95=VEL_CI95))
 
 
-def ring_env(n: int, dt: float) -> FleetEnv:
-    return build_env(ring(n), navigation=GnssNavigation(), **rules(dt, 600.0))
+def ring_env(n: int, dt: float, arena: Arena) -> FleetEnv:
+    return build_env(ring(n, arena), navigation=GnssNavigation(), **rules(dt, 600.0))
 
 
-def ring_encounter(n: int, seq, dt: float) -> tuple[bool, float]:
+def ring_encounter(n: int, seq, dt: float, arena: Arena) -> tuple[bool, float]:
     """One ring encounter. The geometry is fixed, so the seed feeds the CNS noise alone."""
-    agents = ring(n)
-    env = ring_env(n, dt)
+    agents = ring(n, arena)
+    env = ring_env(n, dt, arena)
     state = env.initial_state(agents)
     streams = FleetStreams(cns=CnsStreams(nav=generator(seq)))
     while not env.is_terminal(state):
@@ -103,15 +125,11 @@ def ring_encounter(n: int, seq, dt: float) -> tuple[bool, float]:
     return state.los, state.min_sep
 
 
-def ring_particle(n: int, dt: float) -> Particle:
-    agents = ring(n)
-    env = ring_env(n, dt)
-    return Particle(env=env, state=env.initial_state(agents))
-
-
-def ring_cloud(n: int, dt: float):
+def ring_cloud(n: int, dt: float, arena: Arena):
     """Every particle starts from the same world; the seed feeds the forward noise."""
-    particle = ring_particle(n, dt)
+    agents = ring(n, arena)
+    env = ring_env(n, dt, arena)
+    particle = Particle(env=env, state=env.initial_state(agents))
 
     def build_initial(seq):
         return particle
@@ -119,85 +137,26 @@ def ring_cloud(n: int, dt: float):
 
 
 # --- part 2: random traffic ---------------------------------------------------------------------
-def sample_traffic(n: int, rng: np.random.Generator) -> list[Agent]:
-    """n drones crossing the measured disc, entry offsets uniform across its diameter.
-
-    The offset is drawn across the *inner* diameter and the entry point projected back out to the
-    spawn circle, so all n cross the measured area; the paper references it to the outer radius,
-    where ~17% graze past. See ``vault/derivations/random-spawn-conflict-probability.md`` §1.
-    """
-    agents = []
-    for i in range(n):
-        heading = float(rng.uniform(0.0, 360.0))
-        offset = R_INNER * float(rng.uniform(-1.0, 1.0))
-        half = math.sqrt(R_OUTER**2 - offset**2)
-        side = (heading + 90.0) % 360.0 if offset >= 0 else (heading - 90.0) % 360.0
-        foot = forward(*CENTRE, side, abs(offset))
-        start = forward(*foot, (heading + 180.0) % 360.0, half)
-        goal = forward(*foot, heading, half)
-        state = create_aircraft(PERF, id=f"D{i}", lat=start[0], lon=start[1], trk=heading,
-                                gs=SPEED, pos_ci95=POS_CI95, vel_ci95=VEL_CI95)
-        agents.append(Agent(state, PERF, autopilot=WaypointAutopilot(
-            Mission(goto=goal), capture_radius=30.0)))
-    return agents
+def sample_traffic(n: int, rng: np.random.Generator, arena: Arena) -> list[Agent]:
+    """n drones crossing the measured disc, drawn by the entry rule (see opencdarr.scenario)."""
+    return _agents(random_traffic(n, rng, speed=SPEED, r_inner=arena.r_inner,
+                                  r_outer=arena.r_outer, lat0=arena.centre[0],
+                                  lon0=arena.centre[1],
+                                  pos_ci95=POS_CI95, vel_ci95=VEL_CI95))
 
 
-@dataclasses.dataclass(frozen=True)
-class MeasuredDisc(FleetEnv):
-    """A FleetEnv that measures separation only between aircraft inside the experimental disc.
-
-    The gated running minimum is also what IPS splits on, so both estimators stay on one quantity.
-    ``is_terminal`` additionally stops once every aircraft has left the disc and is heading away:
-    nothing measurable can follow, and it was checked against a plain 900 s cap over 300 encounters
-    at N = 4 and N = 8, returning the identical minimum separation run for run.
-    """
-
-    centre: tuple = CENTRE
-    r_inner: float = R_INNER
-
-    def _gated(self, pre, post) -> float:
-        in_pre = [qdrdist(*self.centre, ac.lat, ac.lon)[1] <= self.r_inner for ac in pre]
-        in_post = [qdrdist(*self.centre, ac.lat, ac.lon)[1] <= self.r_inner for ac in post]
-        best = float("inf")
-        for i in range(len(pre)):
-            for j in range(i + 1, len(pre)):
-                if in_pre[i] and in_pre[j] and in_post[i] and in_post[j]:
-                    best = min(best, segment_min_range(relative_enu(pre[i], pre[j]),
-                                                       relative_enu(post[i], post[j])))
-        return best
-
-    def advance(self, state: FleetState, streams: FleetStreams) -> FleetState:
-        nxt = super().advance(state, streams)
-        cur = self._gated(state.states, nxt.states)
-        return dataclasses.replace(nxt, min_sep=min(state.min_sep, cur),
-                                   los=state.los or cur < self.rpz)
-
-    def is_terminal(self, state: FleetState) -> bool:
-        return super().is_terminal(state) or self._all_departed(state)
-
-    def _all_departed(self, state: FleetState) -> bool:
-        for ac in state.states:
-            qdr, dist = qdrdist(*self.centre, ac.lat, ac.lon)
-            if dist <= self.r_inner:
-                return False
-            outward = math.radians(qdr)
-            v_e, v_n = velocity_enu(ac)
-            if v_e * math.sin(outward) + v_n * math.cos(outward) < 0.0:
-                return False
-        return True
+def traffic_env(agents: list[Agent], dt: float, arena: Arena) -> FleetEnv:
+    """The same rules as the ring, plus the disc that separation is measured inside."""
+    return build_env(agents, navigation=GnssNavigation(),
+                     measure_within=MeasurementArea(arena.centre, arena.r_inner),
+                     **rules(dt, 400.0))
 
 
-def traffic_env(agents: list[Agent], dt: float) -> MeasuredDisc:
-    base = build_env(agents, navigation=GnssNavigation(), **rules(dt, 400.0))
-    return MeasuredDisc(**{f.name: getattr(base, f.name) for f in dataclasses.fields(FleetEnv)},
-                        centre=CENTRE, r_inner=R_INNER)
-
-
-def traffic_encounter(n: int, seq, dt: float) -> tuple[bool, float]:
+def traffic_encounter(n: int, seq, dt: float, arena: Arena) -> tuple[bool, float]:
     """One traffic encounter: the seed draws the geometry *and* the noise, on split streams."""
     geom, fwd = children(seq, 0, 2)
-    agents = sample_traffic(n, generator(geom))
-    env = traffic_env(agents, dt)
+    agents = sample_traffic(n, generator(geom), arena)
+    env = traffic_env(agents, dt, arena)
     state = env.initial_state(agents)
     streams = FleetStreams(cns=CnsStreams(nav=generator(fwd)))
     while not env.is_terminal(state):
@@ -205,11 +164,11 @@ def traffic_encounter(n: int, seq, dt: float) -> tuple[bool, float]:
     return state.los, state.min_sep
 
 
-def traffic_cloud(n: int, dt: float):
+def traffic_cloud(n: int, dt: float, arena: Arena):
     """Each particle draws its own traffic — the distribution Monte Carlo integrates over."""
     def build_initial(seq):
-        agents = sample_traffic(n, generator(seq))
-        env = traffic_env(agents, dt)
+        agents = sample_traffic(n, generator(seq), arena)
+        env = traffic_env(agents, dt, arena)
         return Particle(env=env, state=env.initial_state(agents))
     return build_initial
 
@@ -250,7 +209,7 @@ def run_mc(part: int, n: int, cfg: argparse.Namespace) -> dict[str, Any]:
         take = min(cfg.chunk, cfg.max_encounters - done)
         seqs = children(root, done, done + take)
         out = Parallel(n_jobs=cfg.jobs, batch_size=32)(
-            delayed(fn)(n, s, cfg.dt) for s in seqs)
+            delayed(fn)(n, s, cfg.dt, cfg.arena) for s in seqs)
         los += sum(1 for o in out if o[0])
         min_seps.extend(o[1] for o in out)
         done += take
@@ -267,8 +226,9 @@ def run_mc(part: int, n: int, cfg: argparse.Namespace) -> dict[str, Any]:
 def run_ips(part: int, n: int, shells: list[float], particles: int,
             cfg: argparse.Namespace) -> dict[str, Any]:
     t0 = time.perf_counter()
-    est = estimate_rare_prob(CELLS[part]["cloud"](n, cfg.dt), shells, n_particles=particles,
-                             reps=cfg.reps, seed=cfg.seed + 1, n_jobs=cfg.jobs)
+    est = estimate_rare_prob(CELLS[part]["cloud"](n, cfg.dt, cfg.arena), shells,
+                             n_particles=particles, reps=cfg.reps, seed=cfg.seed + 1,
+                             n_jobs=cfg.jobs)
     good = [r for r in est.reps if r.collapsed_at is None]
     survival = ([sum(r.survival[k] for r in good) / len(good) for k in range(len(shells))]
                 if good else [])
@@ -293,7 +253,7 @@ def calibrate(cfg: argparse.Namespace) -> None:
             seqs = children(root_seed_sequence(99), 0, cfg.calibrate_n)
             t0 = time.perf_counter()
             for s in seqs:
-                fn(n, s, cfg.dt)
+                fn(n, s, cfg.dt, cfg.arena)
             per = (time.perf_counter() - t0) / cfg.calibrate_n
             p = cfg.assume_p.get((part, n))
             if p is None:
@@ -326,6 +286,12 @@ def main() -> None:
     ap.add_argument("--particles", type=int, nargs="+", default=[2000],
                     help="per cell, or one value for all")
     ap.add_argument("--reps", type=int, default=20, help="IPS replications -> the interval")
+    ap.add_argument("--ring-radius", type=float, default=500.0,
+                    help="part 1: ring radius [m] -- half the ring diameter")
+    ap.add_argument("--disc-radius", type=float, default=1000.0,
+                    help="part 2: radius of the measured disc [m]")
+    ap.add_argument("--release-radius", type=float, default=1200.0,
+                    help="part 2: radius traffic is released on [m]; must exceed --disc-radius")
     ap.add_argument("--dt", type=float, default=0.5)
     ap.add_argument("--jobs", type=int, default=-1)
     ap.add_argument("--seed", type=int, default=0)
@@ -336,6 +302,8 @@ def main() -> None:
     ap.add_argument("--calibrate-n", type=int, default=20)
     cfg = ap.parse_args()
     cfg.parts = (1, 2) if cfg.part == "both" else (int(cfg.part),)
+    cfg.arena = Arena(ring_radius=cfg.ring_radius, r_inner=cfg.disc_radius,
+                      r_outer=cfg.release_radius)
     # the notebook's own IPS estimates, used only to price a calibration run
     cfg.assume_p = {(1, 2): 4.65e-5, (1, 3): 3.37e-4, (1, 4): 1.81e-3,
                     (2, 4): 3.90e-5, (2, 6): 1.17e-4, (2, 8): 3.59e-4}
@@ -347,9 +315,11 @@ def main() -> None:
     workers = resolve_jobs(cfg.jobs)
     print(f"{workers} workers, dt = {cfg.dt}, target {cfg.target_events} events, "
           f"{cfg.reps} replications, seed {cfg.seed}")
-    results: dict[str, Any] = {"settings": {k: (str(v) if isinstance(v, Path) else v)
-                                            for k, v in vars(cfg).items()
-                                            if k not in ("assume_p",)},
+    print(f"arena: ring radius {cfg.arena.ring_radius:.0f} m, measured disc "
+          f"{cfg.arena.r_inner:.0f} m, released at {cfg.arena.r_outer:.0f} m")
+    settings = {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(cfg).items()
+                if k not in ("assume_p", "arena")}
+    results: dict[str, Any] = {"arena": dataclasses.asdict(cfg.arena), "settings": settings,
                                "workers": workers, "cells": []}
     t_start = time.perf_counter()
 
