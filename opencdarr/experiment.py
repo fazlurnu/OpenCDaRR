@@ -453,23 +453,27 @@ def _scenario_for(condition: Condition, methods: Methods) -> Scenario:
     return dataclasses.replace(scenario, **geometry)
 
 
-def _run_mc(condition: Condition, base: Config, methods: Methods, backend: MC,
-            seed: int, jobs: int = 1) -> IPRResult:
-    """One MC cell: this condition's scenario, drawn ``n_encounters`` times and flown.
+def _estimate_ipr(scenario: Scenario, cfg: Config, perf: Performance, m: Methods,
+                  jobs: int) -> IPRResult:
+    """``cfg.n_encounters`` encounters of ``scenario``, over ``jobs`` workers.
 
     ``jobs`` above 1 splits the encounter fan-out into contiguous seed slices and pools the counts
     (:func:`~opencdarr.estimator.combine_ipr`). Each slice is ``children(root, lo, hi)`` of the
-    *same* tree the serial run walks, so the pooled result is the serial one exactly — not merely
-    an equivalent sample.
-    """
-    cfg = dataclasses.replace(_config_for(condition, base, backend.n_encounters), seed=seed)
-    m = _resolved_methods(condition, methods)
-    scenario = _scenario_for(condition, m)
-    perf = _base_perf(m)
-    models = (m.detector, m.resolver, m.recovery, m.navigation, m.communication, m.surveillance)
-    extra = {"kinematics": m.kinematics, "airframes": m.airframes, "wind": m.wind}
+    *same* tree the serial run walks, and ``combine_ipr`` concatenates the parts in submission
+    order, so the pooled result is the serial one exactly — not merely an equivalent sample.
 
-    n = backend.n_encounters
+    Shared by the MC backend and the IPS ladder pilot, which is a Monte-Carlo run in everything
+    but what its record is used for. One implementation rather than two because the pilot's
+    ``min_seps`` *is* the ladder (:func:`~opencdarr.ips.ladder_from_record`): a second copy that
+    sliced the seed tree even slightly differently would move every shell, and nothing downstream
+    would say so.
+    """
+    models = (m.detector, m.resolver, m.recovery, m.navigation, m.communication, m.surveillance)
+    # annotated because the values have no common supertype, and inferring one turns every
+    # keyword into a union mypy then rejects against the real signature
+    extra: dict[str, Any] = {"kinematics": m.kinematics, "airframes": m.airframes, "wind": m.wind}
+
+    n = cfg.n_encounters
     if jobs <= 1 or n < 2:
         return estimate_ipr_over(scenario, cfg, perf, *models, **extra)
 
@@ -483,6 +487,14 @@ def _run_mc(condition: Condition, base: Config, methods: Methods, backend: MC,
         for lo, hi in bounds if hi > lo
     )
     return combine_ipr(list(parts))
+
+
+def _run_mc(condition: Condition, base: Config, methods: Methods, backend: MC,
+            seed: int, jobs: int = 1) -> IPRResult:
+    """One MC cell: this condition's scenario, drawn ``n_encounters`` times and flown."""
+    cfg = dataclasses.replace(_config_for(condition, base, backend.n_encounters), seed=seed)
+    m = _resolved_methods(condition, methods)
+    return _estimate_ipr(_scenario_for(condition, m), cfg, _base_perf(m), m, jobs)
 
 
 def _run_ips(condition: Condition, base: Config, methods: Methods, backend: IPS,
@@ -527,12 +539,15 @@ def _run_ips(condition: Condition, base: Config, methods: Methods, backend: IPS,
 
     shells = backend.shells
     if isinstance(shells, Ladder):
-        pilot = estimate_ipr_over(
+        # The pilot is plain Monte Carlo, so it shards like MC does — and it is the one phase of
+        # an IPS cell that scales the way MC scales, with no per-shell barrier to wait on. Left
+        # serial it was a fixed one-core cost in front of an otherwise parallel cell, and that is
+        # the share that *grows* as the worker count does. ADR 0018 made the splitting independent
+        # of `reps`; this stops the ladder that feeds it from being the next ceiling.
+        pilot = _estimate_ipr(
             scenario,
             dataclasses.replace(cfg, seed=seed, n_encounters=shells.pilot),
-            perf,
-            m.detector, m.resolver, m.recovery, m.navigation, m.communication, m.surveillance,
-            kinematics=m.kinematics, airframes=m.airframes, wind=m.wind,
+            perf, m, jobs,
         )
         shells = ladder_from_record(
             pilot.min_seps, cfg.conflict.rpz,

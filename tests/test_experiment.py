@@ -45,6 +45,7 @@ from opencdarr.experiment import (
     CacheIdentityError,
     ExperimentResult,
     Fixed,
+    Ladder,
     Methods,
     Sweep,
     expand,
@@ -429,6 +430,31 @@ def test_parallel_conditions_give_the_serial_answer() -> None:
     kw = dict(methods=_methods(), backend=MC(n_encounters=20), base_config=_base(), seed=0)
     assert run_experiment(declared, n_jobs=2, **kw).records() == run_experiment(declared,
     **kw).records()
+
+
+def test_parallel_ips_gives_the_serial_answer_ladder_included() -> None:
+    """The whole IPS cell is scheduling-only — the pilot that picks the ladder included.
+
+    The test above fans *conditions* out, which is the only thing ``n_jobs`` did before ADR 0018
+    and reaches neither seam here. One condition and four workers is the case that does: the budget
+    goes inside the cell, so the pilot shards and the splitting runs over
+    :mod:`opencdarr.parallel`.
+
+    Asserted on the ladder as well as the numbers because the pilot's ``min_seps`` *is* the ladder.
+    A pilot that sliced the seed tree even slightly differently would place every shell somewhere
+    else and still return an entirely plausible ``p_los`` — a wrong answer with nothing about it
+    that looks wrong, which is the failure worth a test.
+    """
+    pytest.importorskip("joblib")
+    kw: dict[str, Any] = dict(
+        methods=_methods(), base_config=_base(), seed=0,
+        backend=IPS(shells=Ladder(pilot=60, step=2.0), n_particles=40, reps=2),
+    )
+    serial, parallel = run_experiment(_PINNED, **kw), run_experiment(_PINNED, n_jobs=4, **kw)
+    ladder = serial.cell().reps[0].levels
+    assert len(ladder) > 1, "a one-shell ladder would pass this test without exercising anything"
+    assert parallel.cell().reps[0].levels == ladder
+    assert parallel.records() == serial.records()
 
 
 def test_the_card_records_what_would_be_needed_to_reproduce(tmp_path: Path) -> None:
