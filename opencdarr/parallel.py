@@ -36,14 +36,14 @@ path already makes. Nothing here reorders a floating-point reduction.
         build_initial,          # (SeedSequence) -> Particle; see opencdarr.ips.BuildInitial
         levels=[150, 120, 100, 85, 75, 68, 62, 58, 55, 52, 50],   # decreasing, ends at rpz
         n_particles=10_000,     # per shell
-        reps=10,                # independent replications -> the CI
+        reps=10,                # independent replications
         seed=20260728,
         n_jobs=-1,              # every core, whatever `reps` happens to be
     )
-    print(est.prob, est.ci, est.n_collapsed)
+    print(est.prob, est.p_los, est.n_collapsed)
 
 ``build_initial`` should return a *shared* particle when the geometry is pinned (build the env once
-outside it) — see ``scripts/ips_validate.py``. Pass ``verbose=10`` to watch joblib's progress on a
+outside it). Pass ``verbose=10`` to watch joblib's progress on a
 long run, and :func:`describe_schedule` to log how the work was actually spread.
 
 joblib is an optional dependency (``pip install 'opencdarr[parallel]'``), imported on use: this

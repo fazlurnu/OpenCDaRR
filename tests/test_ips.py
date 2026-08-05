@@ -1,6 +1,7 @@
 """Fast mechanics locks for the IPS estimator (``opencdarr/ips.py``, ADR 0017).
 
-These do **not** re-run the slow IPS-vs-MC validation — that is ``scripts/ips_validate.py`` and the
+These do **not** re-run the slow IPS-vs-MC validation — that is the handbook's validation notebook
+and the
 [[ips-gate1-correctness]] / [[ips-gate2-efficiency]] observations. They lock the cheap invariants:
 the estimate is the product of survival fractions, an unreachable shell collapses (``prob=0``,
 ``collapsed_at`` set), a single level does no resampling, runs are reproducible from seed, the
@@ -130,7 +131,6 @@ def test_estimate_rare_prob_equals_manual_parallel_combine() -> None:
         [ips_once(_build_initial, levels, 24, s) for s in replication_seeds(3, 3)]
     )
     assert est.prob == manual.prob
-    assert est.ci == manual.ci
     assert est.n_collapsed == manual.n_collapsed
     assert len(est.reps) == 3
 
@@ -140,22 +140,26 @@ def _fake(prob: float, collapsed_at: int | None = None) -> IPSResult:
                      collapsed_at=collapsed_at)
 
 
-def test_combine_mean_and_log_ci() -> None:
-    """combine_replications reports the arithmetic mean (unbiased point) and a positive log CI."""
+def test_combine_reports_the_mean_and_keeps_every_replication() -> None:
+    """combine_replications reports the arithmetic mean — each P̂ is unbiased, so the mean is.
+
+    No interval is reported: the replications themselves are kept on ``reps``, which is where any
+    spread between independent estimates has to be read from.
+    """
     c = combine_replications([_fake(0.01), _fake(0.02), _fake(0.03), _fake(0.04)])
     assert c.prob == pytest.approx(0.025)
     assert c.n_collapsed == 0
-    lo, hi = c.ci
-    assert 0.0 < lo < hi
+    assert [r.prob for r in c.reps] == [0.01, 0.02, 0.03, 0.04]
 
 
-def test_combine_counts_collapses_and_falls_back_to_span() -> None:
-    """A collapsed replication (prob 0) is counted, and the CI falls back to the min/max span
-    because a zero has no logarithm (ADR 0017 §5)."""
+def test_combine_counts_collapses_and_still_averages_them_in() -> None:
+    """A collapsed replication (prob 0) is counted, and it stays in the mean.
+
+    Dropping the zeros is what would bias the estimate upward: the product estimator is unbiased
+    only when they are counted (ADR 0017 §5). The count is the signal to retune and rerun."""
     c = combine_replications([_fake(0.02), _fake(0.0, collapsed_at=1), _fake(0.03)])
     assert c.n_collapsed == 1
     assert c.prob == pytest.approx((0.02 + 0.0 + 0.03) / 3)
-    assert c.ci == (0.0, 0.03)
 
 
 def test_replication_seeds_deterministic_and_distinct() -> None:

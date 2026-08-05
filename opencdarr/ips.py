@@ -83,8 +83,8 @@ class IPSResult:
         return self.prob * self.mean_los_pairs
 
     @property
-    def p_ac(self) -> float:
-        """``P_ac = P̂ · E[A | rare set] / N`` — the per-aircraft probability (Blom & Bakker).
+    def p_los(self) -> float:
+        """``P̂ · E[A | rare set] / N`` — P(LoS) **per aircraft** (Blom & Bakker).
 
         The rare set is the same event for all three metrics, because a run has a loss of
         separation exactly when ``min_sep`` crosses the last shell. So the splitting estimate of
@@ -100,12 +100,17 @@ class IPSResult:
 
 @dataclass(frozen=True)
 class RareEventEstimate:
-    """The replicated estimate: mean probability with a log-space CI from independent IPS runs."""
+    """The replicated estimate: the mean over independent IPS runs.
 
-    prob: float  # mean of the per-replication P̂ (the unbiased point estimate)
-    ci: tuple[float, float]  # 95% CI (log-space when all reps > 0, else the min/max span)
+    The replications are kept on :attr:`reps`, so the spread between them is available to anything
+    that wants it — the estimate itself reports means, not an interval."""
+
+    prob: float  # mean of the per-replication P̂ — the reach probability, per *run*
     reps: tuple[IPSResult, ...]  # every replication, for inspection
     n_collapsed: int  # replications that hit an empty level (P̂ = 0)
+    # --- per-aircraft, only when the replications were run with ``tail=True`` -----------------
+    p_los: float = float("nan")  # mean of the per-replication per-aircraft P(LoS)
+    expected_los_pairs: float = float("nan")  # mean of the per-replication E[K]
 
 
 def _streams(seq: np.random.SeedSequence) -> FleetStreams:
@@ -209,7 +214,7 @@ def ips_once(
     and quietly returned a different answer, a difference nothing in the result would reveal.
 
     ``tail=True`` adds a final leg that flies every survivor on to termination, which is what
-    :attr:`IPSResult.p_ac` and :attr:`IPSResult.expected_los_pairs` need. It costs roughly
+    :attr:`IPSResult.p_los` and :attr:`IPSResult.expected_los_pairs` need. It costs roughly
     ``n_particles`` full encounter tails on top of the splitting, so it is off by default; ``prob``
     is unaffected either way. The tail draws from child index 2, so the splitting itself stays
     bit-identical to a ``tail=False`` run of the same seed.
@@ -250,19 +255,6 @@ def ips_once(
     )
 
 
-def _log_ci(probs: list[float], z: float = 1.96) -> tuple[float, float]:
-    """A 95% CI for the mean rare-event probability. Log-space (the product estimator is
-    right-skewed) when every replication is positive; otherwise the raw min/max span, since a
-    collapsed replication (P̂ = 0) has no logarithm and signals under-resolved shells."""
-    positive = [p for p in probs if p > 0.0]
-    if len(positive) < 2 or len(positive) != len(probs):
-        return (min(probs), max(probs))
-    logs = np.log(positive)
-    se = float(np.std(logs, ddof=1)) / math.sqrt(len(logs))
-    centre = float(np.mean(logs))
-    return (math.exp(centre - z * se), math.exp(centre + z * se))
-
-
 def replication_seeds(seed: int, reps: int) -> tuple[np.random.SeedSequence, ...]:
     """The ``reps`` independent seed subtrees for the replications (ADR 0001). Exposed so a caller
     can run :func:`ips_once` in parallel over them and still :func:`combine_replications` the same
@@ -273,13 +265,21 @@ def replication_seeds(seed: int, reps: int) -> tuple[np.random.SeedSequence, ...
 def combine_replications(results: Sequence[IPSResult]) -> RareEventEstimate:
     """Aggregate independent :func:`ips_once` results into the point estimate + CI (ADR 0017 §5):
     mean of the per-replication ``P̂`` (each is unbiased) with a log-space CI across replications.
-    Collapsed replications (an empty level ⇒ ``P̂ = 0``) are counted, not hidden."""
+    Collapsed replications (an empty level ⇒ ``P̂ = 0``) are counted, not hidden.
+
+    The per-aircraft fields are aggregated the same way, and stay ``nan`` unless the replications
+    carried a tail leg (:func:`ips_once` with ``tail=True``) — averaging over replications is right
+    for ``P_ac`` for the reason it is right for ``P̂``: each replication is an independent estimate
+    of the same quantity."""
     probs = [r.prob for r in results]
+    p_locs = [r.p_los for r in results if not math.isnan(r.p_los)]
+    pairs = [r.expected_los_pairs for r in results if not math.isnan(r.expected_los_pairs)]
     return RareEventEstimate(
         prob=float(np.mean(probs)),
-        ci=_log_ci(probs),
         reps=tuple(results),
         n_collapsed=sum(1 for r in results if r.collapsed_at is not None),
+        p_los=float(np.mean(p_locs)) if p_locs else float("nan"),
+        expected_los_pairs=float(np.mean(pairs)) if pairs else float("nan"),
     )
 
 

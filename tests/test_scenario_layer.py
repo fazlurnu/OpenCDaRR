@@ -56,7 +56,7 @@ def test_pairwise_scenario_reproduces_the_open_coded_estimator() -> None:
     through = estimate_ipr_over(sc.PairwiseEncounter(dpsi=90.0), _CFG, M600, StateBased(),
                                 MVP(1.05), PastCPA(), GnssNavigation())
     assert direct.min_seps == through.min_seps
-    assert (direct.n_los, direct.n_conflict) == (through.n_los, through.n_conflict)
+    assert (direct.los_aircraft, direct.n_conflict) == (through.los_aircraft, through.n_conflict)
 
 
 def test_geometry_slots_still_declare_a_pairwise_sweep() -> None:

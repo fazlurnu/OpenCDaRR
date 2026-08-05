@@ -162,8 +162,9 @@ def test_columns_adapt_to_the_backend() -> None:
                     backend=IPS(shells=[70.0, 60.0, 50.0], n_particles=20, reps=2),
                     base_config=_base(), seed=0).records()[0]
 
-    assert {"p_los", "p_los_lo", "p_los_hi"} <= set(mc) & set(ips)  # the shared core
-    assert {"n_encounters", "n_los", "ipr", "detection_rate", "median_min_sep"} <= set(mc)
+    assert {"p_los", "mean_los_pairs"} <= set(mc) & set(ips)  # the shared core
+    assert not {"p_los_lo", "p_los_hi"} & (set(mc) | set(ips))  # no interval is reported
+    assert {"n_encounters", "ipr", "detection_rate", "median_min_sep"} <= set(mc)
     assert "n_collapsed" not in mc
     assert {"n_collapsed", "reps"} <= set(ips)
     assert not {"n_encounters", "median_min_sep"} & set(ips)
@@ -449,7 +450,7 @@ def test_no_card_is_written_by_default() -> None:
 
 
 def test_plot_lays_itself_out_from_the_axis_roles() -> None:
-    """First swept axis on x, the rest as one line each, CI as a band, no grid and no title."""
+    """First swept axis on x, the rest as one line each, no grid and no title."""
     matplotlib = pytest.importorskip("matplotlib")
     matplotlib.use("Agg")
     res = run_experiment({**_PINNED, "dpsi": Sweep([45.0, 90.0]), "pos_ci95": Sweep([10.0, 30.0])},
@@ -458,7 +459,7 @@ def test_plot_lays_itself_out_from_the_axis_roles() -> None:
     ax = fig.axes[0]
     assert len(ax.lines) == 2  # one per pos_ci95 level
     assert (ax.get_xlabel(), ax.get_ylabel()) == ("dpsi", "p_los")
-    assert ax.collections  # the CI bands
+    assert not ax.collections  # no band: no interval is reported
     assert not fig._suptitle  # house convention: detail belongs in the caption
     assert ax.get_yscale() == "linear"  # log is the IPS default, not MC's
 

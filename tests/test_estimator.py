@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import dataclasses
-import math
 
 import pytest
 
@@ -19,7 +18,7 @@ from opencdarr.config import (
 )
 from opencdarr.cr import MVP
 from opencdarr.crr import PastCPA
-from opencdarr.estimator import IPRResult, combine_ipr, estimate_ipr, wilson_interval
+from opencdarr.estimator import IPRResult, combine_ipr, estimate_ipr
 from opencdarr.kinematics import Kinematics, MotionCommand
 from opencdarr.kinematics.base import odometry_update
 from opencdarr.performance import M600, Performance
@@ -100,10 +99,14 @@ def test_chunked_run_pools_back_to_the_serial_estimate() -> None:
 
 def test_combine_ipr_recomputes_the_ratio_from_pooled_counts() -> None:
     """The rates are ratios, so chunks pool by counts — not by averaging their per-chunk ratios."""
-    pooled = combine_ipr([IPRResult(min_seps=(10.0, 60.0), n_los=1, n_conflict=2),
-                          IPRResult(min_seps=(70.0,) * 98, n_los=0, n_conflict=98)])
+    pooled = combine_ipr([
+        IPRResult(min_seps=(10.0, 60.0), n_conflict=2,
+                  los_aircraft=(2, 0), fleet_sizes=(2, 2)),
+        IPRResult(min_seps=(70.0,) * 98, n_conflict=98,
+                  los_aircraft=(0,) * 98, fleet_sizes=(2,) * 98),
+    ])
     assert pooled.n_encounters == 100
-    assert pooled.n_los == 1
+    assert sum(pooled.los_aircraft) == 2          # one losing pair, so two aircraft
     assert pooled.ipr == 0.99  # not (0.5 + 1.0) / 2 = 0.75, the per-chunk average
 
 
@@ -129,7 +132,7 @@ def test_golden_ipr_at_midrange_noise() -> None:
         _noisy_config(), M600, StateBased(), MVP(1.05), PastCPA(bouncing_guard=False),
         GnssNavigation(),
     )
-    assert (result.n_los, result.n_conflict) == (22, 200)
+    assert (sum(result.los_aircraft), result.n_conflict) == (44, 200)  # 22 pairs, N = 2
     assert result.ipr == 0.89
     # rel=1e-8, not ==: trig calls accumulated over many steps land on a different last bit
     # depending on the platform's libm (e.g. macOS vs glibc), even with identical code and seed.
@@ -137,7 +140,7 @@ def test_golden_ipr_at_midrange_noise() -> None:
 
 
 def test_min_seps_is_the_record_p_los_was_thresholded_from() -> None:
-    """``n_los`` is recoverable from ``min_seps`` — the two are one measurement, not two.
+    """``p_los`` is recoverable from ``min_seps`` — the two are one measurement, not two.
 
     ``IPRResult`` now stores both a per-encounter separation and a LoS count, which would be the
     same fact written down twice if they could ever disagree. They cannot, and this is why:
@@ -155,8 +158,10 @@ def test_min_seps_is_the_record_p_los_was_thresholded_from() -> None:
             cfg, M600, StateBased(), MVP(1.05), PastCPA(bouncing_guard=False), GnssNavigation(),
         )
         assert len(result.min_seps) == cfg.n_encounters == result.n_encounters
-        assert result.n_los == sum(1 for s in result.min_seps if s < cfg.conflict.rpz)
-    assert result.n_los > 0  # the noisy pass actually exercised the branch it is checking
+        breached = sum(1 for s in result.min_seps if s < cfg.conflict.rpz)
+        # at N = 2 a breached encounter is exactly two aircraft, so the rate is breached/n
+        assert result.p_los == breached / result.n_encounters
+    assert breached > 0  # the noisy pass actually exercised the branch it is checking
 
 
 def test_median_min_sep_separates_resolvers_p_los_cannot() -> None:
@@ -212,29 +217,6 @@ def test_denominator_does_not_move_with_the_resolver() -> None:
     assert resolved.ipr == 1.0 - resolved.p_los
 
 
-def test_wilson_interval_brackets_the_estimate_and_survives_zero_events() -> None:
-    """The CI is valid because ``n`` is design-fixed, and says something useful at zero events.
-
-    ``k = 0`` is the ordinary case for a safety metric, and the textbook normal interval collapses
-    to ``(0, 0)`` there — false certainty. Wilson still returns a positive upper bound, which is
-    the honest reading of "no events observed in n trials".
-    """
-    lo, hi = wilson_interval(22, 200)
-    assert lo < 22 / 200 < hi
-    assert 0.0 < lo and hi < 1.0
-
-    zero_lo, zero_hi = wilson_interval(0, 200)
-    assert zero_lo == 0.0
-    assert 0.0 < zero_hi < 0.05  # a real bound, not (0, 0)
-
-    # more encounters at the same rate must tighten it
-    wide = wilson_interval(10, 100)
-    tight = wilson_interval(100, 1000)
-    assert (tight[1] - tight[0]) < (wide[1] - wide[0])
-
-    assert all(math.isnan(b) for b in wilson_interval(0, 0))  # nothing observed at all
-
-
 class _Ballistic(Kinematics):
     """A kinematics that ignores every command and coasts on the current track.
 
@@ -279,5 +261,5 @@ def test_kinematics_reaches_the_mc_path() -> None:
     resolved = estimate_ipr(cfg, M600, StateBased(), MVP(1.05), PastCPA())
 
     assert fitted == unresolved  # the airframe discarded every resolution command
-    assert resolved.n_los == 0  # the same conflicts, resolved, on the default airframe
+    assert resolved.p_los == 0  # the same conflicts, resolved, on the default airframe
     assert fitted.ipr < resolved.ipr

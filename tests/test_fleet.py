@@ -77,7 +77,7 @@ _SWEEP_ANGLES = (5.0, 45.0, 90.0, 180.0, 270.0, 355.0)
 
 
 def _sweep_kw() -> dict:
-    """The estimator's own run parameters (``scripts/ips_validate.py``'s scenario values)."""
+    """The estimator's own run parameters (the pinned IPS-validation scenario values)."""
     return dict(rpz=_RPZ, t_lookahead=_LOOKAHEAD, dt=0.5, detector=StateBased(),
                 resolver=MVP(margin=1.05), recovery=PastCPA(bouncing_guard=True),
                 t_max=250.0, done_timeout=10.0)

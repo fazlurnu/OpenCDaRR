@@ -64,7 +64,7 @@ plt.rcParams["figure.dpi"] = 130
 
 from opencdarr import GnssNavigation, M600, MVP, PastCPA, StateBased
 from opencdarr.config import load_config
-from opencdarr.estimator import agents_for, combine_ipr, estimate_ipr_over, wilson_interval
+from opencdarr.estimator import agents_for, combine_ipr, estimate_ipr_over
 from opencdarr.fleet import build_env
 from opencdarr.ips import Particle, estimate_rare_prob, ladder_from_record
 from opencdarr.rng import children, generator, root_seed_sequence
@@ -141,9 +141,13 @@ def build_initial_for(pos_ci95: float):
 
 
 def run_ips(pos_ci95: float, shells, n_particles: int = 1000, reps: int = 8):
-    """The interacting particle system over a fixed shell ladder."""
+    """The interacting particle system over a fixed shell ladder.
+
+    `tail=True` flies each survivor on to termination. That leg is what turns the reach
+    probability into the reported per-aircraft `p_los`, which is the number compared below.
+    """
     return estimate_rare_prob(build_initial_for(pos_ci95), shells,
-                              n_particles=n_particles, reps=reps, seed=SEED)
+                              n_particles=n_particles, reps=reps, seed=SEED, tail=True)
 ''')
 
 # ---------------------------------------------------------------- 3. the ladder
@@ -178,25 +182,24 @@ for ci, n in LADDER:
     t0 = time.perf_counter()
     mc[ci] = run_mc(ci, n)
     r = mc[ci]
-    print(f"pos_ci95 {ci:5.2f} m   n {n:>7,}   events {r.n_los:>4}   "
-          f"p {r.p_ac:.5f}   ci95 [{r.ci95[0]:.5f}, {r.ci95[1]:.5f}]   "
+    print(f"pos_ci95 {ci:5.2f} m   n {n:>7,}   "
+          f"aircraft in a loss {sum(r.los_aircraft):>4}   p {r.p_los:.5f}   "
           f"{time.perf_counter() - t0:5.1f} s")
 ''')
 
 md(r"""
-The estimate from a batch that observes **no** event is not zero. The Wilson interval still
-gives an upper bound, and that bound is the only honest statement MC can make there. The cell
-below shows
-what MC could say on the two lowest rungs for the same cost as the highest rung.
+A batch that observes **no** event does not measure zero — it measures nothing at all. The rate
+it was looking for is somewhere below the one event it did not see, and the batch cannot say
+where. The cell below shows the order MC is left at on the two lowest rungs, for the same cost as
+the highest rung.
 """)
 
 code(r'''
 for ci, n in LADDER:
     if n != 0:
         continue
-    upper = wilson_interval(0, MC_BUDGET)[1]
     print(f"pos_ci95 {ci:5.2f} m   with {MC_BUDGET:,} encounters and 0 events, "
-          f"MC gives only p < {upper:.2e}")
+          f"MC resolves nothing below ~{1 / MC_BUDGET:.0e}")
 ''')
 
 # ---------------------------------------------------------------- 4. overlap
@@ -207,9 +210,10 @@ Both estimators now run on the rungs where MC is affordable. The shell ladder fo
 the MC record of the same rung, with `ladder_from_record`. This keeps the shells away from a manual
 choice that could be tuned to give the correct answer.
 
-The comparison is the **ratio** of the two estimates. A ratio of 1.0 is perfect agreement. The two
-intervals must also overlap. One point that agrees is weak evidence. Three rungs that agree over
-more than one decade is the claim of this page.
+The comparison is the **ratio** of the two estimates. A ratio of 1.0 is perfect agreement. The bar
+is a factor of two, and a factor of five at 1e-4 and below, where the Monte-Carlo anchor is itself
+built on only a few hundred events. One point that agrees is weak evidence. Three rungs that agree
+over more than one decade is the claim of this page.
 """)
 
 code(r'''
@@ -222,19 +226,32 @@ for ci, n in LADDER:
     ips[ci] = run_ips(ci, shells)
     e = ips[ci]
     print(f"pos_ci95 {ci:5.2f} m   shells {len(shells):>2}   "
-          f"p {e.prob:.5f}   ci [{e.ci[0]:.5f}, {e.ci[1]:.5f}]   "
-          f"collapsed {e.n_collapsed}/8   {time.perf_counter() - t0:5.1f} s")
+          f"p {e.p_los:.5f}   collapsed {e.n_collapsed}/8   "
+          f"{time.perf_counter() - t0:5.1f} s")
 ''')
 
 code(r'''
-print(f"{'pos_ci95':>9}{'MC':>11}{'IPS':>11}{'IPS/MC':>9}" + "   intervals overlap")
+def tolerance(p):
+    """The factor the two estimators must agree within at a rate of p.
+
+    Two, except where the event is rare enough that the Monte-Carlo anchor is itself coarse: at
+    1e-4 and below a 2-million-encounter batch counts only a few hundred events, so a factor of
+    five is the honest bar.
+    """
+    return 5.0 if p <= 1e-4 else 2.0
+
+print(f"{'pos_ci95':>9}{'MC':>11}{'IPS':>11}{'IPS/MC':>9}{'within':>8}   agrees")
 for ci, n in LADDER:
     if n == 0:
         continue
-    m, e = mc[ci].p_ac, ips[ci].prob
-    overlap = not (mc[ci].ci95[1] < ips[ci].ci[0] or ips[ci].ci[1] < mc[ci].ci95[0])
-    ratio = f"{e / m:9.2f}" if m > 0 else f"{'--':>9}"
-    print(f"{ci:9.2f}{m:11.5f}{e:11.5f}{ratio}   {'yes' if overlap else 'NO'}")
+    m, e = mc[ci].p_los, ips[ci].p_los
+    if m <= 0:
+        print(f"{ci:9.2f}{m:11.5f}{e:11.5f}{'--':>9}{'--':>8}   --")
+        continue
+    factor, r = tolerance(m), e / m
+    agrees = 1 / factor <= r <= factor
+    print(f"{ci:9.2f}{m:11.5f}{e:11.5f}{r:9.2f}{factor:8.0f}x   "
+          f"{'yes' if agrees else 'NO'}")
 ''')
 
 # ---------------------------------------------------------------- 5. beyond MC
@@ -256,7 +273,7 @@ for ci, n in LADDER:
     t0 = time.perf_counter()
     ips[ci] = run_ips(ci, deep_shells)
     e = ips[ci]
-    print(f"pos_ci95 {ci:5.2f} m   p {e.prob:.3e}   ci [{e.ci[0]:.3e}, {e.ci[1]:.3e}]   "
+    print(f"pos_ci95 {ci:5.2f} m   p {e.p_los:.3e}   "
           f"collapsed {e.n_collapsed}/8   {time.perf_counter() - t0:5.1f} s")
 ''')
 
@@ -264,9 +281,9 @@ for ci, n in LADDER:
 md(r"""
 ## The figure
 
-The left panel is the evidence. Each rung carries the MC estimate and the IPS estimate with their
-intervals. Where MC observes no event, its upper bound is drawn as an arrow that points down. The
-right panel is the ratio of the two estimates on the rungs where the two exist.
+The left panel is the evidence. Each rung carries the MC estimate and the IPS estimate. Where MC
+observes no event, an arrow marks the order it cannot resolve below. The right panel is the ratio
+of the two estimates on the rungs where the two exist.
 """)
 
 code(r'''
@@ -284,28 +301,23 @@ fig, axes = plt.subplots(1, 2, figsize=(8.4, 3.9))
 
 ax = axes[0]
 xs_mc = [ci for ci, n in LADDER if n]
-ax.errorbar(xs_mc, [mc[c].p_ac for c in xs_mc],
-            yerr=[[mc[c].p_ac - mc[c].ci95[0] for c in xs_mc],
-                  [mc[c].ci95[1] - mc[c].p_ac for c in xs_mc]],
-            fmt="o", color=RED, capsize=3, label="Monte Carlo")
+ax.plot(xs_mc, [mc[c].p_los for c in xs_mc], "o", color=RED, label="Monte Carlo")
 xs_ips = [ci for ci, _ in LADDER]
-ax.errorbar(xs_ips, [ips[c].prob for c in xs_ips],
-            yerr=[[ips[c].prob - ips[c].ci[0] for c in xs_ips],
-                  [ips[c].ci[1] - ips[c].prob for c in xs_ips]],
-            fmt="s", color=BLUE, capsize=3, markerfacecolor="none", label="IPS")
+ax.plot(xs_ips, [ips[c].p_los for c in xs_ips], "s", color=BLUE,
+        markerfacecolor="none", label="IPS")
+# where MC observed nothing, mark the order it cannot resolve below
 for ci, n in LADDER:
     if n:
         continue
-    bound = wilson_interval(0, MC_BUDGET)[1]
-    ax.annotate("", xy=(ci, bound / 6), xytext=(ci, bound),
+    ax.annotate("", xy=(ci, 1 / MC_BUDGET / 6), xytext=(ci, 1 / MC_BUDGET),
                 arrowprops=dict(arrowstyle="->", color=GREY, lw=1.2))
 ax.set_xscale("log"); ax.set_yscale("log")
 ax.set_xlabel("pos_ci95 [m]"); ax.set_ylabel("P(LoS) per aircraft")
 ax.set_box_aspect(1); ax.legend(frameon=False, fontsize=8)
 
 ax = axes[1]
-measured = [c for c in xs_mc if mc[c].p_ac > 0]
-ratio = [ips[c].prob / mc[c].p_ac for c in measured]
+measured = [c for c in xs_mc if mc[c].p_los > 0]
+ratio = [ips[c].p_los / mc[c].p_los for c in measured]
 ax.axhline(1.0, color=GREY, lw=1.0, ls="--")
 ax.plot(measured, ratio, "o-", color=ORANGE)
 ax.set_xscale("log"); ax.set_xlabel("pos_ci95 [m]"); ax.set_ylabel("IPS / MC")
@@ -335,9 +347,9 @@ print("\nA rung with 0 MC encounters is one where MC observes no event within th
 md(r"""
 ## What this shows
 
-The two estimators agree on each rung where both can measure. They disagree by less than the width
-of their intervals, and the ratio stays near 1.0 over more than one decade of probability. Below
-that band MC gives only an upper bound, and IPS continues to give a number.
+The two estimators agree on each rung where both can measure: every ratio is inside the factor its
+rate is held to, and it stays near 1.0 over more than one decade of probability. Below that band MC
+observes nothing at all, and IPS continues to give a number.
 
 Agreement in the overlap band is what makes the IPS numbers below the band usable. Without it, a
 small number from a splitting estimator is only a number.

@@ -59,7 +59,7 @@ from opencdarr.crr.base import RecoveryCriterion
 from opencdarr.crr.ftr import FTR
 from opencdarr.crr.pastcpa import PastCPA
 from opencdarr.crr.probabilistic_ftr import ProbabilisticFTR
-from opencdarr.estimator import IPRResult, combine_ipr, estimate_ipr, wilson_interval
+from opencdarr.estimator import IPRResult, combine_ipr, estimate_ipr
 from opencdarr.experiment import (
     IPS,
     MC,
@@ -162,5 +162,4 @@ __all__ = [
     "run_one_experiment",
     "sample_pairwise",
     "spawn",
-    "wilson_interval",
 ]

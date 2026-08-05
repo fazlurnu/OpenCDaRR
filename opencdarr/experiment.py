@@ -181,14 +181,23 @@ class IPS:
     ``n_collapsed``, never as a real zero).
 
     ``reps`` is structural, not a convenience: particles within one run interact through
-    resampling, so a valid interval comes only from independent replications (ADR 0017 §5).
+    resampling, so the replications are what a spread between independent estimates can be read
+    from at all (ADR 0017 §5).
+
+    ``tail`` adds the final leg that flies each survivor on to termination. That leg is what turns
+    the reach probability into the reported per-aircraft ``p_los`` (and ``mean_los_pairs``), so it
+    is **on by default**: without it those columns are ``nan``. It costs roughly ``n_particles``
+    full encounter tails per replication and leaves the splitting bit-identical, so ``tail=False``
+    is the opt-out when only the reach probability is wanted.
     """
 
     shells: tuple[float, ...] | Ladder
     n_particles: int
     reps: int
+    tail: bool = True
 
-    def __init__(self, shells: Sequence[float] | Ladder, n_particles: int, reps: int) -> None:
+    def __init__(self, shells: Sequence[float] | Ladder, n_particles: int, reps: int,
+                 tail: bool = True) -> None:
         if isinstance(shells, Ladder):
             ladder: tuple[float, ...] | Ladder = shells
         else:
@@ -202,6 +211,7 @@ class IPS:
         object.__setattr__(self, "shells", ladder)
         object.__setattr__(self, "n_particles", n_particles)
         object.__setattr__(self, "reps", reps)
+        object.__setattr__(self, "tail", bool(tail))
 
 
 Backend = MC | IPS
@@ -514,7 +524,7 @@ def _run_ips(condition: Condition, base: Config, methods: Methods, backend: IPS,
 
     return estimate_rare_prob(
         build_initial, shells,
-        n_particles=backend.n_particles, reps=backend.reps, seed=seed,
+        n_particles=backend.n_particles, reps=backend.reps, seed=seed, tail=backend.tail,
     )
 
 
@@ -710,9 +720,9 @@ class ExperimentResult:
     """One row per condition, plus the raw estimator result behind each.
 
     The columns adapt to the backend, because the two estimators do not report the same things: MC
-    gives counts and a Wilson interval on a design-fixed denominator, IPS gives a replicated
-    probability with a log-space interval plus the per-shell survival and a collapse count. Forcing
-    them into one schema would mean inventing a value for whichever half is absent.
+    gives counts on a design-fixed denominator plus the achieved-separation record, IPS gives a
+    replicated probability with the per-shell survival and a collapse count. Forcing them into one
+    schema would mean inventing a value for whichever half is absent.
     """
 
     backend: Backend
@@ -746,12 +756,11 @@ class ExperimentResult:
         return pd.DataFrame(self.records())
 
     def plot(self, metric: str = "p_los", *, ax: Any = None, log: bool | None = None) -> Any:
-        """The response curve: the first swept axis on x, the rest as one line each, CI as a band.
+        """The response curve: the first swept axis on x, the rest as one line each.
 
         Layout comes from the axis roles, so nothing has to be restated: the first :class:`Sweep`
-        becomes x, any further ones become the series, and the interval already in the table
-        becomes a shaded band. ``log`` defaults to a log y-axis for :class:`IPS` (a rare-event
-        probability spans decades) and linear for :class:`MC`.
+        becomes x and any further ones become the series. ``log`` defaults to a log y-axis for
+        :class:`IPS` (a rare-event probability spans decades) and linear for :class:`MC`.
 
         Returns the :class:`~matplotlib.figure.Figure`, as :func:`opencdarr.viz.plot_pairwise`
         does, so a caller can save it or keep tweaking. Deliberately plain — no grid, no figure
@@ -852,22 +861,17 @@ def _metrics(result: Any) -> dict[str, Any]:
     IPS; item 8 of the build order is where they belong.)
     """
     if isinstance(result, IPRResult):
-        lo, hi = result.ci95
         return {
             "p_los": result.p_los,
-            "p_los_lo": lo,
-            "p_los_hi": hi,
             "ipr": result.ipr,
+            "mean_los_pairs": result.mean_los_pairs,
             "median_min_sep": result.median_min_sep,
-            "n_los": result.n_los,
             "n_encounters": result.n_encounters,
             "detection_rate": result.detection_rate,
         }
-    lo, hi = result.ci
     return {
-        "p_los": result.prob,
-        "p_los_lo": lo,
-        "p_los_hi": hi,
+        "p_los": result.p_los,
+        "mean_los_pairs": result.expected_los_pairs,
         "n_collapsed": result.n_collapsed,
         "reps": len(result.reps),
     }

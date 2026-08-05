@@ -91,7 +91,7 @@ above — one module per notebook — and several of them generate the figures t
   `Methods(airframes=[...])` declares one per aircraft. Runs the same declaration under `MC` and
   `IPS` and tabulates P(LoS) for both. Shows the two guards that catch the usual mistakes — a
   mismatched envelope/integrator pair, and an aircraft spawned below its own stall speed.
-- [`handbook/resolver_comparison.ipynb`](handbook/resolver_comparison.ipynb) — MVP against VO as
+- [`handbook/example_pairwise_conflict.ipynb`](handbook/example_pairwise_conflict.ipynb) — MVP against VO as
   the crossing gets shallow and the position fix gets worse, declared as one `run_experiment` sweep
   over sixteen conditions. Builds up from a single encounter to the full grid, and reports two
   metrics rather than one: P(LoS) for how often separation was lost, and the median achieved

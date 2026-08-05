@@ -98,10 +98,11 @@ print(f"measured disc {R_INNER:.0f} m   spawn circle {R_OUTER:.0f} m   "
 
 # ---------------------------------------------------------------- 2. the picture
 md(r"""
-## Part 1 — what one hundred encounters look like
+## Part 1 — what an encounter looks like
 
-The figure shows the ground tracks of 100 encounters, with one column for each fleet size. The grey
-circle is the measured disc. Each chord crosses it, because the offset is drawn across the inner
+The figure shows the ground tracks of a few encounters, with one column for each fleet size. Each
+aircraft has its own colour, the circle is its start and the star is its end. The dashed circle is
+the measured disc. Each chord crosses that disc, because the offset is drawn across the inner
 diameter.
 
 The bottom row is the centre of the disc, at the scale of the protected zone.
@@ -109,7 +110,8 @@ The bottom row is the centre of the disc, at the scale of the protected zone.
 
 code(r'''
 SIZES = [4, 6, 8]
-N_SHOW = 100
+N_SHOW = 30         # enough for the mean time inside the disc
+N_PLOT = 3          # a few samples: the figure is an illustration, not a measurement
 
 
 def fly_one(seq, n_ac: int, pos_ci95: float):
@@ -156,28 +158,29 @@ def tracks_enu(outcome):
 fig, axes = plt.subplots(2, len(SIZES), figsize=(9.6, 6.6))
 
 for col, n_ac in enumerate(SIZES):
-    ax = axes[0, col]
-    for outcome in shown[n_ac]:
-        for track in tracks_enu(outcome):
-            ax.plot(track[:, 0] / 1000, track[:, 1] / 1000, color=BLUE, lw=0.25, alpha=0.15)
-    ax.add_patch(plt.Circle((0, 0), R_INNER / 1000, color=GREY, fill=False, lw=1.0, ls="--"))
-    ax.set_xlim(-1.4, 1.4); ax.set_ylim(-1.4, 1.4)
-    ax.set_title(f"N = {n_ac}", fontsize=9)
-    ax.set_xlabel("east [km]")
-    if col == 0:
-        ax.set_ylabel("north [km]")
-    ax.set_box_aspect(1)
-
-    ax = axes[1, col]
-    for outcome in shown[n_ac]:
-        for track in tracks_enu(outcome):
-            ax.plot(track[:, 0], track[:, 1], color=BLUE, lw=0.35, alpha=0.25)
-    ax.add_patch(plt.Circle((0, 0), RPZ, color=RED, fill=False, lw=1.2))
-    ax.set_xlim(-400, 400); ax.set_ylim(-400, 400)
-    ax.set_xlabel("east [m]")
-    if col == 0:
-        ax.set_ylabel("north [m]")
-    ax.set_box_aspect(1)
+    colours = plt.cm.tab10(np.linspace(0, 1, 10))[:n_ac]
+    for row, (scale, half, unit) in enumerate([(1000.0, 1.4, "km"), (1.0, 400.0, "m")]):
+        ax = axes[row, col]
+        for outcome in shown[n_ac][:N_PLOT]:
+            for k, track in enumerate(tracks_enu(outcome)):
+                ax.plot(track[:, 0] / scale, track[:, 1] / scale,
+                        color=colours[k], lw=0.9, alpha=0.85)
+                if row == 0:
+                    ax.plot(track[0, 0] / scale, track[0, 1] / scale, "o",
+                            color=colours[k], ms=4)
+                    ax.plot(track[-1, 0] / scale, track[-1, 1] / scale, "*",
+                            color=colours[k], ms=9)
+        if row == 0:
+            ax.add_patch(plt.Circle((0, 0), R_INNER / scale, color="0.25",
+                                    fill=False, lw=1.0, ls="--"))
+            ax.set_title(f"N = {n_ac}", fontsize=9)
+        else:
+            ax.add_patch(plt.Circle((0, 0), RPZ / scale, color="0.25", fill=False, lw=1.0))
+        ax.set_xlim(-half, half); ax.set_ylim(-half, half)
+        ax.set_xlabel(f"east [{unit}]")
+        if col == 0:
+            ax.set_ylabel(f"north [{unit}]")
+        ax.set_box_aspect(1)
 
 fig.tight_layout()
 publish(fig, "scenario-random-traffic-tracks")
@@ -198,7 +201,7 @@ the recorded encounters of Part 1.
 """)
 
 code(r'''
-N_ENC = 20_000
+N_ENC = 10_000
 
 
 def run_mc(n_ac: int, pos_ci95: float, n_encounters: int):
@@ -233,8 +236,8 @@ for n_ac in SIZES:
     sweep[n_ac] = run_mc(n_ac, POS_CI95, N_ENC)
     dwell[n_ac] = float(np.mean([time_inside(o) for o in shown[n_ac]]))
     r = sweep[n_ac]
-    lam = r.p_ac / (dwell[n_ac] / 3600.0)
-    print(f"{n_ac:>3}{r.p_ac:11.5f}{r.p_los:10.5f}{r.mean_los_pairs:10.5f}"
+    lam = r.p_los / (dwell[n_ac] / 3600.0)
+    print(f"{n_ac:>3}{r.p_los:11.5f}{r.p_los:10.5f}{r.mean_los_pairs:10.5f}"
           f"{dwell[n_ac]:15.1f}{lam:15.4f}")
 ''')
 
@@ -242,7 +245,7 @@ code(r'''
 fig, axes = plt.subplots(1, 2, figsize=(8.4, 3.9))
 
 ax = axes[0]
-ax.plot(SIZES, [sweep[n].p_ac for n in SIZES], "o-", color=BLUE, label="$P_{ac}$")
+ax.plot(SIZES, [sweep[n].p_los for n in SIZES], "o-", color=BLUE, label="$P_{ac}$")
 ax.plot(SIZES, [sweep[n].p_los for n in SIZES], "s-", color=RED, label="$P_{run}$")
 ax.plot(SIZES, [sweep[n].mean_los_pairs for n in SIZES], "^-", color=ORANGE, label="E[K]")
 ax.set_xticks(SIZES); ax.set_xlabel("aircraft in the disc")
@@ -250,7 +253,7 @@ ax.set_ylabel("value"); ax.set_yscale("log")
 ax.set_box_aspect(1); ax.legend(frameon=False, fontsize=8)
 
 ax = axes[1]
-lam = [sweep[n].p_ac / (dwell[n] / 3600.0) for n in SIZES]
+lam = [sweep[n].p_los / (dwell[n] / 3600.0) for n in SIZES]
 density = [n / (np.pi * (R_INNER / 1000.0) ** 2) for n in SIZES]
 ax.plot(density, lam, "o-", color=BLUE)
 ax.set_xlabel("traffic density [aircraft / km$^2$]")
@@ -297,17 +300,16 @@ t0 = time.perf_counter()
 ips8 = estimate_rare_prob(build_initial_for(8, POS_CI95), shells,
                           n_particles=600, reps=8, seed=SEED, tail=True)
 print(f"shells {len(shells)}   {shells}")
-print(f"IPS  P_run {ips8.prob:.5f}   ci [{ips8.ci[0]:.5f}, {ips8.ci[1]:.5f}]   "
+print(f"IPS  P(LoS) {ips8.p_los:.5f}   collapsed {ips8.n_collapsed}")
       f"collapsed {ips8.n_collapsed}/8   {time.perf_counter() - t0:6.1f} s")
 
-p_ac_reps = [r.p_ac for r in ips8.reps if r.prob > 0]
-print(f"IPS  P_ac  {np.mean(p_ac_reps):.5f}   from {len(p_ac_reps)} replications")
+p_los_reps = [r.p_los for r in ips8.reps if r.prob > 0]
+print(f"IPS  P_ac  {np.mean(p_los_reps):.5f}   from {len(p_los_reps)} replications")
 print(f"     distinct lineages per replication: {[r.n_lineages for r in ips8.reps]}")
-print(f"MC   P_run {sweep[8].p_los:.5f}   ci95 [{sweep[8].ci95[0]:.5f}, {sweep[8].ci95[1]:.5f}]")
-print(f"MC   P_ac  {sweep[8].p_ac:.5f}")
-if sweep[8].p_los > 0 and sweep[8].p_ac > 0:
+print(f"MC   P(LoS) {sweep[8].p_los:.5f}")
+if sweep[8].p_los > 0 and sweep[8].p_los > 0:
     print(f"\nratio IPS/MC on P_run {ips8.prob / sweep[8].p_los:.2f}   "
-          f"on P_ac {np.mean(p_ac_reps) / sweep[8].p_ac:.2f}")
+          f"on P_ac {np.mean(p_los_reps) / sweep[8].p_los:.2f}")
 else:
     print("\nMonte Carlo saw no loss of separation in this cell, so there is no ratio. "
           "Increase N_ENC until it sees approximately 50 events.")

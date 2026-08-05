@@ -1,8 +1,9 @@
 """Plain Monte Carlo loss-of-separation estimator.
 
-Samples ``config.n_encounters`` independent pairwise encounters and aggregates
-``P(LoS) = n_los/n_encounters`` (equivalently ``IPR = 1 - P(LoS)``; see :class:`IPRResult` on why
-the denominator is the encounter count and not the detected-conflict count). Each encounter gets
+Samples ``config.n_encounters`` independent encounters and aggregates ``P(LoS)`` **per
+aircraft** — the aircraft that lost separation over the aircraft that flew (equivalently
+``IPR = 1 - P(LoS)``; see :class:`IPRResult` on why the denominator is not the detected-conflict
+count). Each encounter gets
 its own RNG substream spawned from the run seed (ADR 0001), so the estimate is reproducible and
 order-independent — which is what lets a caller hand slices of the encounter fan-out to different
 processes (``seqs=``) and pool the counts with :func:`combine_ipr` for exactly the serial answer.
@@ -21,7 +22,6 @@ one backend and be ignored under the other — with nothing in either result to 
 
 from __future__ import annotations
 
-import math
 import statistics
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -49,26 +49,6 @@ from opencdarr.scenario import (
 from opencdarr.wind import NO_WIND, WindField
 
 
-def wilson_interval(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
-    """A 95% Wilson score interval for ``k`` successes in ``n`` Bernoulli trials.
-
-    Preferred over the textbook normal approximation ``p̂ ± z√(p̂(1-p̂)/n)`` because it stays
-    inside ``[0, 1]`` and keeps sensible coverage when ``p̂`` is near 0 — which is the regime every
-    interesting safety number lives in. At ``k = 0`` it still returns a positive upper bound, i.e.
-    "no events observed" becomes a real bound rather than the false certainty of ``(0, 0)``.
-
-    Valid here because ``n`` is the *encounter count*, fixed by the experiment design, so this is a
-    genuine binomial and not a ratio with a random denominator (see :class:`IPRResult`).
-    """
-    if n <= 0:
-        return (float("nan"), float("nan"))
-    p_hat = k / n
-    denom = 1.0 + z * z / n
-    centre = (p_hat + z * z / (2 * n)) / denom
-    half = z / denom * math.sqrt(p_hat * (1.0 - p_hat) / n + z * z / (4 * n * n))
-    return (max(0.0, centre - half), min(1.0, centre + half))
-
-
 @dataclass(frozen=True)
 class IPRResult:
     """Loss-of-separation counts over a set of encounters, and the rates derived from them.
@@ -79,7 +59,7 @@ class IPRResult:
     rare-event estimator samples (one particle = one initial condition), which is what makes
     :mod:`opencdarr.ips` and this module estimate *literally* the same quantity.
 
-    This replaces an earlier ``1 - n_los/n_conflict``, which divided by "encounters where the
+    This replaces an earlier ``1 - n_LoS/n_conflict``, which divided by "encounters where the
     detector fired on the true states". That was contaminated by the very thing under test:
     :class:`~opencdarr.cd.StateBased` reports no conflict once predicted ``dcpa >= rpz``, so a
     resolver that built separation early **erased its own successes from the denominator** —
@@ -106,7 +86,6 @@ class IPRResult:
     """
 
     min_seps: tuple[float, ...]  # achieved minimum separation [m], one per encounter
-    n_los: int
     n_conflict: int  # diagnostic: how many were *detected* as conflicts, not the denominator
     los_pairs: tuple[int, ...] = ()  # K per encounter: pairs that lost separation
     los_aircraft: tuple[int, ...] = ()  # A per encounter: aircraft that lost separation
@@ -119,24 +98,20 @@ class IPRResult:
 
     @property
     def p_los(self) -> float:
-        """P(loss of separation) **per run** — the fraction of encounters that lost separation.
-
-        The right quantity for a pairwise encounter, where it equals :attr:`p_ac` exactly. Past
-        two aircraft it is a per-*run* probability: a run with five simultaneous losses counts the
-        same as a run with one, and the value grows with the fleet size (roughly by ``N/2`` for a
-        rare event) without the airspace getting more dangerous. Quote :attr:`p_ac` there.
-        """
-        return self.n_los / self.n_encounters if self.n_encounters else float("nan")
-
-    @property
-    def p_ac(self) -> float:
         """P(loss of separation) **per aircraft** — Blom & Bakker's normalisation (JAIS 2015).
 
         The numerator counts aircraft that lost separation, not runs; the denominator is the total
         number of aircraft flown, ``sum_r N_r``. This is what makes a two-aircraft and an
         eight-aircraft result comparable on one axis, and it is the number to quote against the
-        literature. At ``N = 2`` it is identical to :attr:`p_los`, because the two aircraft per
-        loss cancel the two aircraft per run.
+        literature.
+
+        There is deliberately no per-*run* probability beside it. That quantity — the fraction of
+        encounters with at least one loss — counts a run with five simultaneous losses the same as
+        a run with one, so it grows with the fleet size (roughly by ``N/2`` for a rare event)
+        without the airspace getting more dangerous, and it saturates at 1 in dense traffic. At
+        ``N = 2`` the two are identical anyway, because the two aircraft per loss cancel the two
+        aircraft per run, so nothing pairwise changes by dropping it. Multiplicity lives in
+        :attr:`mean_los_pairs`.
         """
         flown = sum(self.fleet_sizes)
         return sum(self.los_aircraft) / flown if flown else float("nan")
@@ -178,18 +153,6 @@ class IPRResult:
         return 1.0 - self.p_los
 
     @property
-    def ci95(self) -> tuple[float, float]:
-        """95% Wilson interval for :attr:`p_los`. Subtract from 1 (and swap) for one on the IPR.
-
-        Valid because the encounters are independent by construction (one seed substream each), so
-        the run-level indicator really is binomial. There is deliberately no Wilson interval on
-        :attr:`p_ac`: the ``N`` per-aircraft indicators *within* a run are strongly dependent — one
-        conflict flags two aircraft at once — so treating them as ``n * N`` independent trials
-        would understate the width. Bootstrap over runs from :attr:`los_aircraft` instead.
-        """
-        return wilson_interval(self.n_los, self.n_encounters)
-
-    @property
     def detection_rate(self) -> float:
         """Fraction of encounters the detector flagged on the true states — a *diagnostic*.
 
@@ -217,7 +180,6 @@ def combine_ipr(results: Sequence[IPRResult]) -> IPRResult:
     """
     return IPRResult(
         min_seps=tuple(s for r in results for s in r.min_seps),
-        n_los=sum(r.n_los for r in results),
         n_conflict=sum(r.n_conflict for r in results),
         los_pairs=tuple(k for r in results for k in r.los_pairs),
         los_aircraft=tuple(a for r in results for a in r.los_aircraft),
@@ -255,7 +217,6 @@ def estimate_ipr_over(
     los_aircraft: list[int] = []
     fleet_sizes: list[int] = []
     n_conflict = 0
-    n_los = 0
     encounters = (
         spawn(root_seed_sequence(config.seed), config.n_encounters) if seqs is None else seqs
     )
@@ -301,10 +262,9 @@ def estimate_ipr_over(
         los_aircraft.append(outcome.n_los_aircraft)
         fleet_sizes.append(len(fleet))
         n_conflict += int(outcome.conflict)
-        n_los += int(outcome.los)
 
     return IPRResult(
-        min_seps=tuple(min_seps), n_los=n_los, n_conflict=n_conflict,
+        min_seps=tuple(min_seps), n_conflict=n_conflict,
         los_pairs=tuple(los_pairs), los_aircraft=tuple(los_aircraft),
         fleet_sizes=tuple(fleet_sizes),
     )

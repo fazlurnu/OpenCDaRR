@@ -37,7 +37,7 @@ encounters comes from the noise alone.
 
 This notebook has four parts:
 
-1. The geometry, drawn from 100 encounters.
+1. The geometry, drawn from a few encounters.
 2. The stop rule. Each run ends when the aircraft reach their waypoints.
 3. The three metrics against the fleet size, with plain Monte Carlo.
 4. Monte Carlo against the interacting particle system, on the same configuration.
@@ -99,11 +99,12 @@ print(f"ring radius {RADIUS:.0f} m   rpz {RPZ:.0f} m   "
 
 # ---------------------------------------------------------------- 2. the picture
 md(r"""
-## Part 1 — what one hundred encounters look like
+## Part 1 — what an encounter looks like
 
 The first figure is the scenario itself. There is one column for each fleet size in the sweep, and
-each column shows the ground tracks of 100 encounters. The start positions are the same in each
-encounter, so the spread between the tracks is the effect of the GNSS noise on the resolution.
+each column shows a few encounters. Each aircraft has its own colour. The circle is the start and
+the star is the end of that track. The start positions are the same in each encounter, so the small
+spread between the tracks of one colour is the effect of the GNSS noise on the resolution.
 
 The top row is the full ring. The bottom row is the centre, where the tracks pass the protected
 zone. More aircraft give more tracks through the same centre, and the resolution must open a gap
@@ -126,7 +127,8 @@ def fly_one(seq, n_ac: int, pos_ci95: float):
 
 
 SIZES = [4, 6, 8]
-N_SHOW = 100
+N_SHOW = 20         # enough for the stop-rule audit below
+N_PLOT = 3          # a few samples: the figure is an illustration, not a measurement
 
 shown = {}
 for n_ac in SIZES:
@@ -158,28 +160,27 @@ def tracks_enu(outcome):
 fig, axes = plt.subplots(2, len(SIZES), figsize=(9.6, 6.6))
 
 for col, n_ac in enumerate(SIZES):
-    ax = axes[0, col]
-    for outcome in shown[n_ac]:
-        for track in tracks_enu(outcome):
-            ax.plot(track[:, 0] / 1000, track[:, 1] / 1000, color=BLUE, lw=0.3, alpha=0.22)
-    ax.add_patch(plt.Circle((0, 0), RPZ / 1000, color=RED, fill=False, lw=1.0))
-    ax.set_xlim(-3.2, 3.2); ax.set_ylim(-3.2, 3.2)
-    ax.set_title(f"N = {n_ac}", fontsize=9)
-    ax.set_xlabel("east [km]")
-    if col == 0:
-        ax.set_ylabel("north [km]")
-    ax.set_box_aspect(1)
-
-    ax = axes[1, col]
-    for outcome in shown[n_ac]:
-        for track in tracks_enu(outcome):
-            ax.plot(track[:, 0], track[:, 1], color=BLUE, lw=0.4, alpha=0.3)
-    ax.add_patch(plt.Circle((0, 0), RPZ, color=RED, fill=False, lw=1.2))
-    ax.set_xlim(-400, 400); ax.set_ylim(-400, 400)
-    ax.set_xlabel("east [m]")
-    if col == 0:
-        ax.set_ylabel("north [m]")
-    ax.set_box_aspect(1)
+    colours = plt.cm.tab10(np.linspace(0, 1, 10))[:n_ac]
+    for row, (scale, half, unit) in enumerate([(1000.0, 3.2, "km"), (1.0, 400.0, "m")]):
+        ax = axes[row, col]
+        for outcome in shown[n_ac][:N_PLOT]:
+            for k, track in enumerate(tracks_enu(outcome)):
+                ax.plot(track[:, 0] / scale, track[:, 1] / scale,
+                        color=colours[k], lw=0.9, alpha=0.85)
+                if row == 0:   # mark where each aircraft starts and where it is going
+                    ax.plot(track[0, 0] / scale, track[0, 1] / scale, "o",
+                            color=colours[k], ms=4)
+                    ax.plot(track[-1, 0] / scale, track[-1, 1] / scale, "*",
+                            color=colours[k], ms=9)
+        radius = RPZ / scale
+        ax.add_patch(plt.Circle((0, 0), radius, color="0.25", fill=False, lw=1.0))
+        ax.set_xlim(-half, half); ax.set_ylim(-half, half)
+        ax.set_xlabel(f"east [{unit}]")
+        if row == 0:
+            ax.set_title(f"N = {n_ac}", fontsize=9)
+        if col == 0:
+            ax.set_ylabel(f"north [{unit}]")
+        ax.set_box_aspect(1)
 
 fig.tight_layout()
 publish(fig, "scenario-ring-tracks")
@@ -233,7 +234,7 @@ grows, and it is the reason the per-aircraft form is the one on the axis.
 """)
 
 code(r'''
-N_ENC = 20_000
+N_ENC = 10_000
 
 
 def run_mc(n_ac: int, pos_ci95: float, n_encounters: int):
@@ -253,13 +254,13 @@ for n_ac in SIZES:
     t0 = time.perf_counter()
     sweep[n_ac] = run_mc(n_ac, POS_CI95, N_ENC)
     r = sweep[n_ac]
-    print(f"N {n_ac}   P_ac {r.p_ac:.5f}   P_run {r.p_los:.5f}   E[K] {r.mean_los_pairs:.5f}   "
-          f"events {r.n_los:>4}   {time.perf_counter() - t0:6.1f} s")
+    print(f"N {n_ac}   P(LoS) {r.p_los:.5f}   E[K] {r.mean_los_pairs:.5f}   "
+          f"aircraft in a loss {sum(r.los_aircraft):>4}   {time.perf_counter() - t0:6.1f} s")
 ''')
 
 code(r'''
 fig, ax = plt.subplots(figsize=(4.4, 4.0))
-ax.plot(SIZES, [sweep[n].p_ac for n in SIZES], "o-", color=BLUE, label="$P_{ac}$")
+ax.plot(SIZES, [sweep[n].p_los for n in SIZES], "o-", color=BLUE, label="$P_{ac}$")
 ax.plot(SIZES, [sweep[n].p_los for n in SIZES], "s-", color=RED, label="$P_{run}$")
 ax.plot(SIZES, [sweep[n].mean_los_pairs for n in SIZES], "^-", color=ORANGE, label="E[K]")
 ax.set_xticks(SIZES); ax.set_xlabel("aircraft in the ring")
@@ -305,18 +306,17 @@ t0 = time.perf_counter()
 ips8 = estimate_rare_prob(build_initial_for(8, POS_CI95), shells,
                           n_particles=600, reps=8, seed=SEED, tail=True)
 print(f"shells {len(shells)}   {shells}")
-print(f"IPS  P_run {ips8.prob:.5f}   ci [{ips8.ci[0]:.5f}, {ips8.ci[1]:.5f}]   "
+print(f"IPS  P(LoS) {ips8.p_los:.5f}   collapsed {ips8.n_collapsed}")
       f"collapsed {ips8.n_collapsed}/8   {time.perf_counter() - t0:6.1f} s")
 
-p_ac_reps = [r.p_ac for r in ips8.reps if r.prob > 0]
+p_los_reps = [r.p_los for r in ips8.reps if r.prob > 0]
 lineages = [r.n_lineages for r in ips8.reps]
-print(f"IPS  P_ac  {np.mean(p_ac_reps):.5f}   from {len(p_ac_reps)} replications")
+print(f"IPS  P_ac  {np.mean(p_los_reps):.5f}   from {len(p_los_reps)} replications")
 print(f"     distinct lineages per replication: {lineages}")
-print(f"MC   P_run {sweep[8].p_los:.5f}   ci95 [{sweep[8].ci95[0]:.5f}, {sweep[8].ci95[1]:.5f}]")
-print(f"MC   P_ac  {sweep[8].p_ac:.5f}")
-if sweep[8].p_los > 0 and sweep[8].p_ac > 0:
+print(f"MC   P(LoS) {sweep[8].p_los:.5f}")
+if sweep[8].p_los > 0 and sweep[8].p_los > 0:
     print(f"\nratio IPS/MC on P_run {ips8.prob / sweep[8].p_los:.2f}   "
-          f"on P_ac {np.mean(p_ac_reps) / sweep[8].p_ac:.2f}")
+          f"on P_ac {np.mean(p_los_reps) / sweep[8].p_los:.2f}")
 else:
     print("\nMonte Carlo saw no loss of separation in this cell, so there is no ratio. "
           "Increase N_ENC until it sees approximately 50 events.")

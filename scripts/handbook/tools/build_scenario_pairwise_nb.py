@@ -93,18 +93,17 @@ print(f"rpz {RPZ:.0f} m   lookahead {BASE.conflict.t_lookahead:.0f} s   "
 md(r"""
 ## Part 1 — what one hundred encounters look like
 
-The figure shows the ground tracks of 100 encounters at three crossing angles. The geometry is
-the same in each encounter of a column. Only the GNSS noise changes, so the spread between the
-tracks is
-the effect of that noise on the resolution.
+The figure shows the ground tracks of a few encounters at three crossing angles. The geometry is
+the same in each encounter of a column. Only the GNSS noise changes, so the small spread between
+the tracks is the effect of that noise on the resolution. The point is the start of each track.
 
-The bottom row is the closest approach. Each point is one encounter. A point inside the red circle
-is a loss of separation.
+All three panels use the same window, so the columns can be compared directly. The distribution of
+the closest approach is in Part 2, over many more encounters.
 """)
 
 code(r'''
 ANGLES = [2.0, 45.0, 135.0]
-N_SHOW = 100
+N_SHOW = 6          # a few samples: the figure is an illustration, not a measurement
 
 
 def fly_one(seq, dpsi: float, pos_ci95: float):
@@ -146,27 +145,33 @@ def tracks_enu(outcome):
     return out
 
 
-fig, axes = plt.subplots(2, len(ANGLES), figsize=(9.6, 6.6))
+# One shared window for every panel, so no column looks exaggerated. It is the bounding box of
+# every track, made square and centred on the tracks rather than on the origin — an origin-centred
+# window would be mostly empty, because the encounters run north of their start point.
+pts = np.vstack([
+    track for dpsi in ANGLES for outcome in shown[dpsi] for track in tracks_enu(outcome)
+]) / 1000.0
+lo, hi = pts.min(axis=0), pts.max(axis=0)
+centre = (lo + hi) / 2.0
+half = 0.55 * max(hi - lo)          # 1.10 x the larger span, kept equal on both axes
+xlim = (centre[0] - half, centre[0] + half)
+ylim = (centre[1] - half, centre[1] + half)
+
+fig, axes = plt.subplots(1, len(ANGLES), figsize=(9.6, 3.6))
 
 for col, dpsi in enumerate(ANGLES):
-    ax = axes[0, col]
+    ax = axes[col]
     for outcome in shown[dpsi]:
         for k, track in enumerate(tracks_enu(outcome)):
             ax.plot(track[:, 0] / 1000, track[:, 1] / 1000,
-                    color=BLUE if k == 0 else ORANGE, lw=0.3, alpha=0.25)
+                    color=BLUE if k == 0 else ORANGE, lw=0.9, alpha=0.75)
+            ax.plot(track[0, 0] / 1000, track[0, 1] / 1000, "o",
+                    color=BLUE if k == 0 else ORANGE, ms=3)
+    ax.set_xlim(*xlim); ax.set_ylim(*ylim)
     ax.set_title(f"crossing angle {dpsi:.0f}$\\degree$", fontsize=9)
     ax.set_xlabel("east [km]")
     if col == 0:
         ax.set_ylabel("north [km]")
-    ax.set_box_aspect(1)
-
-    ax = axes[1, col]
-    seps = np.array([o.min_sep for o in shown[dpsi]])
-    ax.hist(seps, bins=np.linspace(0, max(120.0, seps.max()), 25), color=BLUE, alpha=0.8)
-    ax.axvline(RPZ, color=RED, lw=1.2)
-    ax.set_xlabel("closest approach [m]")
-    if col == 0:
-        ax.set_ylabel("encounters")
     ax.set_box_aspect(1)
 
 fig.tight_layout()
@@ -206,8 +211,8 @@ print(f"{'dpsi':>7}{'P_ac':>10}{'P_run':>10}{'E[K]':>10}{'equal':>8}"
 for dpsi in SWEEP_ANGLES:
     r = run_mc(dpsi, POS_CI95, N_ENC)
     sweep[dpsi] = r
-    equal = (abs(r.p_ac - r.p_los) < 1e-12) and (abs(r.mean_los_pairs - r.p_los) < 1e-12)
-    print(f"{dpsi:7.1f}{r.p_ac:10.4f}{r.p_los:10.4f}{r.mean_los_pairs:10.4f}"
+    equal = (abs(r.p_los - r.p_los) < 1e-12) and (abs(r.mean_los_pairs - r.p_los) < 1e-12)
+    print(f"{dpsi:7.1f}{r.p_los:10.4f}{r.p_los:10.4f}{r.mean_los_pairs:10.4f}"
           f"{'yes' if equal else 'NO':>8}{r.median_min_sep:17.1f}")
 ''')
 
@@ -216,10 +221,8 @@ fig, axes = plt.subplots(1, 2, figsize=(8.4, 3.9))
 
 ax = axes[0]
 xs = SWEEP_ANGLES
-ps = [sweep[a].p_ac for a in xs]
-lo = [sweep[a].p_ac - sweep[a].ci95[0] for a in xs]
-hi = [sweep[a].ci95[1] - sweep[a].p_ac for a in xs]
-ax.errorbar(xs, ps, yerr=[lo, hi], fmt="o-", color=BLUE, capsize=3)
+ps = [sweep[a].p_los for a in xs]
+ax.plot(xs, ps, "o-", color=BLUE)
 ax.set_xlabel("crossing angle [deg]"); ax.set_ylabel("P(LoS) per aircraft")
 ax.set_box_aspect(1)
 
