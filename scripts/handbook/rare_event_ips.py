@@ -84,7 +84,8 @@ def traced_run() -> tuple[list[np.ndarray], list[float]]:
         sub = children(level_seqs[k], 0, N_PARTICLES + 1)
         evolved = evolve_shard(particles, target, sub[:N_PARTICLES])
         achieved.append(np.array([p.state.min_sep for p in evolved]))
-        fraction, particles = resample_level(evolved, target, N_PARTICLES, sub[N_PARTICLES])
+        fraction, particles, _ = resample_level(
+            evolved, target, N_PARTICLES, sub[N_PARTICLES])
         survival.append(fraction)
         if not particles:
             raise RuntimeError(f"the ladder collapsed at shell {k} ({target} m)")

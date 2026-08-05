@@ -72,6 +72,7 @@ from opencdarr.ips import (
     ips_once,
     replication_seeds,
     resample_level,
+    tail_shard,
 )
 from opencdarr.rng import child, children
 
@@ -194,6 +195,7 @@ def _lockstep(
     oversubscribe: int,
     min_shard: int,
     verbose: int,
+    tail: bool = False,
 ) -> list[IPSResult]:
     """Advance every replication shell-by-shell together, sharding each level across all workers.
 
@@ -206,10 +208,14 @@ def _lockstep(
 
     clouds: list[list[Particle]] = []
     level_seqs: list[list[np.random.SeedSequence]] = []
+    tail_seqs: list[np.random.SeedSequence] = []
     for seq in seqs:
         # addressed by index, exactly as ips_once does it, so the tree is the same one and the
         # caller's sequence is left untouched
-        init_seq, evolve_seq = children(seq, 0, 2)
+        # three-wide, exactly as ips_once addresses it, so the splitting streams are unchanged
+        # whether or not the tail leg runs
+        init_seq, evolve_seq, tail_seq = children(seq, 0, 3)
+        tail_seqs.append(tail_seq)
         # Built in the parent on purpose: building in workers would give each one its own `env`
         # objects, and pickle only collapses repeated references it can see are *the same object*.
         # Distinct-but-equal envs cost ~2x the bytes and ~4x the serialisation time per level.
@@ -217,6 +223,7 @@ def _lockstep(
         level_seqs.append(children(evolve_seq, 0, len(levels)))
 
     survival: list[list[float]] = [[] for _ in range(reps)]
+    lineages: list[int] = [0] * reps
     collapsed: dict[int, IPSResult] = {}
     live = list(range(reps))
 
@@ -245,7 +252,7 @@ def _lockstep(
                     Particle(env=p.env, state=s)
                     for p, s in zip(clouds[r], regrouped[r], strict=True)
                 ]
-                fraction, cloud = resample_level(
+                fraction, cloud, lineages[r] = resample_level(
                     evolved, target, n_particles, child(level_seqs[r][k], n_particles)
                 )
                 survival[r].append(fraction)
@@ -263,6 +270,21 @@ def _lockstep(
             if not live:
                 break
 
+        tails: dict[int, list[tuple[int, int, int]]] = {}
+        if tail and live:
+            bounds = _shard_bounds(n_particles, _shard_count(
+                len(live), workers, n_particles, oversubscribe, min_shard))
+            plan = [(r, lo, hi) for r in live for lo, hi in bounds]
+            done = run(
+                delayed(tail_shard)(
+                    clouds[r][lo:hi], children(tail_seqs[r], 0, n_particles)[lo:hi]
+                )
+                for r, lo, hi in plan
+            )
+            tails = {r: [] for r in live}
+            for (r, _, _), counts in zip(plan, done, strict=True):
+                tails[r].extend(counts)
+
     return [
         collapsed[r]
         if r in collapsed
@@ -272,6 +294,10 @@ def _lockstep(
             survival=tuple(survival[r]),
             n_particles=n_particles,
             collapsed_at=None,
+            tail_los_pairs=tuple(k for k, _, _ in tails.get(r, ())),
+            tail_los_aircraft=tuple(a for _, a, _ in tails.get(r, ())),
+            n_aircraft=tails[r][0][2] if tails.get(r) else 0,
+            n_lineages=lineages[r] if tails.get(r) else 0,
         )
         for r in range(reps)
     ]
@@ -287,6 +313,7 @@ def ips_replications(
     oversubscribe: int = 2,
     min_shard: int = 64,
     verbose: int = 0,
+    tail: bool = False,
 ) -> list[IPSResult]:
     """Run one :func:`~opencdarr.ips.ips_once` per seed in ``seqs``, over ``n_jobs`` workers.
 
@@ -296,12 +323,12 @@ def ips_replications(
     """
     workers = resolve_jobs(n_jobs)
     if workers <= 1 or not seqs:
-        return [ips_once(build_initial, levels, n_particles, s) for s in seqs]
+        return [ips_once(build_initial, levels, n_particles, s, tail=tail) for s in seqs]
     if _whole_replications(len(seqs), workers):
         parallel_cls, delayed = _joblib()
         results: list[IPSResult] = list(
             parallel_cls(n_jobs=workers, verbose=verbose)(
-                delayed(ips_once)(build_initial, levels, n_particles, s) for s in seqs
+                delayed(ips_once)(build_initial, levels, n_particles, s, tail=tail) for s in seqs
             )
         )
         return results
@@ -314,6 +341,7 @@ def ips_replications(
         oversubscribe=oversubscribe,
         min_shard=min_shard,
         verbose=verbose,
+        tail=tail,
     )
 
 
@@ -328,6 +356,7 @@ def estimate_rare_prob(
     oversubscribe: int = 2,
     min_shard: int = 64,
     verbose: int = 0,
+    tail: bool = False,
 ) -> RareEventEstimate:
     """The parallel twin of :func:`opencdarr.ips.estimate_rare_prob` — same result, more cores.
 
@@ -344,5 +373,6 @@ def estimate_rare_prob(
             oversubscribe=oversubscribe,
             min_shard=min_shard,
             verbose=verbose,
+            tail=tail,
         )
     )

@@ -170,13 +170,34 @@ def evolve_shard(
     ]
 
 
+def tail_shard(
+    particles: Sequence[Particle],
+    seeds: Sequence[np.random.SeedSequence],
+) -> list[tuple[int, int, int]]:
+    """Fly each particle to termination and count it — one **tail leg's** map, per particle.
+
+    The counterpart of :func:`evolve_shard` for the leg after the last shell: particle ``i`` reads
+    only its own ``particles[i]`` and ``seeds[i]``, so a parallel driver can run contiguous slices
+    of it and recompose the identical list (:mod:`opencdarr.parallel`).
+
+    Returns ``(K, A, N)`` per particle — losing pairs, aircraft involved, and the fleet size — so a
+    caller can build the tail fields of :class:`IPSResult` without shipping whole states back.
+    """
+    out: list[tuple[int, int, int]] = []
+    for particle, seed in zip(particles, seeds, strict=True):
+        end = _evolve_to_end(particle, _streams(seed))
+        pairs, aircraft = los_counts(len(end.states), end.los_pairs)
+        out.append((pairs, aircraft, len(end.states)))
+    return out
+
+
 def resample_level(
     evolved: Sequence[Particle],
     target: float,
     n_particles: int,
     seq: np.random.SeedSequence,
-) -> tuple[float, list[Particle]]:
-    """One level's *barrier*: the survival fraction and the resampled cloud.
+) -> tuple[float, list[Particle], int]:
+    """One level's *barrier*: the survival fraction, the resampled cloud, and its lineage count.
 
     Survivors are those that reached the shell; they are drawn with replacement back up to
     ``n_particles``. An empty returned cloud means the level collapsed (ADR 0017 §2) — the caller
@@ -186,9 +207,12 @@ def resample_level(
     survivors = [p for p in evolved if p.state.min_sep <= target]
     fraction = len(survivors) / n_particles
     if not survivors:
-        return fraction, []
+        return fraction, [], 0
     idx = generator(seq).integers(0, len(survivors), size=n_particles)
-    return fraction, [survivors[i] for i in idx]
+    # the number of *distinct* survivors drawn — the cloud's effective sample size. Counted from
+    # the draw rather than from the clones, because clones share their state object and a parallel
+    # driver ships states between processes, where pickling turns one shared object into several.
+    return fraction, [survivors[i] for i in idx], len(set(idx.tolist()))
 
 
 def ips_once(
@@ -228,7 +252,8 @@ def ips_once(
         # fresh forward streams per particle this level (+ one resampling stream)
         sub = children(level_seqs[k], 0, n_particles + 1)
         evolved = evolve_shard(particles, target, sub[:n_particles])
-        fraction, particles = resample_level(evolved, target, n_particles, sub[n_particles])
+        fraction, particles, lineages = resample_level(
+            evolved, target, n_particles, sub[n_particles])
         survival.append(fraction)
         if not particles:
             return IPSResult(prob=0.0, levels=tuple(levels), survival=tuple(survival),
@@ -239,8 +264,6 @@ def ips_once(
     if not tail:
         return result
 
-    # clones share their state object, so identity counts the distinct survivors behind the cloud
-    lineages = len({id(p.state) for p in particles})
     ends = [
         _evolve_to_end(p, _streams(s))
         for p, s in zip(particles, children(tail_seq, 0, n_particles), strict=True)

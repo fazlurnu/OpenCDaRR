@@ -62,7 +62,7 @@ from opencdarr.config import Config
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr import ProbabilisticFTR
 from opencdarr.crr.base import RecoveryCriterion
-from opencdarr.estimator import IPRResult, agents_for, estimate_ipr_over
+from opencdarr.estimator import IPRResult, agents_for, combine_ipr, estimate_ipr_over
 from opencdarr.fleet import Airframe, build_env
 from opencdarr.ips import (
     Particle,
@@ -72,8 +72,9 @@ from opencdarr.ips import (
 )
 from opencdarr.kinematics import Kinematics
 from opencdarr.parallel import _joblib, resolve_jobs
+from opencdarr.parallel import estimate_rare_prob as estimate_rare_prob_parallel
 from opencdarr.performance import Performance
-from opencdarr.rng import generator
+from opencdarr.rng import children, generator, root_seed_sequence
 from opencdarr.scenario import PairwiseEncounter, Scenario
 from opencdarr.wind import NO_WIND, WindField
 
@@ -453,23 +454,39 @@ def _scenario_for(condition: Condition, methods: Methods) -> Scenario:
 
 
 def _run_mc(condition: Condition, base: Config, methods: Methods, backend: MC,
-            seed: int) -> IPRResult:
-    """One MC cell: this condition's scenario, drawn ``n_encounters`` times and flown."""
-    cfg = _config_for(condition, base, backend.n_encounters)
+            seed: int, jobs: int = 1) -> IPRResult:
+    """One MC cell: this condition's scenario, drawn ``n_encounters`` times and flown.
+
+    ``jobs`` above 1 splits the encounter fan-out into contiguous seed slices and pools the counts
+    (:func:`~opencdarr.estimator.combine_ipr`). Each slice is ``children(root, lo, hi)`` of the
+    *same* tree the serial run walks, so the pooled result is the serial one exactly — not merely
+    an equivalent sample.
+    """
+    cfg = dataclasses.replace(_config_for(condition, base, backend.n_encounters), seed=seed)
     m = _resolved_methods(condition, methods)
-    return estimate_ipr_over(
-        _scenario_for(condition, m),
-        dataclasses.replace(cfg, seed=seed),
-        _base_perf(m),
-        m.detector, m.resolver, m.recovery, m.navigation, m.communication, m.surveillance,
-        kinematics=m.kinematics,
-        airframes=m.airframes,
-        wind=m.wind,
+    scenario = _scenario_for(condition, m)
+    perf = _base_perf(m)
+    models = (m.detector, m.resolver, m.recovery, m.navigation, m.communication, m.surveillance)
+    extra = {"kinematics": m.kinematics, "airframes": m.airframes, "wind": m.wind}
+
+    n = backend.n_encounters
+    if jobs <= 1 or n < 2:
+        return estimate_ipr_over(scenario, cfg, perf, *models, **extra)
+
+    workers = min(jobs, n)
+    root = root_seed_sequence(cfg.seed)
+    bounds = [(i * n // workers, (i + 1) * n // workers) for i in range(workers)]
+    parallel_cls, delayed = _joblib()
+    parts = parallel_cls(n_jobs=workers)(
+        delayed(estimate_ipr_over)(scenario, cfg, perf, *models,
+                                   seqs=children(root, lo, hi), **extra)
+        for lo, hi in bounds if hi > lo
     )
+    return combine_ipr(list(parts))
 
 
 def _run_ips(condition: Condition, base: Config, methods: Methods, backend: IPS,
-             seed: int) -> RareEventEstimate:
+             seed: int, jobs: int = 1) -> RareEventEstimate:
     """One IPS cell: split the *same* environment MC just ran, over this condition's shells.
 
     ``build_initial`` draws one encounter per particle from that particle's own seed — the same
@@ -522,9 +539,17 @@ def _run_ips(condition: Condition, base: Config, methods: Methods, backend: IPS,
             halving=shells.halving, min_count=shells.min_count, step=shells.step,
         )
 
-    return estimate_rare_prob(
+    if jobs <= 1:
+        return estimate_rare_prob(
+            build_initial, shells,
+            n_particles=backend.n_particles, reps=backend.reps, seed=seed, tail=backend.tail,
+        )
+    # ADR 0018: the scheduler's worker count is independent of `reps`, so a machine with more
+    # cores than replications still fills them — by sharding a level across workers.
+    return estimate_rare_prob_parallel(
         build_initial, shells,
         n_particles=backend.n_particles, reps=backend.reps, seed=seed, tail=backend.tail,
+        n_jobs=jobs,
     )
 
 
@@ -959,20 +984,23 @@ def _run_one(
     backend: Backend,
     seed: int,
     cache_dir: Path | None,
+    jobs: int = 1,
 ) -> Any:
     """One condition, through the cache when one is configured.
 
     Module-level (not a closure) so a parallel worker can pickle it. The cell is keyed on its
     resolved config, its component identities, its geometry pins, the backend and the seed — plus
-    the library code fingerprint, which :func:`opencdarr.cache.run_key` adds.
+    the library code fingerprint, which :func:`opencdarr.cache.run_key` adds. ``jobs`` is
+    deliberately **not** in the key: it is a scheduling choice with no effect on the numbers, so a
+    result computed on one machine is reused on a machine with a different core count.
     """
     n = backend.n_encounters if isinstance(backend, MC) else backend.n_particles
     config = dataclasses.replace(_config_for(condition, base_config, n), seed=seed)
 
     def compute() -> Any:
         if isinstance(backend, MC):
-            return _run_mc(condition, base_config, methods, backend, seed)
-        return _run_ips(condition, base_config, methods, backend, seed)
+            return _run_mc(condition, base_config, methods, backend, seed, jobs)
+        return _run_ips(condition, base_config, methods, backend, seed, jobs)
 
     if cache_dir is None:
         return compute()
@@ -1003,10 +1031,14 @@ def run_experiment(
     :class:`CacheIdentityError` rather than key a component it cannot identify — see
     :func:`identity`.
 
-    ``n_jobs`` spreads the conditions over processes (joblib's convention: ``-1`` is every core).
-    Conditions are independent by construction — each is its own seeded fan-out — so this is a pure
-    scheduling choice with no effect on the numbers. It needs the ``parallel`` extra, and the
-    components must be picklable, which rules out a lambda held on a component instance.
+    ``n_jobs`` is the whole worker budget (joblib's convention: ``-1`` is every core), and it is
+    spent wherever it does the most good. Up to one worker per condition it fans the conditions
+    out. Past that — more cores than conditions, which is the ordinary case on a big machine for a
+    sweep of three or six cells — the conditions run in turn and the whole budget goes *inside*
+    each one: Monte Carlo splits its encounter fan-out into seed slices, and IPS shards a level
+    across workers (ADR 0018). Either way it is a pure scheduling choice with no effect on the
+    numbers. It needs the ``parallel`` extra, and the components must be picklable, which rules out
+    a lambda held on a component instance.
 
     ``card_dir`` writes one provenance card for the run; ``None`` (default) writes nothing.
     """
@@ -1020,16 +1052,22 @@ def run_experiment(
     cfg = CacheConfig() if cache is True else (cache or None)
     cache_dir = cfg.dir if isinstance(cfg, CacheConfig) and cfg.enabled else None
 
+    # Spend the budget once. Fanning conditions out *and* opening a pool inside each would nest
+    # loky pools and oversubscribe the machine, so it is one or the other: with no more workers
+    # than conditions, fan the conditions out; with more, run them in turn and give the whole
+    # budget to the estimator, whose scheduling scales past the condition count (ADR 0018).
     workers = resolve_jobs(n_jobs)
-    if workers == 1:
+    outer, inner = (workers, 1) if workers <= len(conditions) else (1, workers)
+    if outer == 1:
         results: tuple[Any, ...] = tuple(
-            _run_one(c, base_config, methods, backend, seed, cache_dir) for c in conditions
+            _run_one(c, base_config, methods, backend, seed, cache_dir, inner)
+            for c in conditions
         )
     else:
         parallel_cls, delayed = _joblib()
         results = tuple(
-            parallel_cls(n_jobs=workers)(
-                delayed(_run_one)(c, base_config, methods, backend, seed, cache_dir)
+            parallel_cls(n_jobs=outer)(
+                delayed(_run_one)(c, base_config, methods, backend, seed, cache_dir, inner)
                 for c in conditions
             )
         )
