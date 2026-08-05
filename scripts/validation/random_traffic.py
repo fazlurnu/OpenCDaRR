@@ -1,4 +1,4 @@
-"""Validation campaign, part: random_traffic. Run it on its own; `run_all.sh` runs the three in order."""
+"""Validation campaign, part: random_traffic. Run it alone; `run_all.sh` runs all three."""
 
 from __future__ import annotations
 

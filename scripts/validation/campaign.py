@@ -2,7 +2,7 @@
 
 The claim under test is that plain Monte Carlo and the interacting particle system estimate the
 *same* quantity — ``p_los`` per aircraft. Each part runs both backends over the same conditions
-from the same seed, and reports the ratio.
+from the same seed, reports the ratio, and reports what each backend spent to reach it.
 
 **This module is the single source of the declaration.** The part scripts import their axes from
 here, and so does the notebook, because a cached result is keyed on the declaration: the same
@@ -13,6 +13,14 @@ re-simulate the campaign.
 The cache directory is **absolute** (repo root), not the relative default. A relative
 ``.opencdarr_cache`` resolves against the working directory, so a script launched from the repo
 root and a notebook launched from ``examples/handbook`` would not share one entry.
+
+**Cost is measured per condition, and it is wall time.** The two backends run one condition at a
+time, so ``mc_seconds`` and ``ips_seconds`` are the cost of *that* cell and not one number for the
+whole sweep; the IPS figure includes the pilot run that places that cell's ladder. Both come from
+the same machine and the same worker count, so the pair is comparable — the absolute values are
+not, and do not transfer to another machine. A condition served from the cache is reported as
+``cached`` and kept out of the totals, because reading a pickle is not a measurement of a run.
+``--no-cache`` is how to time a campaign whose conditions are already stored.
 """
 
 from __future__ import annotations
@@ -20,6 +28,9 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from collections.abc import Iterator
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -44,7 +55,8 @@ from opencdarr.config import (
     ScenarioConfig,
     SimulationConfig,
 )
-from opencdarr.experiment import IPS, MC, CacheConfig, Ladder
+from opencdarr.experiment import IPS, MC, Backend, CacheConfig, Ladder
+from opencdarr.parallel import resolve_jobs
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CACHE_DIR = REPO_ROOT / ".opencdarr_cache"
@@ -115,65 +127,183 @@ def parser(part: str) -> argparse.ArgumentParser:
     p.add_argument("--pilot", type=int, default=2_000,
                    help="pilot encounters the per-condition shell ladder is placed from")
     p.add_argument("--seed", type=int, default=0, help="the reproducibility root")
+    p.add_argument("--no-cache", action="store_true",
+                   help="simulate every condition and store nothing, so the times are timings "
+                        "of runs and not of cache reads")
     return p
+
+
+# --- one condition at a time ------------------------------------------------------------------
+
+
+def sweep_of(part: str) -> tuple[str, Sweep]:
+    """The one axis a part sweeps, as ``(declaration key, Sweep)``."""
+    swept = [(key, axis) for key, axis in PARTS[part].items() if isinstance(axis, Sweep)]
+    if len(swept) != 1:
+        raise ValueError(f"part {part!r} sweeps {len(swept)} axes; the campaign assumes exactly 1")
+    return swept[0]
+
+
+def conditions_of(part: str) -> Iterator[tuple[Any, dict[str, Any]]]:
+    """The part's declaration, one level at a time: ``(level, axes)`` per condition.
+
+    Splitting the sweep is what makes the per-condition cost measurable — a whole-sweep call gives
+    one wall time for every condition together. It changes no number: a cell is keyed on its
+    *resolved* values, so a one-level sweep and a six-level sweep hit the same cache entry, and
+    with more workers than conditions :func:`~opencdarr.experiment.run_experiment` already ran the
+    conditions in turn and spent the whole budget inside each one (ADR 0018). Below that worker
+    count this trades the fan-out over conditions for the same parallelism inside them.
+    """
+    key, sweep = sweep_of(part)
+    for level in sweep.values:
+        yield level, {**PARTS[part], key: Sweep([level], name=sweep.name, build=sweep.build)}
+
+
+@dataclass(frozen=True)
+class Timed:
+    """One backend's result for one condition, and the wall time it cost.
+
+    ``simulated`` is false when the cache answered, and then ``seconds`` timed a pickle read. It is
+    reported rather than hidden: a fraction of a second written into the results file as the cost
+    of a Monte-Carlo batch would be a wrong number, not a fast one.
+    """
+
+    row: dict[str, Any]
+    seconds: float
+    simulated: bool
+
+
+def _stored() -> set[str]:
+    """The cache filenames now — one entry per condition per backend."""
+    return {path.name for path in CACHE_DIR.glob("*.pkl")} if CACHE_DIR.is_dir() else set()
+
+
+def _run(axes: dict[str, Any], backend: Backend, args: argparse.Namespace,
+         cache: CacheConfig) -> Timed:
+    """Run one condition on one backend, and time it.
+
+    Whether the condition was simulated is read off the cache directory: a computed cell writes its
+    one entry, a cached cell writes nothing. (This assumes the campaign is the only writer, which
+    is true of a run started from ``run_all.sh``.)
+    """
+    before = _stored()
+    started = time.perf_counter()
+    result = run_experiment(axes, methods=STACK, backend=backend, base_config=CFG,
+                            seed=args.seed, n_jobs=args.jobs, cache=cache)
+    seconds = time.perf_counter() - started
+    (row,) = result.records()
+    return Timed(row=row, seconds=seconds, simulated=not cache.enabled or bool(_stored() - before))
+
+
+def duration(seconds: float, simulated: bool = True) -> str:
+    """A wall time for a table: seconds under a minute and a half, minutes above it."""
+    if not simulated:
+        return "cached"
+    return f"{seconds:.1f}s" if seconds < 90.0 else f"{seconds / 60:.1f}m"
+
+
+# --- the campaign -----------------------------------------------------------------------------
 
 
 def run_part(part: str, args: argparse.Namespace) -> list[dict[str, Any]]:
     """Run one part on both backends, print a row per condition, and write the rows to JSON."""
-    axes = PARTS[part]
-    cache = CacheConfig(dir=CACHE_DIR)
+    cache = CacheConfig(dir=CACHE_DIR, enabled=not args.no_cache)
+    workers = resolve_jobs(args.jobs)
+    key, sweep = sweep_of(part)
+    axis = sweep.name or key
+
+    mc = MC(n_encounters=args.mc_encounters)
+    ips = IPS(shells=Ladder(pilot=args.pilot), n_particles=args.particles, reps=args.reps,
+              tail=True)
+
+    started_at = datetime.now(UTC)
     started = time.perf_counter()
+    print(f"[{part}] Monte Carlo: {args.mc_encounters:,} encounters per condition. "
+          f"IPS: {args.particles:,} particles x {args.reps} replications, ladder from a "
+          f"{args.pilot:,}-encounter pilot.", flush=True)
+    print(f"[{part}] {workers} workers, started {started_at:%Y-%m-%d %H:%M:%S} UTC"
+          + ("" if cache.enabled else ", cache off (every condition is simulated)"), flush=True)
 
-    print(f"[{part}] Monte Carlo: {args.mc_encounters:,} encounters per condition, "
-          f"{args.jobs} workers", flush=True)
-    anchor = run_experiment(axes, methods=STACK, backend=MC(n_encounters=args.mc_encounters),
-                            base_config=CFG, seed=args.seed, n_jobs=args.jobs, cache=cache)
-
-    print(f"[{part}] IPS: {args.particles:,} particles x {args.reps} replications, "
-          f"ladder from a {args.pilot:,}-encounter pilot", flush=True)
-    split = run_experiment(axes, methods=STACK,
-                           backend=IPS(shells=Ladder(pilot=args.pilot),
-                                       n_particles=args.particles, reps=args.reps, tail=True),
-                           base_config=CFG, seed=args.seed, n_jobs=args.jobs, cache=cache)
-
-    axis = split.axes[0]
     rows: list[dict[str, Any]] = []
-    for mc_row, ips_row in zip(anchor.records(), split.records(), strict=True):
-        mc_p, ips_p = mc_row["p_los"], ips_row["p_los"]
+    for level, axes in conditions_of(part):
+        anchor = _run(axes, mc, args, cache)
+        split = _run(axes, ips, args, cache)
+
+        mc_p, ips_p = anchor.row["p_los"], split.row["p_los"]
         factor = tolerance(mc_p) if mc_p > 0 else float("nan")
         ratio = ips_p / mc_p if mc_p > 0 else float("nan")
+        timed = anchor.simulated and split.simulated
         rows.append({
             "part": part,
-            axis: mc_row[axis],
+            axis: anchor.row[axis],
             "mc_p_los": mc_p,
             "ips_p_los": ips_p,
             "ratio": ratio,
             "factor": factor,
             "agrees": bool(mc_p > 0 and 1 / factor <= ratio <= factor),
-            "mc_mean_los_pairs": mc_row["mean_los_pairs"],
-            "ips_mean_los_pairs": ips_row["mean_los_pairs"],
-            "median_min_sep": mc_row["median_min_sep"],
-            "n_collapsed": ips_row["n_collapsed"],
+            "mc_mean_los_pairs": anchor.row["mean_los_pairs"],
+            "ips_mean_los_pairs": split.row["mean_los_pairs"],
+            "median_min_sep": anchor.row["median_min_sep"],
+            "n_collapsed": split.row["n_collapsed"],
+            # wall clock on `workers` workers of this machine. `timed` is false where the cache
+            # answered, and then the two times are reads and the gain means nothing.
+            "mc_seconds": anchor.seconds,
+            "ips_seconds": split.seconds,
+            "gain": (anchor.seconds / split.seconds
+                     if timed and split.seconds > 0 else float("nan")),
+            "timed": timed,
+            "mc_simulated": anchor.simulated,
+            "ips_simulated": split.simulated,
         })
+        gain = f"{rows[-1]['gain']:.2f}x" if timed and split.seconds > 0 else "--"
+        print(f"[{part}] {axis}={level:<6} "
+              f"MC {duration(anchor.seconds, anchor.simulated):>8}   "
+              f"IPS {duration(split.seconds, split.simulated):>8}   gain {gain:>7}", flush=True)
 
-    print(f"\n{axis:>12}{'MC':>12}{'IPS':>12}{'IPS/MC':>9}{'within':>8}{'collapsed':>11}   agrees")
+    print(f"\n{axis:>12}{'MC':>12}{'IPS':>12}{'IPS/MC':>9}{'within':>8}{'collapsed':>11}"
+          f"{'agrees':>8}{'MC time':>10}{'IPS time':>10}{'gain':>8}")
     for r in rows:
         ratio = f"{r['ratio']:9.2f}" if r["mc_p_los"] > 0 else f"{'--':>9}"
         within = f"{r['factor']:7.0f}x" if r["mc_p_los"] > 0 else f"{'--':>8}"
         verdict = "yes" if r["agrees"] else ("--" if r["mc_p_los"] <= 0 else "NO")
+        gain = f"{r['gain']:7.2f}x" if r["timed"] else f"{'--':>8}"
         print(f"{r[axis]:>12}{r['mc_p_los']:12.3e}{r['ips_p_los']:12.3e}{ratio}{within}"
-              f"{r['n_collapsed']:11d}   {verdict}")
+              f"{r['n_collapsed']:11d}{verdict:>8}"
+              f"{duration(r['mc_seconds'], r['mc_simulated']):>10}"
+              f"{duration(r['ips_seconds'], r['ips_simulated']):>10}{gain}")
+
+    finished_at = datetime.now(UTC)
+    wall = time.perf_counter() - started
+    mc_total = sum(r["mc_seconds"] for r in rows if r["mc_simulated"])
+    ips_total = sum(r["ips_seconds"] for r in rows if r["ips_simulated"])
+    from_cache = sum(1 for r in rows if not (r["mc_simulated"] and r["ips_simulated"]))
+    timing = {
+        "started": started_at.isoformat(timespec="seconds"),
+        "finished": finished_at.isoformat(timespec="seconds"),
+        "wall_seconds": wall,
+        "mc_seconds": mc_total,
+        "ips_seconds": ips_total,
+        "gain": mc_total / ips_total if ips_total > 0 else float("nan"),
+        "workers": workers,
+        "cache": cache.enabled,
+        "conditions_from_cache": from_cache,
+    }
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     out = RESULTS_DIR / f"{part}.json"
     out.write_text(json.dumps(
-        {"part": part, "axis": axis, "settings": vars(args), "rows": rows}, indent=1) + "\n")
+        {"part": part, "axis": axis, "settings": vars(args), "timing": timing, "rows": rows},
+        indent=1) + "\n")
 
     measured = [r for r in rows if r["mc_p_los"] > 0]
     disagreed = [r for r in measured if not r["agrees"]]
     collapsed = [r for r in rows if r["n_collapsed"]]
     print(f"\n[{part}] {len(measured)}/{len(rows)} conditions measurable by MC, "
           f"{len(disagreed)} disagree, {len(collapsed)} with a collapsed replication")
+    print(f"[{part}] simulation on {workers} workers: MC {mc_total / 60:.1f} min, "
+          f"IPS {ips_total / 60:.1f} min"
+          + (f" ({from_cache} condition(s) came from the cache)" if from_cache else ""))
     print(f"[{part}] wrote {out}")
-    print(f"[{part}] DONE in {(time.perf_counter() - started) / 60:.1f} min", flush=True)
+    print(f"[{part}] DONE in {wall / 60:.1f} min, at {finished_at:%Y-%m-%d %H:%M:%S} UTC",
+          flush=True)
     return rows
