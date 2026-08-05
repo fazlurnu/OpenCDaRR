@@ -14,13 +14,20 @@ Governing equations: ``vault/derivations/conflict-geometry.md``.
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
 
 from opencdarr import geo
 from opencdarr.config import Config
-from opencdarr.scenario.base import Draw, FleetScenario, Scenario, _heading_to
+from opencdarr.scenario.base import (
+    Draw,
+    FleetScenario,
+    Scenario,
+    _heading_to,
+    _per_aircraft_speeds,
+)
 from opencdarr.state import AircraftState
 
 _PARALLEL_EPS = 1e-9  # |v_rel| below this = no closing geometry
@@ -189,16 +196,18 @@ def sample_pairwise(
     return own, intr
 
 def swap_pair(
-    *, speed: float = 10.0, span: float = 3000.0, lat0: float = 52.0, lon0: float = 4.0
+    *, speed: float | Sequence[float] = 10.0, span: float = 3000.0,
+    lat0: float = 52.0, lon0: float = 4.0
 ) -> FleetScenario:
     """Two aircraft ``span`` m apart, each flying to the *other's* start — a head-on swap
     (Phase-6 scenario 1). Placed so the DAA clears with the waypoint still ahead.
     """
+    speeds = _per_aircraft_speeds(speed, 2)
     a = geo.forward(lat0, lon0, 270.0, span / 2)  # west
     b = geo.forward(lat0, lon0, 90.0, span / 2)  # east
     return [
-        (_heading_to(a[0], a[1], (b[0], b[1]), speed, "A"), (b[0], b[1])),
-        (_heading_to(b[0], b[1], (a[0], a[1]), speed, "B"), (a[0], a[1])),
+        (_heading_to(a[0], a[1], (b[0], b[1]), speeds[0], "A"), (b[0], b[1])),
+        (_heading_to(b[0], b[1], (a[0], a[1]), speeds[1], "B"), (a[0], a[1])),
     ]
 
 def near_parallel(

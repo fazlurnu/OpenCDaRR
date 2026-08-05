@@ -141,3 +141,43 @@ def test_departure_stop_does_not_change_what_was_measured() -> None:
         ]
         assert runs[0].min_sep == runs[1].min_sep
         assert runs[0].los == runs[1].los
+
+
+# --- per-aircraft speed ---------------------------------------------------------------------
+def test_a_scalar_speed_applies_to_every_aircraft() -> None:
+    fleet = sc.crossing_ring(4, speed=12.0, radius=500.0)
+    assert [s.gs for s, _ in fleet] == [12.0] * 4
+
+
+def test_a_sequence_sets_each_aircraft_speed_in_fleet_order() -> None:
+    """A mixed fleet needs this: one shared speed either stalls a fixed-wing or over-flies a
+    multirotor, because their envelopes overlap only in a narrow band."""
+    speeds = (10.0, 20.0, 12.0, 15.0)
+    for fleet in (sc.crossing_ring(4, speed=speeds, radius=500.0),
+                  sc.swap_ring(4, speed=speeds, radius=1500.0),
+                  sc.converging_ring(4, speed=speeds, radius=1500.0),
+                  sc.random_traffic(4, generator(root_seed_sequence(0)), speed=speeds)):
+        assert tuple(s.gs for s, _ in fleet) == speeds
+    assert tuple(s.gs for s, _ in sc.swap_pair(speed=(10.0, 20.0))) == (10.0, 20.0)
+
+
+def test_a_speed_list_that_does_not_match_the_fleet_is_refused() -> None:
+    with pytest.raises(ValueError, match="places 4 aircraft"):
+        sc.crossing_ring(4, speed=(10.0, 20.0), radius=500.0)
+
+
+def test_a_mixed_fleet_flies_each_airframe_at_its_own_speed() -> None:
+    """The three-type ring: without per-aircraft speeds the fixed-wing is below its stall."""
+    from opencdarr.estimator import agents_for
+    from opencdarr.fleet import Airframe
+    from opencdarr.kinematics import FixedWing, Multirotor
+    from opencdarr.performance import SMALL_FIXEDWING
+
+    mixed = [Airframe(M600, Multirotor()), Airframe(SMALL_FIXEDWING, FixedWing())]
+    shared = sc.crossing_ring(2, speed=10.0, radius=1500.0)
+    with pytest.raises(ValueError, match="outside its envelope"):
+        agents_for(shared, M600, airframes=mixed)  # 10 m/s is under the fixed-wing's 12 m/s stall
+
+    each = sc.crossing_ring(2, speed=(10.0, 20.0), radius=1500.0)
+    agents = agents_for(each, M600, airframes=mixed)
+    assert [a.state.gs for a in agents] == [10.0, 20.0]

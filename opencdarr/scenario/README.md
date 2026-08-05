@@ -167,6 +167,53 @@ The docstring of `swap_ring` says "diametrically-opposite start". That is correc
 `n`. The function keeps its behaviour, because published results use it. Use `crossing_ring` for
 new work.
 
+## A fleet with more than one type of aircraft
+
+A scenario does not select the airframe. `Methods.airframes` does that. Give one `Airframe` for
+each aircraft, in fleet order. An `Airframe` holds a `Performance` envelope and an integrator. To
+make your own aircraft, make a `Performance` value; the notebook
+`examples/03_build_your_own_performance.ipynb` shows how.
+
+```python
+MY_QUAD = dataclasses.replace(M600, v_max=14.0, v_min=-14.0, yaw_rate_max=120.0)
+
+mix = ([Airframe(M600, Multirotor())] * 3
+       + [Airframe(SMALL_FIXEDWING, FixedWing())] * 3
+       + [Airframe(MY_QUAD, Multirotor())] * 2)
+```
+
+`agents_for` compares the number of airframes with the number of aircraft. A list of the wrong
+length stops the run immediately.
+
+**Give each aircraft its own speed.** Each envelope has a different speed range:
+
+| airframe | speed range |
+|---|---|
+| `M600` | −18 to 18 m/s |
+| `SMALL_FIXEDWING` | **12** to 25 m/s (12 m/s is the stall speed) |
+| `MY_QUAD` | −14 to 14 m/s |
+
+`Agent` refuses a speed that is outside the envelope of its airframe. Thus one speed for the fleet
+is not sufficient. At 10 m/s the fixed-wing is below its stall speed, and the run stops with an
+error. At 14 m/s all three types fly, but the multirotors then fly 40 % faster than their usual
+cruise speed.
+
+Give a sequence instead of a number. Each fleet builder accepts `speed: float | Sequence[float]`.
+A number applies to all the aircraft. A sequence must have one value for each aircraft:
+
+```python
+ring = CrossingRing(8, radius=1500.0, speeds=(10.0,) * 3 + (20.0,) * 3 + (12.0,) * 2)
+```
+
+Now each airframe flies at a speed that is correct for it. This also makes the speed *difference*
+available as a subject of study, which is necessary for an encounter between a general-aviation
+aircraft and a UAS.
+
+**A fixed-wing does not stop at its last waypoint.** It flies a circle around the waypoint at its
+loiter radius, which is 80 m by default. It stays at that distance for the remainder of the run.
+Thus `run_fleet(..., stop_within=50.0)` never sees a fixed-wing as arrived. Make `stop_within`
+equal to the loiter radius or more.
+
 ## How to write a scenario
 
 Make a subclass and write `draw`. The example below is an overtaking encounter: a fast aircraft

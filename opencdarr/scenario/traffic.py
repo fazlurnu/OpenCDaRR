@@ -13,6 +13,7 @@ Derived, with the one deliberate deviation from the paper's Eq. (8), in
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -20,12 +21,18 @@ import numpy as np
 from opencdarr import geo
 from opencdarr.config import Config
 from opencdarr.fleet import MeasurementArea
-from opencdarr.scenario.base import _LAT0, _LON0, FleetScenario, Scenario
+from opencdarr.scenario.base import (
+    _LAT0,
+    _LON0,
+    FleetScenario,
+    Scenario,
+    _per_aircraft_speeds,
+)
 from opencdarr.state import AircraftState
 
 
 def random_traffic(
-    n: int, rng: np.random.Generator, *, speed: float = 10.0,
+    n: int, rng: np.random.Generator, *, speed: float | Sequence[float] = 10.0,
     r_inner: float = 1000.0, r_outer: float = 1200.0,
     lat0: float = 52.0, lon0: float = 4.0,
     pos_ci95: float = 0.0, vel_ci95: float = 0.0,
@@ -53,6 +60,7 @@ def random_traffic(
     """
     if not r_outer >= r_inner:
         raise ValueError(f"r_outer ({r_outer}) must be at least r_inner ({r_inner})")
+    speeds = _per_aircraft_speeds(speed, n)
     out: FleetScenario = []
     for k in range(n):
         heading = float(rng.uniform(0.0, 360.0))
@@ -63,7 +71,7 @@ def random_traffic(
         start = geo.forward(foot[0], foot[1], (heading + 180.0) % 360.0, half)
         target = geo.forward(foot[0], foot[1], heading, half)
         out.append((
-            AircraftState(id=f"A{k}", lat=start[0], lon=start[1], trk=heading, gs=speed,
+            AircraftState(id=f"A{k}", lat=start[0], lon=start[1], trk=heading, gs=speeds[k],
                           pos_ci95=pos_ci95, vel_ci95=vel_ci95),
             target,
         ))
@@ -82,10 +90,12 @@ class RandomTraffic(Scenario):
     n: int = 6
     r_inner: float = 1000.0
     r_outer: float = 1200.0
+    # one speed per aircraft, when the fleet is mixed; None takes the config's single speed
+    speeds: tuple[float, ...] | None = None
 
     def draw(self, rng: np.random.Generator, config: Config) -> FleetScenario:
         return random_traffic(
-            self.n, rng, speed=config.scenario.speed,
+            self.n, rng, speed=self.speeds or config.scenario.speed,
             r_inner=self.r_inner, r_outer=self.r_outer,
             pos_ci95=config.scenario.pos_ci95, vel_ci95=config.scenario.vel_ci95,
         )

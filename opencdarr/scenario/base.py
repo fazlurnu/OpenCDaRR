@@ -10,7 +10,7 @@ of a new experiment family. The concrete ones live one per file beside this modu
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 import numpy as np
 
@@ -30,12 +30,48 @@ Draw = Callable[[np.random.Generator], float]
 FleetScenario = list[tuple[AircraftState, tuple[float, float] | None]]
 
 
+def _per_aircraft_speeds(speed: float | Sequence[float], n: int) -> list[float]:
+    """One cruise speed per aircraft: a scalar applies to all, a sequence must match the fleet.
+
+    A mixed fleet needs the sequence form. A fixed-wing has a stall speed above a multirotor's
+    normal cruise — 12 m/s against 10 for the shipped envelopes — so a single fleet speed either
+    stalls one airframe or flies the other far above the speed it would really fly.
+    :class:`~opencdarr.fleet.Agent` refuses an out-of-envelope speed, so the mismatch fails where
+    it is written rather than flying wrong; this is what lets a scenario express the difference in
+    the first place.
+    """
+    if not hasattr(speed, "__len__"):
+        return [float(speed)] * n  # type: ignore[arg-type]
+    speeds = [float(v) for v in speed]  # type: ignore[union-attr]
+    if len(speeds) != n:
+        raise ValueError(f"speed has {len(speeds)} entries but the scenario places {n} aircraft")
+    return speeds
+
+
 def _heading_to(lat: float, lon: float, target: tuple[float, float], speed: float,
                 ac_id: str, pos_ci95: float = 0.0, vel_ci95: float = 0.0) -> AircraftState:
     """An aircraft at ``(lat, lon)`` flying at ``speed`` toward ``target`` (nose on the bearing)"""
     trk, _ = geo.qdrdist(lat, lon, target[0], target[1])
     return AircraftState(id=ac_id, lat=lat, lon=lon, trk=trk % 360.0, gs=speed,
                          pos_ci95=pos_ci95, vel_ci95=vel_ci95)
+
+
+def _per_aircraft_speeds(speed: float | Sequence[float], n: int) -> list[float]:
+    """One cruise speed per aircraft: a scalar applies to all, a sequence must match the fleet.
+
+    A mixed fleet needs the sequence form. A fixed-wing has a stall speed above a multirotor's
+    normal cruise — 12 m/s against 10 for the shipped envelopes — so a single fleet speed either
+    stalls one airframe or flies the other far above the speed it would really fly.
+    :class:`~opencdarr.fleet.Agent` refuses an out-of-envelope speed, so the mismatch fails where
+    it is written rather than flying wrong; this is what lets a scenario express the difference in
+    the first place.
+    """
+    if not hasattr(speed, "__len__"):
+        return [float(speed)] * n  # type: ignore[arg-type]
+    speeds = [float(v) for v in speed]  # type: ignore[union-attr]
+    if len(speeds) != n:
+        raise ValueError(f"speed has {len(speeds)} entries but the scenario places {n} aircraft")
+    return speeds
 
 
 def _heading_to(lat: float, lon: float, target: tuple[float, float], speed: float,
