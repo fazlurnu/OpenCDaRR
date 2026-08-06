@@ -1,6 +1,6 @@
 """IPR vs. communication quality — reception loss and latency, through the real loop.
 
-Two sweeps, both via the actual ``estimate_ipr`` / ``run_encounter`` path (not a standalone
+Two sweeps, both via the actual ``estimate_p_los`` / ``run_encounter`` path (not a standalone
 simulation): (1) IPR vs. ``reception_prob`` at zero latency, (2) IPR vs. latency spread at
 perfect reception. Same random-angle scenario as ``configs/pairwise.yaml`` (``dcpa_max=50``,
 ``tlos=60``, ``rpz=50``, ``lookahead=120``), no GPS noise, so communication is the only
@@ -35,7 +35,7 @@ from opencdarr.config import (  # noqa: E402
 )
 from opencdarr.cr import MVP  # noqa: E402
 from opencdarr.crr import PastCPA  # noqa: E402
-from opencdarr.estimator import estimate_ipr  # noqa: E402
+from opencdarr.estimator import estimate_p_los, pairwise  # noqa: E402
 from opencdarr.performance import M600  # noqa: E402
 
 SPEED, DCPA_MAX, TLOS, RPZ, LOOKAHEAD = 10.2889, 50.0, 60.0, 50.0, 120.0
@@ -57,9 +57,11 @@ def _config() -> Config:
 
 
 def _ipr(communication) -> float:
-    return estimate_ipr(
-        _config(), M600, StateBased(), MVP(1.05), PastCPA(), communication=communication
-    ).ipr
+    # IPR = 1 - P(LoS); the estimator reports the probability directly now (ADR 0022)
+    return 1.0 - estimate_p_los(
+        pairwise(M600), _config(), StateBased(), MVP(1.05), PastCPA(),
+        communication=communication,
+    ).p_los_run
 
 
 def run() -> dict:

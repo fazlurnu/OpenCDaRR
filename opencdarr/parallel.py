@@ -41,9 +41,9 @@ path already makes. Nothing here reorders a floating-point reduction.
     )
     print(est.p_los_run, est.p_los_ac, est.n_collapsed)
 
-``build_initial`` should return a *shared* particle when the geometry is pinned (build the env once
-outside it) — see ``scripts/ips_validate.py``. Pass ``verbose=10`` to watch joblib's progress on a
-long run, and :func:`describe_schedule` to log how the work was actually spread.
+``build_initial`` should return a *shared* particle when the geometry is pinned — build the env
+once outside it. Pass ``verbose=10`` to watch joblib's progress on a long run, and
+:func:`describe_schedule` to log how the work was actually spread.
 
 joblib is an optional dependency (``pip install 'opencdarr[parallel]'``), imported on use: this
 module must import cleanly without it, and only fails when actually asked for more than one worker.

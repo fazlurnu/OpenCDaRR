@@ -1,6 +1,6 @@
 """Fast mechanics locks for the IPS estimator (``opencdarr/ips.py``, ADR 0017).
 
-These do **not** re-run the slow IPS-vs-MC validation — that is ``scripts/ips_validate.py`` and the
+These do **not** re-run the slow IPS-vs-MC validation — that is ``scripts/validation/`` and the
 [[ips-gate1-correctness]] / [[ips-gate2-efficiency]] observations. They lock the cheap invariants:
 the estimate is the product of survival fractions, an unreachable shell collapses (``prob=0``,
 ``collapsed_at`` set), a single level does no resampling, runs are reproducible from seed, the

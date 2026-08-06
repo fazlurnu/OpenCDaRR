@@ -54,10 +54,11 @@ interacting particle system (IPS).
 *Done:* IPS agrees with brute-force MC in a *not-too-rare* regime; collision probability is
 reported **with a confidence interval**. *(how-to Steps 5–6.)*
 *Gate green:* `opencdarr/ips.py` (levels and splitting, ADR 0017) and `opencdarr/parallel.py`
-(scheduling across particles and replications, ADR 0018). `RareEventEstimate` carries a 95%
-confidence interval. The agreement gate is `scripts/ips_validate.py`, written up in
+(scheduling across particles and replications, ADR 0018). The agreement gate is written up in
 `vault/observations/ips-gate1-correctness.md`; the efficiency gate is
-`ips-gate2-efficiency.md`.
+`ips-gate2-efficiency.md`. The interval that gate reported has since been dropped (ADR 0022):
+the estimators are compared on the ratio of their estimates instead, and the script that ran
+the comparison is superseded by `scripts/validation/`.
 
 > **The next paper is written from v0.1–v0.4:** reproducible CDR robustness under CNS
 > uncertainty, extended to multi-aircraft encounters and rare-event collision-risk
