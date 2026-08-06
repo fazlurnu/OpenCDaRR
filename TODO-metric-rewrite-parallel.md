@@ -240,7 +240,27 @@ the change (and the reason `p_los_run` is kept rather than deleted).
 **Goal.** A worker budget that lands: `run_experiment` spends its whole budget where it helps. Do it
 right after item 1 — the tail leg and `n_lineages` it threads through are freshly in hand.
 
-- [ ] Up to one worker per condition → fan conditions out (current behaviour). **Past that** →
+- [x] ✅ **Done.** `run_experiment` now spends the budget where it helps: serial at 1 worker,
+  fan conditions out while `workers <= len(conditions)`, and past that run the conditions in turn
+  with the whole budget **inside** each cell. Never both, so no nested loky pools. `_run_mc` slices
+  the encounter fan-out into contiguous `children(root, lo, hi)` and pools with `combine_p_los`;
+  `_run_ips` hands off to `parallel.estimate_rare_prob` (ADR 0018 sharding). `n_jobs` is not in the
+  cache key. **517 tests pass**; the new `tests/test_experiment_parallel_budget.py` asserts equality
+  against the serial answer at 1/2/8 workers, for both backends, tail fields included.
+
+  **Measured at the rare setting** (`pos_ci95 = 10 m`, the recorded 4.7e-4 rung), one condition,
+  `n_jobs=-1` on 8 cores — the case that previously used a single core:
+
+  | | estimate | cost |
+  |---|---|---|
+  | MC, 120 000 encounters | `4.417e-4` (53 events) | 322 s |
+  | IPS, 8 reps x 800 particles, 7 shells | `5.701e-4`, 0 collapsed | 57 s |
+
+  Agreement **1.29x** (criterion: 5x at 1e-4 and below). **IPS 5.6x faster.** MC at 4 000
+  encounters finds *one* event — the starvation IPS exists to avoid. The MC anchor also reproduces
+  the vault's recorded 4.7e-4 independently, which is a check on the whole rewrite.
+
+- [ ] ~~Up to one worker per condition~~ *(original entry)* → fan conditions out. **Past that** →
   conditions run in turn and the budget goes **inside** each: MC splits its encounter fan-out into
   seed slices pooled by `combine_ipr`; IPS shards a level across workers via
   `parallel.estimate_rare_prob` (ADR 0018). **Never both** — loky pools must not nest.
