@@ -60,6 +60,7 @@ from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr.base import RecoveryCriterion
 from opencdarr.kinematics import Kinematics, MotionCommand
 from opencdarr.loop import _DEFAULT_KINEMATICS, _setpoint_adapter
+from opencdarr.measurement import MeasurementArea
 from opencdarr.performance import Performance
 from opencdarr.relative import Relative, relative_enu, segment_min_range
 from opencdarr.separation import INACTIVE, FleetMemory, SeparationManager, SetpointAdapter
@@ -343,6 +344,9 @@ class FleetEnv:
     done_timeout: float
     # if set, also stop once every goal-carrying aircraft is within this many metres of its goal
     stop_within: float | None = None
+    # Where a result counts. ``None`` measures everywhere, which is the default and the state
+    # every published number was produced in.
+    area: MeasurementArea | None = None
 
     def initial_state(self, agents: list[Agent]) -> FleetState:
         """The particle at ``t = 0``: each aircraft's intent stamped on its true state, its first
@@ -464,6 +468,17 @@ class FleetEnv:
         # per-pair vector (not just its min) also names which pairs crossed rpz, so K and A
         # accumulate here at no extra geometry (ADR 0022).
         per_pair = _pair_min_ranges(rel_pre, _pairwise_relative(states))
+        if self.area is not None:
+            # Flown, but not measured. A pair counts only where **both** aircraft are inside the
+            # study region: one of them still on its way in is the release artefact the area exists
+            # to exclude. An unmeasured pair is given an infinite range, so the one mask gates
+            # `min_sep`, `los` and the losing-pairs set together — which is what keeps `los`
+            # exactly `min_sep < rpz`.
+            inside = [self.area.contains(s.lat, s.lon) for s in states]
+            per_pair = tuple(
+                d if (inside[i] and inside[j]) else float("inf")
+                for (i, j), d in zip(_pair_ids(n), per_pair, strict=True)
+            )
         cur = min(per_pair, default=float("inf"))
         min_sep = min(state.min_sep, cur)
         los = state.los or cur < self.rpz
@@ -508,6 +523,7 @@ def build_env(
     schedule: BroadcastSchedule = _DEFAULT_SCHEDULE,
     share_intent: bool = False,
     stop_within: float | None = None,
+    area: MeasurementArea | None = None,
 ) -> FleetEnv:
     """Assemble the fixed rules of a fleet encounter into a :class:`FleetEnv` (the shared,
     immutable half of the estimator interface). This is the composition root :func:`run_fleet`
@@ -556,6 +572,7 @@ def build_env(
         t_max=t_max,
         done_timeout=done_timeout,
         stop_within=stop_within,
+        area=area,
     )
 
 
@@ -580,6 +597,7 @@ def run_fleet(
     broadcast_rng: np.random.Generator | None = None,
     share_intent: bool = False,
     stop_within: float | None = None,
+    area: MeasurementArea | None = None,
     record: bool = False,
 ) -> FleetOutcome:
     """Advance the fleet to termination and report its outcome (see the module docstring).
@@ -627,7 +645,7 @@ def run_fleet(
         agents, rpz=rpz, t_lookahead=t_lookahead, dt=dt, detector=detector, resolver=resolver,
         recovery=recovery, wind=wind, navigation=navigation, communication=communication,
         surveillance=surveillance, t_max=t_max, done_timeout=done_timeout, schedule=schedule,
-        share_intent=share_intent, stop_within=stop_within,
+        share_intent=share_intent, stop_within=stop_within, area=area,
     )
     streams = FleetStreams(cns=CnsStreams(nav=rng, comm=comm_rng), broadcast=broadcast_rng)
 
