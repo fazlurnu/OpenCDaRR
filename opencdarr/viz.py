@@ -169,16 +169,13 @@ def _run_outcome(run: Run) -> tuple[bool, bool, float]:
 
 
 def _montecarlo_stats(runs: Sequence[Run]) -> str:
-    """The header line for a sweep: ``P(LoS)``, ``IPR = 1 - n_los/n_conflict``, and median CPA."""
+    """The header line for a sweep: ``P(LoS/run)`` and the median minimum separation."""
     outcomes = [_run_outcome(r) for r in runs]
     n = len(outcomes)
-    n_conflict = sum(c for c, _, _ in outcomes)
     n_los = sum(los for _, los, _ in outcomes)
     p_los = n_los / n if n else float("nan")
-    ipr = 1.0 - n_los / n_conflict if n_conflict else float("nan")
-    cpa_med = float(np.median([m for _, _, m in outcomes])) if n else float("nan")
-    ipr_txt = "n/a" if math.isnan(ipr) else f"{ipr:.2f}"
-    return f"P(LoS)={p_los:.2f}  IPR={ipr_txt}  CPA med={cpa_med:.0f} m"
+    med_min_sep = float(np.median([m for _, _, m in outcomes])) if n else float("nan")
+    return f"P(LoS/run)={p_los:.2f}  median min sep={med_min_sep:.0f} m"
 
 
 def plot_pairwise_montecarlo(
@@ -194,8 +191,8 @@ def plot_pairwise_montecarlo(
     Each element of ``runs`` is a **recorded** run (``run_fleet(..., record=True)``, or its raw
     states log). Every aircraft keeps one colour across all runs, drawn at low opacity so the
     density of trajectories — where the fleet usually goes, and how far the tails spread — shows
-    through. The title carries the sweep's summary: ``P(LoS)``, the intrusion-prevention rate
-    (``IPR = 1 - n_los/n_conflict``), and the median closest approach (CPA).
+    through. The title carries the sweep's summary: ``P(LoS/run)`` and the median minimum
+    separation.
 
     By default the east axis is not held to the same scale as north (``equal_aspect=False``), so a
     narrow lateral spread is stretched to fill the width — the axis is labelled *(exaggerated)* to
