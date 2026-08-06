@@ -19,10 +19,10 @@ from opencdarr.crr import PastCPA
 # NOTE: historical BlueSky trajectory comparison. step_dynamics (the coupled-heading integrator)
 # was deleted in Phase 4c and the BlueSky trajectory anchor retired (ADR 0013); repointed to
 # Multirotor so the plumbing still runs.
-from opencdarr.kinematics import Command, Multirotor
-from opencdarr.loop import _INACTIVE, _decide
+from opencdarr.kinematics import MotionCommand, Multirotor
 from opencdarr.performance import M600
 from opencdarr.scenario import create_conflict
+from opencdarr.separation import INACTIVE, SeparationManager
 from opencdarr.state import AircraftState
 
 _DYN = Multirotor()
@@ -32,20 +32,21 @@ LOOKAHEAD, TLOS, TMAX = 120.0, 180.0, 250.0
 
 def run(dpsi: float) -> dict[str, np.ndarray]:
     det, res, rec = StateBased(), MVP(MARGIN), PastCPA(bouncing_guard=True)
+    sep_mgr = SeparationManager()
     own = AircraftState(id="OWN", lat=52.0, lon=4.0, trk=0.0, gs=SPEED)
     intr = create_conflict(own, intr_id="INT", dpsi=dpsi, dcpa=0.0, tlos=TLOS, rpz=RPZ, side=1)
-    nom_own = Command.from_track_speed(own.trk, own.gs)
-    nom_intr = Command.from_track_speed(intr.trk, intr.gs)
+    nom_own = MotionCommand.from_track_speed(own.trk, own.gs)
+    nom_intr = MotionCommand.from_track_speed(intr.trk, intr.gs)
     cmd_own, cmd_intr = nom_own, nom_intr
-    mem_own = mem_intr = _INACTIVE
+    mem_own = mem_intr = INACTIVE
     t, nb = 0.0, 0.0
     rows = []
     while t < TMAX + 1e-9:
         if t + 1e-9 >= nb:  # no noise: decide on the true states, once per broadcast interval
-            cmd_own, mem_own = _decide(
-                own, intr, nom_own, mem_own, RPZ, LOOKAHEAD, det, res, rec)
-            cmd_intr, mem_intr = _decide(
-                intr, own, nom_intr, mem_intr, RPZ, LOOKAHEAD, det, res, rec)
+            cmd_own, mem_own = sep_mgr.step(
+                own, [intr], nom_own, mem_own, RPZ, LOOKAHEAD, det, res, rec)
+            cmd_intr, mem_intr = sep_mgr.step(
+                intr, [own], nom_intr, mem_intr, RPZ, LOOKAHEAD, det, res, rec)
             nb += BCAST
         rows.append((t, own.gs, own.trk, own.lat, own.lon, float(mem_own.resolving), cmd_own.gs))
         own = _DYN.step(own, cmd_own, M600, DT)

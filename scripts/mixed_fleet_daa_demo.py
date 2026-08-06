@@ -1,9 +1,9 @@
 """Phase-4e demo: mixed-fleet DAA — how a fixed-wing and a multirotor fly the *same* avoidance.
 
 MVP emits a vehicle-neutral avoidance **velocity**. A multirotor takes it as a native setpoint; a
-fixed-wing cannot (it flies course + airspeed), so the loop projects the velocity onto its channels
-(``project_to_fixedwing``) and the airframe **converges** to it under a bank-limited turn and a
-stall-floored airspeed (ADR 0013 §4, Phase 4e).
+fixed-wing cannot (it flies course + airspeed), so the runner projects the velocity onto its
+channels (``project_to_fixedwing``) and the airframe **converges** to it under a bank-limited turn
+and a stall-floored airspeed (ADR 0013 §4, Phase 4e).
 
 To isolate the airframe response, one ownship of each type resolves the **same** conflict against
 the **same** non-cooperative intruder (StateBased + MVP + PastCPA). The contrast:
@@ -13,7 +13,7 @@ the **same** non-cooperative intruder (StateBased + MVP + PastCPA). The contrast
   bank-limited arc, so it resolves the same geometry mostly by heading, and converges to the
   commanded course rather than snapping to it.
 
-The headline ``min_sep`` from ``run_encounter`` with a real mixed pair (**both** running DAA, each
+The headline ``min_sep`` from ``run_fleet`` with a real mixed pair (**both** running DAA, each
 its own ``kinematics``/``perf`` — ADR 0011 §7) is printed too, tying the picture back to the gate.
 In the ``mixed-fleet-dubins-holonomic`` lineage (that demo's Dubins side is now a real FixedWing).
 
@@ -36,8 +36,8 @@ from opencdarr import geo  # noqa: E402
 from opencdarr.cd import StateBased  # noqa: E402
 from opencdarr.cr import MVP  # noqa: E402
 from opencdarr.crr import PastCPA  # noqa: E402
+from opencdarr.fleet import Agent, run_fleet  # noqa: E402
 from opencdarr.kinematics import FixedWing, Kinematics, MotionCommand, Multirotor  # noqa: E402
-from opencdarr.loop import run_encounter  # noqa: E402
 from opencdarr.performance import M600, SMALL_FIXEDWING, Performance  # noqa: E402
 from opencdarr.scenario import create_conflict  # noqa: E402
 from opencdarr.separation import INACTIVE, SeparationManager, project_to_fixedwing  # noqa: E402
@@ -103,12 +103,12 @@ def avoid(kinematics: Kinematics, perf: Performance, *, project: bool) -> list[t
 
 
 def mixed_min_sep() -> float:
-    """``run_encounter`` with a real mixed pair (fixed-wing OWN + multirotor INT, both DAA)."""
+    """``run_fleet`` with a real mixed pair (fixed-wing OWN + multirotor INT, both DAA)."""
     own, intr = _pair(GS)
-    return run_encounter(
-        own, intr, perf=M600, rpz=RPZ, t_lookahead=LOOKAHEAD, dt=DT,
+    return run_fleet(
+        [Agent(own, SMALL_FIXEDWING, kinematics=_FW), Agent(intr, M600, kinematics=_MR)],
+        rpz=RPZ, t_lookahead=LOOKAHEAD, dt=DT,
         detector=StateBased(), resolver=MVP(margin=1.1), recovery=PastCPA(bouncing_guard=True),
-        own_kinematics=_FW, own_perf=SMALL_FIXEDWING, intr_kinematics=_MR, intr_perf=M600,
     ).min_sep
 
 
@@ -220,7 +220,7 @@ def main() -> None:
     mr_min = min(_col(mr, 5))
     print(f"single-ownship vs straight INT:  FixedWing min sep {fw_min:.1f} m, "
           f"Multirotor min sep {mr_min:.1f} m (rpz {RPZ:.0f})")
-    print(f"real mixed pair (both DAA) via run_encounter: min sep {mixed:.1f} m -> "
+    print(f"real mixed pair (both DAA) via run_fleet: min sep {mixed:.1f} m -> "
           f"{'clear' if mixed >= RPZ else 'LOSS'}")
     out = Path(__file__).resolve().parents[1] / "vault/observations/img/mixed-fleet-daa.png"
     plot(fw, mr, mixed, out)

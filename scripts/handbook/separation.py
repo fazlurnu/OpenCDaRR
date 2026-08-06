@@ -136,8 +136,8 @@ def _run_pair(resolver: ConflictResolver, recovery: RecoveryCriterion, own0: Air
               intr0: AircraftState, tmax: float, dt: float = 0.2,
               lookahead: float = LOOKAHEAD) -> dict:
     """One no-noise, no-wind cooperative encounter (both aircraft detect/resolve/recover, exactly
-    as run_encounter threads them). Returns times, separation, both ground tracks, and the tick at
-    which the ownship reverts to its nominal (memory clears)."""
+    as the fleet runner threads them). Returns times, separation, both ground tracks, and the tick
+    at which the ownship reverts to its nominal (memory clears)."""
     sep, det = SeparationManager(), StateBased()
     own, intr = own0, intr0
     nom_o = MotionCommand.from_track_speed(own0.trk, own0.gs)

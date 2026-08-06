@@ -6,10 +6,10 @@ read `trk`/`gs` off `AircraftState`, and neither model changes what those mean (
 the "mixed fleet" case both ADR 0009's Consequences and `controlling-dubins-vs-holonomic.md`'s
 "What this doesn't cover yet" flagged as untried.
 
-`run_encounter` doesn't take per-aircraft `kinematics=`/`perf=` yet (that's a bigger, separate
-change), so this threads the CDR decide step (`loop._decide`) manually — same pattern as
-`scripts/trajectory_comparison/run_ours.py` — but calls each aircraft's own `Kinematics.step` to
-advance it, instead of one shared `step_dynamics` call for both.
+The fleet runner has taken per-aircraft `kinematics=`/`perf=` since Phase 4e; this demo keeps its
+hand-rolled loop as an illustration of the layers: it threads the CDR decide step
+(`SeparationManager.step`) manually — same pattern as `scripts/trajectory_comparison/run_ours.py`
+— and calls each aircraft's own `Kinematics.step` to advance it.
 
 Usage:  python scripts/mixed_fleet_demo.py
 
@@ -34,10 +34,10 @@ from opencdarr.crr import PastCPA  # noqa: E402
 # NOTE: historical demo. DubinsDynamics was deleted in Phase 4c (superseded by FixedWing); the real
 # multirotor-vs-fixed-wing mixed fleet lands in Phase 4e (needs the velocity->course projection).
 # Repointed to Multirotor for both sides so the velocity-command plumbing still runs.
-from opencdarr.kinematics import Command, Multirotor  # noqa: E402
-from opencdarr.loop import _INACTIVE, _decide  # noqa: E402
+from opencdarr.kinematics import MotionCommand, Multirotor  # noqa: E402
 from opencdarr.performance import M600  # noqa: E402
 from opencdarr.scenario import create_conflict  # noqa: E402
+from opencdarr.separation import INACTIVE, SeparationManager  # noqa: E402
 from opencdarr.state import AircraftState  # noqa: E402
 
 SPEED, RPZ, MARGIN = 10.2889, 50.0, 1.05
@@ -63,14 +63,15 @@ def _spans(t: np.ndarray, active: np.ndarray) -> list[tuple[float, float]]:
 
 def run() -> dict[str, np.ndarray]:
     det, res, rec = StateBased(), MVP(MARGIN), PastCPA(bouncing_guard=True)
+    sep_mgr = SeparationManager()
     own_kinematics, intr_kinematics = Multirotor(), Multirotor()
 
     own = AircraftState(id="OWN", lat=52.0, lon=4.0, trk=0.0, gs=SPEED)
     intr = create_conflict(own, intr_id="INT", dpsi=DPSI, dcpa=DCPA, tlos=TLOS, rpz=RPZ, side=1)
-    nom_own = Command.from_track_speed(own.trk, own.gs)
-    nom_intr = Command.from_track_speed(intr.trk, intr.gs)
+    nom_own = MotionCommand.from_track_speed(own.trk, own.gs)
+    nom_intr = MotionCommand.from_track_speed(intr.trk, intr.gs)
     cmd_own, cmd_intr = nom_own, nom_intr
-    mem_own = mem_intr = _INACTIVE
+    mem_own = mem_intr = INACTIVE
 
     m_lon = M_PER_DEG_LAT * np.cos(np.radians(52.0))
     t, next_bcast = 0.0, 0.0
@@ -78,10 +79,10 @@ def run() -> dict[str, np.ndarray]:
     min_sep = float("inf")
     while t < T_MAX + 1e-9:
         if t + 1e-9 >= next_bcast:  # no noise: decide on the true states, once per broadcast tick
-            cmd_own, mem_own = _decide(
-                own, intr, nom_own, mem_own, RPZ, LOOKAHEAD, det, res, rec)
-            cmd_intr, mem_intr = _decide(
-                intr, own, nom_intr, mem_intr, RPZ, LOOKAHEAD, det, res, rec)
+            cmd_own, mem_own = sep_mgr.step(
+                own, [intr], nom_own, mem_own, RPZ, LOOKAHEAD, det, res, rec)
+            cmd_intr, mem_intr = sep_mgr.step(
+                intr, [own], nom_intr, mem_intr, RPZ, LOOKAHEAD, det, res, rec)
             next_bcast += BCAST
 
         _, sep = geo.qdrdist(own.lat, own.lon, intr.lat, intr.lon)

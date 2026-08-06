@@ -1,7 +1,7 @@
 """Fixed-crossing-angle IPR sweep, parallelised with joblib.
 
 For each crossing angle, place one ``dcpa = 0`` conflict pair and run ``--n`` independent noise
-realisations through the encounter loop; report IPR = 1 − LoS / n (denominator = n_pair, since
+realisations through the fleet runner; report IPR = 1 − LoS / n (denominator = n_pair, since
 every pair is a constructed conflict). LoS is measured on the true separation.
 
 Examples
@@ -22,12 +22,12 @@ import numpy as np
 from joblib import Parallel, delayed
 
 from opencdarr.cd import StateBased
-from opencdarr.cns import GnssNavigation
+from opencdarr.cns import BroadcastSchedule, GnssNavigation
 from opencdarr.cr import MVP, VO
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr import FTR, PastCPA, ProbabilisticFTR
 from opencdarr.crr.base import RecoveryCriterion
-from opencdarr.loop import run_encounter
+from opencdarr.fleet import Agent, run_fleet
 from opencdarr.performance import M600
 from opencdarr.rng import generator, root_seed_sequence, spawn
 from opencdarr.scenario import create_conflict
@@ -58,12 +58,14 @@ def _one(dpsi: float, resolver_name: str, recovery_name: str, seq, cfg: argparse
     intr = create_conflict(
         own, intr_id="INT", dpsi=dpsi, dcpa=0.0, tlos=cfg.tlos, rpz=cfg.rpz, side=1)
     nav = GnssNavigation()
-    out = run_encounter(
-        own, intr, perf=M600, rpz=cfg.rpz, t_lookahead=cfg.lookahead, dt=cfg.dt,
+    out = run_fleet(
+        [Agent(own, M600), Agent(intr, M600)],
+        rpz=cfg.rpz, t_lookahead=cfg.lookahead, dt=cfg.dt,
         detector=StateBased(), resolver=_resolver(resolver_name, cfg.margin),
         recovery=_recovery(recovery_name, cfg.bouncing_guard, cfg.prob_threshold, cfg.ktheta),
         navigation=nav, rng=generator(seq),
-        t_max=cfg.t_max, done_timeout=cfg.done_timeout, broadcast_interval=cfg.broadcast_interval,
+        t_max=cfg.t_max, done_timeout=cfg.done_timeout,
+        schedule=BroadcastSchedule(interval=cfg.broadcast_interval),
         share_intent=cfg.share_intent)
     return out
 

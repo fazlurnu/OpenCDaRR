@@ -34,8 +34,8 @@ from opencdarr.cd import StateBased  # noqa: E402
 from opencdarr.cns import GnssNavigation  # noqa: E402
 from opencdarr.cr import MVP  # noqa: E402
 from opencdarr.crr import PastCPA  # noqa: E402
+from opencdarr.fleet import Agent, run_fleet  # noqa: E402
 from opencdarr.kinematics import FixedWing, Multirotor  # noqa: E402
-from opencdarr.loop import run_encounter  # noqa: E402
 from opencdarr.performance import M600, SMALL_FIXEDWING, Performance  # noqa: E402
 from opencdarr.rng import generator, root_seed_sequence, spawn  # noqa: E402
 from opencdarr.scenario import create_conflict  # noqa: E402
@@ -63,12 +63,12 @@ def _one(
     )
     intr = create_conflict(
         own, intr_id="INT", dpsi=cfg.dpsi, dcpa=0.0, tlos=cfg.tlos, rpz=cfg.rpz, side=1)
-    out = run_encounter(
-        own, intr, perf=intr_perf, rpz=cfg.rpz, t_lookahead=cfg.lookahead, dt=cfg.dt,
+    out = run_fleet(
+        [Agent(own, own_perf, kinematics=own_kinematics),
+         Agent(intr, intr_perf, kinematics=intr_kinematics)],
+        rpz=cfg.rpz, t_lookahead=cfg.lookahead, dt=cfg.dt,
         detector=StateBased(), resolver=MVP(margin=cfg.margin),
         recovery=PastCPA(bouncing_guard=True),
-        own_kinematics=own_kinematics, own_perf=own_perf,
-        intr_kinematics=intr_kinematics, intr_perf=intr_perf,
         wind=wind, navigation=GnssNavigation(), rng=generator(seq),
     )
     return out.los, out.min_sep

@@ -11,9 +11,8 @@ through :func:`~opencdarr.fleet.run_fleet` over ``--n`` seeded GNSS-noise realis
 fleet size answers "does detect-and-avoid hold as traffic thickens?": more aircraft on the same
 ring means a denser centre crossing and less room to manoeuvre, so the IPR degrades with density.
 
-**Reduces to the pairwise IPR at N = 2** (the plan's check): the two-aircraft ring is a head-on
-pair, and ``run_fleet`` on it is bit-for-bit ``run_encounter`` (``test_fleet.py``). ``--verify-n2``
-re-runs that pair through *both* runners on the same substreams and asserts LoS / min-sep match.
+**Reduces to the pairwise IPR at N = 2**: the two-aircraft ring is a head-on pair, and the n = 2
+``min_sep`` anchors in ``test_fleet.py`` pin exactly what ``run_fleet`` does with one.
 
     PYTHONPATH=. python scripts/ipr_fleet_sweep.py                 # MVP + VO, default sweep + plot
     PYTHONPATH=. python scripts/ipr_fleet_sweep.py --n 500 --jobs 8
@@ -46,7 +45,6 @@ from opencdarr.cr import MVP, VO  # noqa: E402
 from opencdarr.cr.base import ConflictResolver  # noqa: E402
 from opencdarr.crr import PastCPA  # noqa: E402
 from opencdarr.fleet import Agent, FleetOutcome, run_fleet  # noqa: E402
-from opencdarr.loop import run_encounter  # noqa: E402
 from opencdarr.performance import M600  # noqa: E402
 from opencdarr.rng import generator, root_seed_sequence, spawn  # noqa: E402
 
@@ -88,28 +86,6 @@ def _one(
 def _baseline_min_sep(n: int, resolver_name: str, cfg: argparse.Namespace) -> float:
     """The deterministic (noiseless) fleet min-sep — the margin noise then eats into."""
     return run_fleet(_ring_agents(n, cfg), **_kwargs(cfg, resolver_name)).min_sep
-
-
-def _verify_n2(seqs: list[np.random.SeedSequence], cfg: argparse.Namespace) -> None:
-    """At N = 2 the ring is a head-on pair; run_fleet must match run_encounter on each seed."""
-    fleet = sc.swap_ring(2, speed=cfg.speed, radius=cfg.radius)
-    own = replace(fleet[0][0], pos_ci95=cfg.pos_ci95, vel_ci95=cfg.vel_ci95)
-    intr = replace(fleet[1][0], pos_ci95=cfg.pos_ci95, vel_ci95=cfg.vel_ci95)
-    # both runners take the same BroadcastSchedule now, so the comparison uses one kwargs bundle.
-    # It used to strip the schedule and substitute its interval, which was equivalent only while
-    # the schedule stayed aligned and jitter-free — adding either would have quietly compared a
-    # dithered fleet run against an undithered pairwise one.
-    kw = _kwargs(cfg, "mvp")
-    mismatches = 0
-    for seq in seqs:
-        enc = run_encounter(own, intr, perf=M600, navigation=GnssNavigation(),
-                            rng=generator(seq), **kw)
-        flt = run_fleet([Agent(own, M600), Agent(intr, M600)], navigation=GnssNavigation(),
-                        rng=generator(seq), **kw)
-        if (enc.los, enc.min_sep) != (flt.los, flt.min_sep):
-            mismatches += 1
-    verdict = "IDENTICAL" if mismatches == 0 else f"{mismatches} MISMATCH(es)"
-    print(f"verify N=2: run_fleet == run_encounter over {len(seqs)} substreams -> {verdict}")
 
 
 def plot(
@@ -177,7 +153,6 @@ def main() -> None:
     p.add_argument("--n", type=int, default=200, help="noise realisations per point")
     p.add_argument("--jobs", type=int, default=4)
     p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--no-verify-n2", dest="verify_n2", action="store_false", default=True)
     cfg = p.parse_args()
 
     # same substreams per point, reused across sizes/resolvers -> a controlled comparison
@@ -186,9 +161,6 @@ def main() -> None:
           f"radius={cfg.radius:.0f} m, speed={cfg.speed:.0f} m/s, GNSS {cfg.pos_ci95:.0f} m/"
           f"{cfg.vel_ci95:.0f}(m/s), lookahead={cfg.lookahead:.0f}, margin={cfg.margin}, "
           f"{cfg.n} seeds, joblib {cfg.jobs} cores")
-    if cfg.verify_n2:
-        _verify_n2(seqs, cfg)
-
     print(f"{'resolver':>9} {'N':>4} {'IPR':>8} {'any-LoS':>10} "
           f"{'median min-sep':>16} {'noiseless':>12}")
     t0 = time.time()
