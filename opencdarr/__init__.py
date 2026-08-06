@@ -83,6 +83,7 @@ from opencdarr.kinematics.base import Kinematics, MotionCommand
 from opencdarr.kinematics.fixedwing import FixedWing
 from opencdarr.kinematics.multirotor import Multirotor
 from opencdarr.loop import run_encounter
+from opencdarr.measurement import Disc, MeasurementArea, Polygon, Rectangle
 from opencdarr.performance import M600, SMALL_FIXEDWING, Performance
 from opencdarr.rng import generator, root_seed_sequence, spawn
 from opencdarr.scenario import create_conflict, sample_pairwise
@@ -106,6 +107,7 @@ __all__ = [
     "Comm",
     "CommunicationModel",
     "Config",
+    "Disc",
     "ConflictDetector",
     "ConflictResolver",
     "Kinematics",
@@ -117,6 +119,7 @@ __all__ = [
     "LastKnown",
     "M600",
     "Methods",
+    "MeasurementArea",
     "MonteCarloEstimate",
     "MotionCommand",
     "Multirotor",
@@ -126,8 +129,10 @@ __all__ = [
     "NavigationModel",
     "NoiseDistribution",
     "PastCPA",
+    "Polygon",
     "Performance",
     "ProbabilisticFTR",
+    "Rectangle",
     "RecoveryCriterion",
     "StateBased",
     "Sweep",
