@@ -54,6 +54,7 @@ import numpy as np
 import yaml
 
 from opencdarr import cache, registry
+from opencdarr.autopilot import WaypointAutopilot
 from opencdarr.cache import DEFAULT_CACHE_DIR
 from opencdarr.cd.base import ConflictDetector
 from opencdarr.cns.base import CommunicationModel, NavigationModel, SurveillanceModel
@@ -65,15 +66,19 @@ from opencdarr.crr.base import RecoveryCriterion
 from opencdarr.estimator import (
     EncounterBuilder,
     MonteCarloEstimate,
+    combine_p_los,
     estimate_p_los,
-    pairwise,
 )
-from opencdarr.fleet import Airframe, build_env
+from opencdarr.fleet import Agent, Airframe, build_env
 from opencdarr.ips import Particle, RareEventEstimate, estimate_rare_prob
 from opencdarr.kinematics import Kinematics
+from opencdarr.mission import Mission
 from opencdarr.parallel import _joblib, resolve_jobs
+from opencdarr.parallel import estimate_rare_prob as estimate_rare_prob_parallel
 from opencdarr.performance import Performance
-from opencdarr.rng import generator
+from opencdarr.rng import children, generator, root_seed_sequence
+from opencdarr.scenario import PairwiseEncounter, Scenario
+from opencdarr.scenario.base import FleetScenario
 from opencdarr.wind import NO_WIND, WindField
 
 # --- what can be declared -------------------------------------------------------------------
@@ -92,11 +97,6 @@ _SIMULATION_FIELDS = frozenset(
 )
 _GEOMETRY_SLOTS = frozenset({"dpsi", "dcpa", "side", "gs_intr"})
 
-# Builds the encounter model for a cell: the airframe spelling (plus, for the pairwise scenario,
-# whichever of _GEOMETRY_SLOTS the condition pins) in, an EncounterBuilder out. A scenario with a
-# fixed fleet — a ring, a traffic sample — binds its own size when it is constructed, so it takes
-# no geometry slots and the estimator learns N from the agents it returns.
-ScenarioFactory = Callable[..., EncounterBuilder]
 # Every field of `Methods`, so declaring one as an axis overrides the bundle per condition.
 # `wind` is not a pluggable model but it is a per-run input the bundle carries, so it is swept the
 # same way — `wind=Sweep([NO_WIND, WindField.from_met(270, 8)])`.
@@ -236,14 +236,17 @@ class Methods:
     :func:`~opencdarr.fleet.run_fleet`. Bundling ``perf`` with ``kinematics`` also makes a
     mismatched pair unrepresentable in the declaration instead of caught a layer down.
 
-    ``scenario`` is the **encounter model**: a factory that takes the fleet's airframe spelling
-    (and, for the pairwise one, its geometry pins) and returns an
-    :data:`~opencdarr.estimator.EncounterBuilder`. It defaults to
-    :func:`~opencdarr.estimator.pairwise`, so an undeclared experiment is the two-aircraft study it
-    always was. Because it is a field of this bundle it is swept like any other component —
-    ``scenario=Sweep([4, 8], build=lambda n: ring(n), name="n")`` is a fleet-size axis — and
-    because *both* backends build their encounter from it, a ring or a traffic sample reaches MC
-    and IPS from one declaration. That is what lets the two be compared on anything but a pair.
+    ``scenario`` is the **encounter model** — a :class:`~opencdarr.scenario.Scenario`, which turns
+    one seed into one fleet. It defaults to
+    :class:`~opencdarr.scenario.PairwiseEncounter`, so an undeclared experiment is the two-aircraft
+    study it always was. Because it is a field of this bundle it is swept like any other component
+    — ``scenario=Sweep([4, 8], build=lambda n: CrossingRing(n=n), name="n")`` is a fleet-size axis
+    — and because *both* backends build their encounter from it, a ring or a traffic sample reaches
+    MC and IPS from one declaration.
+
+    The scenario also carries its own measurement area, so "fill this disc, measure inside that
+    one" is a single declaration rather than two that can disagree. Nothing here takes an area
+    separately.
 
     ``wind`` is the odd one out: it is a steady environment input rather than a pluggable model, so
     it has no ABC and lives here for the same reason ``perf`` does — the run needs it and no
@@ -262,7 +265,7 @@ class Methods:
     perf: Performance | None = None
     wind: WindField = NO_WIND
     airframes: Sequence[Airframe] | None = None
-    scenario: ScenarioFactory = pairwise
+    scenario: Scenario = PairwiseEncounter()
 
     def __post_init__(self) -> None:
         # One spelling for one thing. ``perf``/``kinematics`` say "every aircraft is this
@@ -418,6 +421,40 @@ def _validate_declared_accuracy_is_read(
         )
 
 
+def _scenario_for(condition: Condition, m: Methods) -> Scenario:
+    """This cell's scenario, with any declared geometry slot pinned onto it.
+
+    ``with_pins`` is what keeps ``dpsi=Sweep([...])`` a real axis: the pins are declared per
+    condition, so the scenario is rebuilt per condition rather than carrying one fixed geometry.
+    A scenario with no slots refuses them, so declaring ``dpsi`` over a ring fails here instead of
+    silently doing nothing.
+    """
+    pins = {k: v for k, v in dict(condition.values).items() if k in _GEOMETRY_SLOTS}
+    return m.scenario.with_pins(**pins)
+
+
+def _agents_from(fleet: FleetScenario, m: Methods) -> list[Agent]:
+    """Pair an airframe-neutral fleet with the airframes that fly it.
+
+    The scenario says *what geometry*; ``Methods`` says *what aircraft*. Keeping the two apart is
+    what lets one ring be flown by a multirotor fleet, a fixed-wing fleet or a mixed one without
+    the scenario knowing. A goal becomes a waypoint mission; ``None`` leaves the aircraft holding
+    its cruise, which is what a pairwise encounter wants — there is nowhere to arrive.
+    """
+    perf = _base_perf(m)
+    agents: list[Agent] = []
+    for k, (state, goal) in enumerate(fleet):
+        autopilot = (
+            None if goal is None
+            else WaypointAutopilot(Mission(goto=goal), cruise_airspeed=state.gs)
+        )
+        if m.airframes is None:
+            agents.append(Agent(state, perf, kinematics=m.kinematics, autopilot=autopilot))
+        else:
+            agents.append(m.airframes[k].agent(state, autopilot))
+    return agents
+
+
 def _encounter_builder(condition: Condition, m: Methods) -> EncounterBuilder:
     """This cell's encounter model, built once and used by *both* backends.
 
@@ -426,25 +463,46 @@ def _encounter_builder(condition: Condition, m: Methods) -> EncounterBuilder:
     cell for cell, so a difference in how they build it would read as a difference between the
     estimators (ADR 0017 §4 — the initial cloud is drawn from the distribution MC integrates over).
     """
-    geometry = {k: v for k, v in dict(condition.values).items() if k in _GEOMETRY_SLOTS}
-    return m.scenario(_base_perf(m), kinematics=m.kinematics, airframes=m.airframes, **geometry)
+    scenario = _scenario_for(condition, m)
+
+    def build(rng: np.random.Generator, config: Config) -> list[Agent]:
+        return _agents_from(scenario.draw(rng, config), m)
+
+    return build
 
 
 def _run_mc(condition: Condition, base: Config, methods: Methods, backend: MC,
-            seed: int) -> MonteCarloEstimate:
-    """One MC cell: ``estimate_p_los`` over this condition's config, components and scenario."""
-    cfg = _config_for(condition, base, backend.n_encounters)
+            seed: int, jobs: int = 1) -> MonteCarloEstimate:
+    """One MC cell: ``estimate_p_los`` over this condition's config, components and scenario.
+
+    ``jobs`` above 1 splits the encounter fan-out into contiguous seed slices and pools the counts
+    (:func:`~opencdarr.estimator.combine_p_los`). Each slice is ``children(root, lo, hi)`` of the
+    *same* tree the serial run walks, and the parts are combined in submission order, so the pooled
+    result is the serial one exactly — not merely an equivalent sample.
+    """
+    cfg = dataclasses.replace(_config_for(condition, base, backend.n_encounters), seed=seed)
     m = _resolved_methods(condition, methods)
-    return estimate_p_los(
-        _encounter_builder(condition, m),
-        dataclasses.replace(cfg, seed=seed),
-        m.detector, m.resolver, m.recovery, m.navigation, m.communication, m.surveillance,
-        wind=m.wind,
+    build = _encounter_builder(condition, m)
+    models = (m.detector, m.resolver, m.recovery, m.navigation, m.communication, m.surveillance)
+
+    n = backend.n_encounters
+    area = _scenario_for(condition, m).measurement_area()
+    if jobs <= 1 or n < 2:
+        return estimate_p_los(build, cfg, *models, wind=m.wind, area=area)
+
+    root = root_seed_sequence(cfg.seed)
+    bounds = [(n * i // jobs, n * (i + 1) // jobs) for i in range(jobs)]
+    parallel_cls, delayed = _joblib()
+    parts = parallel_cls(n_jobs=jobs)(
+        delayed(estimate_p_los)(build, cfg, *models, wind=m.wind, area=area,
+                                seqs=children(root, lo, hi))
+        for lo, hi in bounds if hi > lo
     )
+    return combine_p_los(list(parts))
 
 
 def _run_ips(condition: Condition, base: Config, methods: Methods, backend: IPS,
-             seed: int) -> RareEventEstimate:
+             seed: int, jobs: int = 1) -> RareEventEstimate:
     """One IPS cell: split the *same* environment MC just ran, over this condition's shells.
 
     ``build_initial`` builds one encounter per particle from that particle's own seed, through the
@@ -466,7 +524,7 @@ def _run_ips(condition: Condition, base: Config, methods: Methods, backend: IPS,
             dt=cfg.simulation.dt, detector=m.detector, resolver=m.resolver, recovery=m.recovery,
             navigation=m.navigation, communication=m.communication, surveillance=m.surveillance,
             t_max=cfg.simulation.t_max, done_timeout=cfg.simulation.done_timeout,
-            wind=m.wind,
+            wind=m.wind, area=_scenario_for(condition, m).measurement_area(),
             # the transmit timing, which this call omitted entirely: build_env then fell back to
             # the 1 s default, so a declared broadcast_interval reached MC and was silently
             # dropped by IPS. Built through the same schedule_for MC uses, so the two cannot
@@ -479,6 +537,14 @@ def _run_ips(condition: Condition, base: Config, methods: Methods, backend: IPS,
         )
         return Particle(env=env, state=env.initial_state(agents))
 
+    if jobs > 1:
+        # ADR 0018: shard each level across the workers, so the usable core count stops being
+        # capped by `reps` — which is a statistical choice, not a hardware one.
+        return estimate_rare_prob_parallel(
+            build_initial, backend.shells,
+            n_particles=backend.n_particles, reps=backend.reps, seed=seed, tail=backend.tail,
+            n_jobs=jobs,
+        )
     return estimate_rare_prob(
         build_initial, backend.shells,
         n_particles=backend.n_particles, reps=backend.reps, seed=seed, tail=backend.tail,
@@ -915,20 +981,23 @@ def _run_one(
     backend: Backend,
     seed: int,
     cache_dir: Path | None,
+    jobs: int = 1,
 ) -> Any:
     """One condition, through the cache when one is configured.
 
     Module-level (not a closure) so a parallel worker can pickle it. The cell is keyed on its
     resolved config, its component identities, its geometry pins, the backend and the seed — plus
-    the library code fingerprint, which :func:`opencdarr.cache.run_key` adds.
+    the library code fingerprint, which :func:`opencdarr.cache.run_key` adds. ``jobs`` is
+    deliberately **not** in that key: it changes the wall time and no number, so keying on it would
+    store several identical copies of one cell and re-run after every change of machine.
     """
     n = backend.n_encounters if isinstance(backend, MC) else backend.n_particles
     config = dataclasses.replace(_config_for(condition, base_config, n), seed=seed)
 
     def compute() -> Any:
         if isinstance(backend, MC):
-            return _run_mc(condition, base_config, methods, backend, seed)
-        return _run_ips(condition, base_config, methods, backend, seed)
+            return _run_mc(condition, base_config, methods, backend, seed, jobs)
+        return _run_ips(condition, base_config, methods, backend, seed, jobs)
 
     if cache_dir is None:
         return compute()
@@ -959,10 +1028,19 @@ def run_experiment(
     :class:`CacheIdentityError` rather than key a component it cannot identify — see
     :func:`identity`.
 
-    ``n_jobs`` spreads the conditions over processes (joblib's convention: ``-1`` is every core).
-    Conditions are independent by construction — each is its own seeded fan-out — so this is a pure
-    scheduling choice with no effect on the numbers. It needs the ``parallel`` extra, and the
-    components must be picklable, which rules out a lambda held on a component instance.
+    ``n_jobs`` is the worker budget (joblib's convention: ``-1`` is every core), and it is spent
+    where it helps. Up to one worker per condition the conditions are fanned out, which is the
+    cheapest split because nothing crosses a process boundary but a seed and a result. Past that
+    the conditions run in turn and the budget goes **inside** each one: Monte Carlo slices its
+    encounter fan-out, and the splitting estimator shards each level (ADR 0018). Never both at
+    once — two pools would nest, and loky does not survive that.
+
+    That second mode is the one that matters for a rare-event study, which is often a single
+    condition and hours long: without it such a cell runs on one core however many are free.
+
+    It is a pure scheduling choice with no effect on the numbers, and it is not part of the cache
+    key. It needs the ``parallel`` extra, and the components must be picklable, which rules out a
+    lambda held on a component instance.
 
     ``card_dir`` writes one provenance card for the run; ``None`` (default) writes nothing.
     """
@@ -981,13 +1059,21 @@ def run_experiment(
         results: tuple[Any, ...] = tuple(
             _run_one(c, base_config, methods, backend, seed, cache_dir) for c in conditions
         )
-    else:
+    elif workers <= len(conditions):
+        # more conditions than workers: fan the conditions out, one core each
         parallel_cls, delayed = _joblib()
         results = tuple(
             parallel_cls(n_jobs=workers)(
                 delayed(_run_one)(c, base_config, methods, backend, seed, cache_dir)
                 for c in conditions
             )
+        )
+    else:
+        # more workers than conditions: run the conditions in turn and spend the whole budget
+        # inside each cell. Fanning conditions out here would leave the surplus workers idle.
+        results = tuple(
+            _run_one(c, base_config, methods, backend, seed, cache_dir, jobs=workers)
+            for c in conditions
         )
 
     result = ExperimentResult(

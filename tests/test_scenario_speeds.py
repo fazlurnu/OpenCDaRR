@@ -58,7 +58,8 @@ def test_a_mixed_fleet_can_now_be_placed_at_all() -> None:
     assert SMALL_FIXEDWING.v_min > 10.0        # the stall speed that makes one number impossible
 
     fleet = swap_pair(speed=[10.0, 14.0])
-    agents = [Agent(state, perf) for (state, _), perf in zip(fleet, (M600, SMALL_FIXEDWING))]
+    pairs = zip(fleet, (M600, SMALL_FIXEDWING), strict=True)
+    agents = [Agent(state, perf) for (state, _), perf in pairs]
     assert [a.state.gs for a in agents] == [10.0, 14.0]
 
     # and the shared-speed version really is refused, rather than merely discouraged

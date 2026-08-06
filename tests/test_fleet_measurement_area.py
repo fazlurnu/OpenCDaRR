@@ -12,8 +12,6 @@ off the record.
 
 from __future__ import annotations
 
-import pytest
-
 from opencdarr import geo
 from opencdarr.cd import StateBased
 from opencdarr.fleet import Agent, run_fleet

@@ -36,6 +36,7 @@ from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr.base import RecoveryCriterion
 from opencdarr.fleet import Agent, Airframe, run_fleet
 from opencdarr.kinematics import Kinematics
+from opencdarr.measurement import MeasurementArea
 from opencdarr.performance import Performance
 from opencdarr.rng import generator, root_seed_sequence, spawn
 from opencdarr.scenario import Draw, sample_pairwise
@@ -251,6 +252,7 @@ def estimate_p_los(
     *,
     wind: WindField = NO_WIND,
     share_intent: bool = False,
+    area: MeasurementArea | None = None,
     seqs: Sequence[np.random.SeedSequence] | None = None,
 ) -> MonteCarloEstimate:
     """Run the plain-MC estimate over ``config.n_encounters`` sampled encounters.
@@ -261,7 +263,8 @@ def estimate_p_los(
     that flew — so the same estimator serves a crossing pair and an eight-aircraft ring.
 
     ``wind`` and ``share_intent`` are the per-run settings the fleet environment takes; everything
-    about *which* aircraft fly, and how they are equipped, belongs to ``build``.
+    about *which* aircraft fly, and how they are equipped, belongs to ``build``. ``area`` restricts
+    where a result counts (:mod:`opencdarr.measurement`); ``None`` measures everywhere.
 
     ``seqs`` overrides which per-encounter substreams to run, defaulting to the whole fan-out
     ``spawn(root_seed_sequence(config.seed), config.n_encounters)``. It exists so a caller can run
@@ -318,6 +321,7 @@ def estimate_p_los(
             broadcast_rng=generator(bc_seq),
             wind=wind,
             share_intent=share_intent,
+            area=area,
         )
         # counted unconditionally, and independently of each other: a lost separation is a lost
         # separation whether or not the detector ever flagged that encounter. (The old code nested
