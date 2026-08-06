@@ -61,10 +61,10 @@ from opencdarr.config import (
     ScenarioConfig,
     SimulationConfig,
 )
-from opencdarr.estimator import estimate_p_los, pairwise
+from opencdarr.estimator import estimate_p_los
 from opencdarr.fleet import Agent, run_fleet
 from opencdarr.performance import M600
-from opencdarr.scenario import create_conflict, sample_pairwise
+from opencdarr.scenario import create_conflict, pairwise, sample_pairwise
 from opencdarr.state import AircraftState
 from opencdarr.viz import extract_tracks
 

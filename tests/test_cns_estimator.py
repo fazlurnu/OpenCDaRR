@@ -17,11 +17,11 @@ from opencdarr.config import (
 )
 from opencdarr.cr import MVP
 from opencdarr.crr import PastCPA
-from opencdarr.estimator import estimate_p_los, pairwise
+from opencdarr.estimator import estimate_p_los
 from opencdarr.fleet import Agent, run_fleet
 from opencdarr.performance import M600
 from opencdarr.rng import generator, root_seed_sequence, spawn
-from opencdarr.scenario import sample_pairwise
+from opencdarr.scenario import pairwise, sample_pairwise
 
 # GnssNavigation reads its noise magnitude from the sampled states' own vel_ci95 (95% radial),
 # not a per-axis sigma: 2.4477x a sigma value, so these keep the same effective noise level as

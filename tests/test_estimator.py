@@ -22,12 +22,12 @@ from opencdarr.estimator import (
     MonteCarloEstimate,
     combine_p_los,
     estimate_p_los,
-    pairwise,
 )
 from opencdarr.kinematics import Kinematics, MotionCommand
 from opencdarr.kinematics.base import odometry_update
 from opencdarr.performance import M600, Performance
 from opencdarr.rng import children, root_seed_sequence
+from opencdarr.scenario import pairwise
 from opencdarr.state import AircraftState
 from opencdarr.wind import NO_WIND, WindField
 

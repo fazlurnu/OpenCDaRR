@@ -39,7 +39,7 @@ multi-aircraft regression (ADR 0004). Pure given its inputs; no globals.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, replace
 
 import numpy as np
@@ -54,6 +54,7 @@ from opencdarr.cns.base import (
 )
 from opencdarr.cns.broadcast import BroadcastSchedule
 from opencdarr.cns.stack import CNS, CnsState, CnsStreams
+from opencdarr.config import Config
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr.base import RecoveryCriterion
 from opencdarr.kinematics import FixedWing, Kinematics, MotionCommand, Multirotor
@@ -159,6 +160,19 @@ class Airframe:
     def agent(self, state: AircraftState, autopilot: Autopilot | None = None) -> Agent:
         """This airframe flying ``state`` — the one place the pair is unpacked into an `Agent`."""
         return Agent(state, self.perf, kinematics=self.kinematics, autopilot=autopilot)
+
+
+EncounterBuilder = Callable[[np.random.Generator, Config], list[Agent]]
+"""Build one encounter's fleet from its own geometry stream and the run's config.
+
+The estimator's encounter model, and the only thing that decides **N**: whatever list of
+:class:`Agent` comes back is flown as-is, so a builder returning two agents is a
+pairwise study and one returning eight is a fleet study, through the same estimator. The IPS side
+takes the same shape (``build_initial``), which is what lets one campaign drive both backends.
+
+Draw every random choice from the generator handed in — it is this encounter's own substream, so a
+builder that draws from anywhere else breaks reproducibility (ADR 0001).
+"""
 
 
 @dataclass(frozen=True)

@@ -9,6 +9,7 @@ from opencdarr.scenario.pairwise import (
     PairwiseEncounter,
     create_conflict,
     near_parallel,
+    pairwise,
     sample_pairwise,
     swap_pair,
 )
@@ -44,6 +45,7 @@ __all__ = [
     "aircraft_for_density",
     "measurement_area",
     "near_parallel",
+    "pairwise",
     "random_traffic",
     "sample_pairwise",
     "swap_pair",

@@ -66,12 +66,11 @@ from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr import ProbabilisticFTR
 from opencdarr.crr.base import RecoveryCriterion
 from opencdarr.estimator import (
-    EncounterBuilder,
     MonteCarloEstimate,
     combine_p_los,
     estimate_p_los,
 )
-from opencdarr.fleet import Agent, Airframe, build_env
+from opencdarr.fleet import Agent, Airframe, EncounterBuilder, build_env
 from opencdarr.ips import Particle, RareEventEstimate, estimate_rare_prob
 from opencdarr.kinematics import Kinematics
 from opencdarr.mission import Mission

@@ -26,6 +26,9 @@ import numpy as np
 
 from opencdarr import geo
 from opencdarr.config import Config
+from opencdarr.fleet import Agent, Airframe, EncounterBuilder
+from opencdarr.kinematics import Kinematics
+from opencdarr.performance import Performance
 from opencdarr.scenario.base import (
     Draw,
     FleetScenario,
@@ -272,3 +275,58 @@ class PairwiseEncounter(Scenario):
         if unknown:
             raise ValueError(f"not a pairwise geometry slot: {sorted(unknown)}")
         return dataclasses.replace(self, **pins)  # type: ignore[arg-type]
+
+
+def pairwise(
+    perf: Performance,
+    *,
+    kinematics: Kinematics | None = None,
+    airframes: Sequence[Airframe] | None = None,
+    dpsi: float | Draw | None = None,
+    dcpa: float | Draw | None = None,
+    side: int | Draw | None = None,
+    gs_intr: float | Draw | None = None,
+) -> EncounterBuilder:
+    """The two-aircraft encounter builder: one ownship, one intruder crossing it.
+
+    The standard :data:`~opencdarr.fleet.EncounterBuilder` — :func:`sample_pairwise` drawn from
+    the encounter's own stream, wrapped as a pair of agents. Everything specific to a *pairwise*
+    encounter lives here, beside the sampler it wraps, which is what leaves
+    :func:`~opencdarr.estimator.estimate_p_los` with nothing to say about N.
+
+    ``kinematics`` is the airframe both aircraft fly (``None`` = the fleet default
+    :class:`~opencdarr.kinematics.Multirotor`, ADR 0007).
+
+    ``airframes`` is the **mixed-fleet** spelling: one :class:`~opencdarr.fleet.Airframe` per
+    aircraft (ownship first), overriding ``perf`` and ``kinematics`` entirely. Give the two
+    aircraft different envelopes and the sampler must give each a speed its own airframe can fly —
+    ``speed`` for the ownship, ``gs_intr`` for the intruder — or :class:`~opencdarr.fleet.Agent`
+    refuses the encounter.
+
+    ``dpsi`` / ``dcpa`` / ``side`` / ``gs_intr`` pin or re-distribute one geometry parameter (a
+    constant pins it, a callable draws it, ``None`` keeps the built-in draw). ``dpsi=90.0`` is the
+    single-crossing response-curve case; the rest of the encounter distribution is untouched,
+    because a pinned slot still consumes its own draw.
+    """
+    def build(rng: np.random.Generator, config: Config) -> list[Agent]:
+        own, intr = sample_pairwise(
+            rng,
+            speed=config.scenario.speed,
+            dcpa_max=config.scenario.dcpa_max,
+            tlos=config.scenario.tlos,
+            rpz=config.conflict.rpz,
+            pos_ci95=config.scenario.pos_ci95,
+            vel_ci95=config.scenario.vel_ci95,
+            pos_ci95_declared=config.scenario.pos_ci95_declared,
+            vel_ci95_declared=config.scenario.vel_ci95_declared,
+            dpsi=dpsi,
+            dcpa=dcpa,
+            side=side,
+            gs_intr=gs_intr,
+        )
+        if airframes is None:
+            return [Agent(own, perf, kinematics=kinematics),
+                    Agent(intr, perf, kinematics=kinematics)]
+        return [af.agent(ac) for af, ac in zip(airframes, (own, intr), strict=True)]
+
+    return build

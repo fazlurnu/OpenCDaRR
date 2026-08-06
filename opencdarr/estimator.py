@@ -24,7 +24,7 @@ one backend and be ignored under the other — with nothing in either result to 
 from __future__ import annotations
 
 import statistics
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -35,12 +35,9 @@ from opencdarr.cns.broadcast import schedule_for
 from opencdarr.config import Config
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr.base import RecoveryCriterion
-from opencdarr.fleet import Agent, Airframe, run_fleet
-from opencdarr.kinematics import Kinematics
+from opencdarr.fleet import EncounterBuilder, run_fleet
 from opencdarr.measurement import MeasurementArea
-from opencdarr.performance import Performance
 from opencdarr.rng import generator, root_seed_sequence, spawn
-from opencdarr.scenario import Draw, sample_pairwise
 from opencdarr.wind import NO_WIND, WindField
 
 
@@ -171,74 +168,6 @@ def combine_p_los(results: Sequence[MonteCarloEstimate]) -> MonteCarloEstimate:
         sum_a=sum(r.sum_a for r in results),
         sum_n=sum(r.sum_n for r in results),
     )
-
-
-EncounterBuilder = Callable[[np.random.Generator, Config], list[Agent]]
-"""Build one encounter's fleet from its own geometry stream and the run's config.
-
-The estimator's encounter model, and the only thing that decides **N**: whatever list of
-:class:`~opencdarr.fleet.Agent` comes back is flown as-is, so a builder returning two agents is a
-pairwise study and one returning eight is a fleet study, through the same estimator. The IPS side
-takes the same shape (``build_initial``), which is what lets one campaign drive both backends.
-
-Draw every random choice from the generator handed in — it is this encounter's own substream, so a
-builder that draws from anywhere else breaks reproducibility (ADR 0001).
-"""
-
-
-def pairwise(
-    perf: Performance,
-    *,
-    kinematics: Kinematics | None = None,
-    airframes: Sequence[Airframe] | None = None,
-    dpsi: float | Draw | None = None,
-    dcpa: float | Draw | None = None,
-    side: int | Draw | None = None,
-    gs_intr: float | Draw | None = None,
-) -> EncounterBuilder:
-    """The two-aircraft encounter builder: one ownship, one intruder crossing it.
-
-    The standard :data:`EncounterBuilder` — :func:`~opencdarr.scenario.sample_pairwise` drawn from
-    the encounter's own stream, wrapped as a pair of agents. Everything specific to a *pairwise*
-    encounter lives here rather than on :func:`estimate_p_los`, which is what leaves that function
-    with nothing to say about N.
-
-    ``kinematics`` is the airframe both aircraft fly (``None`` = the fleet default
-    :class:`~opencdarr.kinematics.Multirotor`, ADR 0007).
-
-    ``airframes`` is the **mixed-fleet** spelling: one :class:`~opencdarr.fleet.Airframe` per
-    aircraft (ownship first), overriding ``perf`` and ``kinematics`` entirely. Give the two
-    aircraft different envelopes and the sampler must give each a speed its own airframe can fly —
-    ``speed`` for the ownship, ``gs_intr`` for the intruder — or :class:`~opencdarr.fleet.Agent`
-    refuses the encounter.
-
-    ``dpsi`` / ``dcpa`` / ``side`` / ``gs_intr`` pin or re-distribute one geometry parameter (a
-    constant pins it, a callable draws it, ``None`` keeps the built-in draw). ``dpsi=90.0`` is the
-    single-crossing response-curve case; the rest of the encounter distribution is untouched,
-    because a pinned slot still consumes its own draw.
-    """
-    def build(rng: np.random.Generator, config: Config) -> list[Agent]:
-        own, intr = sample_pairwise(
-            rng,
-            speed=config.scenario.speed,
-            dcpa_max=config.scenario.dcpa_max,
-            tlos=config.scenario.tlos,
-            rpz=config.conflict.rpz,
-            pos_ci95=config.scenario.pos_ci95,
-            vel_ci95=config.scenario.vel_ci95,
-            pos_ci95_declared=config.scenario.pos_ci95_declared,
-            vel_ci95_declared=config.scenario.vel_ci95_declared,
-            dpsi=dpsi,
-            dcpa=dcpa,
-            side=side,
-            gs_intr=gs_intr,
-        )
-        if airframes is None:
-            return [Agent(own, perf, kinematics=kinematics),
-                    Agent(intr, perf, kinematics=kinematics)]
-        return [af.agent(ac) for af, ac in zip(airframes, (own, intr), strict=True)]
-
-    return build
 
 
 def estimate_p_los(

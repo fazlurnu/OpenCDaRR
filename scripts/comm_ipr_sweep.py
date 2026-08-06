@@ -35,8 +35,9 @@ from opencdarr.config import (  # noqa: E402
 )
 from opencdarr.cr import MVP  # noqa: E402
 from opencdarr.crr import PastCPA  # noqa: E402
-from opencdarr.estimator import estimate_p_los, pairwise  # noqa: E402
+from opencdarr.estimator import estimate_p_los  # noqa: E402
 from opencdarr.performance import M600  # noqa: E402
+from opencdarr.scenario import pairwise  # noqa: E402
 
 SPEED, DCPA_MAX, TLOS, RPZ, LOOKAHEAD = 10.2889, 50.0, 60.0, 50.0, 120.0
 N_ENCOUNTERS = 400
