@@ -62,14 +62,18 @@ from opencdarr.config import Config
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr import ProbabilisticFTR
 from opencdarr.crr.base import RecoveryCriterion
-from opencdarr.estimator import MonteCarloEstimate, estimate_p_los
-from opencdarr.fleet import Agent, Airframe, build_env
+from opencdarr.estimator import (
+    EncounterBuilder,
+    MonteCarloEstimate,
+    estimate_p_los,
+    pairwise,
+)
+from opencdarr.fleet import Airframe, build_env
 from opencdarr.ips import Particle, RareEventEstimate, estimate_rare_prob
 from opencdarr.kinematics import Kinematics
 from opencdarr.parallel import _joblib, resolve_jobs
 from opencdarr.performance import Performance
 from opencdarr.rng import generator
-from opencdarr.scenario import sample_pairwise
 from opencdarr.wind import NO_WIND, WindField
 
 # --- what can be declared -------------------------------------------------------------------
@@ -87,12 +91,18 @@ _SIMULATION_FIELDS = frozenset(
      "broadcast_random_phase"}
 )
 _GEOMETRY_SLOTS = frozenset({"dpsi", "dcpa", "side", "gs_intr"})
+
+# Builds the encounter model for a cell: the airframe spelling (plus, for the pairwise scenario,
+# whichever of _GEOMETRY_SLOTS the condition pins) in, an EncounterBuilder out. A scenario with a
+# fixed fleet — a ring, a traffic sample — binds its own size when it is constructed, so it takes
+# no geometry slots and the estimator learns N from the agents it returns.
+ScenarioFactory = Callable[..., EncounterBuilder]
 # Every field of `Methods`, so declaring one as an axis overrides the bundle per condition.
 # `wind` is not a pluggable model but it is a per-run input the bundle carries, so it is swept the
 # same way — `wind=Sweep([NO_WIND, WindField.from_met(270, 8)])`.
 _COMPONENTS = frozenset(
     {"detector", "resolver", "recovery", "navigation", "communication", "surveillance",
-     "kinematics", "perf", "wind", "airframes"}
+     "kinematics", "perf", "wind", "airframes", "scenario"}
 )
 _KNOWN_KEYS = (
     _SCENARIO_FIELDS | _CONFLICT_FIELDS | _SIMULATION_FIELDS | _GEOMETRY_SLOTS | _COMPONENTS
@@ -175,13 +185,20 @@ class IPS:
 
     ``reps`` is structural, not a convenience: particles within one run interact through
     resampling, so a valid interval comes only from independent replications (ADR 0017 §5).
+
+    ``tail`` (default on) flies the final cloud past its first breach to the end of the encounter,
+    which is the only way this backend can report ``p_los_ac`` and ``mean_k``: the ladder stops
+    each survivor the instant it crosses, so K is 1 and A is 2 there by construction. Switching it
+    off leaves those two ``nan`` and changes no other number.
     """
 
     shells: tuple[float, ...]
     n_particles: int
     reps: int
+    tail: bool = True
 
-    def __init__(self, shells: Sequence[float], n_particles: int, reps: int) -> None:
+    def __init__(self, shells: Sequence[float], n_particles: int, reps: int,
+                 tail: bool = True) -> None:
         ladder = tuple(float(s) for s in shells)
         if not ladder:
             raise ValueError("IPS needs at least one shell")
@@ -192,6 +209,7 @@ class IPS:
         object.__setattr__(self, "shells", ladder)
         object.__setattr__(self, "n_particles", n_particles)
         object.__setattr__(self, "reps", reps)
+        object.__setattr__(self, "tail", tail)
 
 
 Backend = MC | IPS
@@ -217,6 +235,15 @@ class Methods:
     :func:`~opencdarr.fleet.run_fleet`. Bundling ``perf`` with ``kinematics`` also makes a
     mismatched pair unrepresentable in the declaration instead of caught a layer down.
 
+    ``scenario`` is the **encounter model**: a factory that takes the fleet's airframe spelling
+    (and, for the pairwise one, its geometry pins) and returns an
+    :data:`~opencdarr.estimator.EncounterBuilder`. It defaults to
+    :func:`~opencdarr.estimator.pairwise`, so an undeclared experiment is the two-aircraft study it
+    always was. Because it is a field of this bundle it is swept like any other component —
+    ``scenario=Sweep([4, 8], build=lambda n: ring(n), name="n")`` is a fleet-size axis — and
+    because *both* backends build their encounter from it, a ring or a traffic sample reaches MC
+    and IPS from one declaration. That is what lets the two be compared on anything but a pair.
+
     ``wind`` is the odd one out: it is a steady environment input rather than a pluggable model, so
     it has no ABC and lives here for the same reason ``perf`` does — the run needs it and no
     scenario field carries it. It reaches **both** backends; it previously reached neither, because
@@ -234,6 +261,7 @@ class Methods:
     perf: Performance | None = None
     wind: WindField = NO_WIND
     airframes: Sequence[Airframe] | None = None
+    scenario: ScenarioFactory = pairwise
 
     def __post_init__(self) -> None:
         # One spelling for one thing. ``perf``/``kinematics`` say "every aircraft is this
@@ -389,20 +417,28 @@ def _validate_declared_accuracy_is_read(
         )
 
 
+def _encounter_builder(condition: Condition, m: Methods) -> EncounterBuilder:
+    """This cell's encounter model, built once and used by *both* backends.
+
+    The single place a condition becomes a fleet. Keeping it here rather than inline in each
+    backend is what stops the two describing the same encounter differently: they are compared
+    cell for cell, so a difference in how they build it would read as a difference between the
+    estimators (ADR 0017 §4 — the initial cloud is drawn from the distribution MC integrates over).
+    """
+    geometry = {k: v for k, v in dict(condition.values).items() if k in _GEOMETRY_SLOTS}
+    return m.scenario(_base_perf(m), kinematics=m.kinematics, airframes=m.airframes, **geometry)
+
+
 def _run_mc(condition: Condition, base: Config, methods: Methods, backend: MC,
             seed: int) -> MonteCarloEstimate:
-    """One MC cell: ``estimate_p_los`` over this condition's config, components and geometry."""
+    """One MC cell: ``estimate_p_los`` over this condition's config, components and scenario."""
     cfg = _config_for(condition, base, backend.n_encounters)
     m = _resolved_methods(condition, methods)
-    geometry = {k: v for k, v in dict(condition.values).items() if k in _GEOMETRY_SLOTS}
     return estimate_p_los(
+        _encounter_builder(condition, m),
         dataclasses.replace(cfg, seed=seed),
-        _base_perf(m),
         m.detector, m.resolver, m.recovery, m.navigation, m.communication, m.surveillance,
-        kinematics=m.kinematics,
-        airframes=m.airframes,
         wind=m.wind,
-        **geometry,
     )
 
 
@@ -410,33 +446,20 @@ def _run_ips(condition: Condition, base: Config, methods: Methods, backend: IPS,
              seed: int) -> RareEventEstimate:
     """One IPS cell: split the *same* environment MC just ran, over this condition's shells.
 
-    ``build_initial`` samples one geometry per particle from that particle's own seed — the initial
-    cloud is drawn from the encounter distribution MC integrates over (ADR 0017 §4), which is what
-    keeps the two backends comparable. The forward CNS streams are spawned per particle per level
-    inside :func:`~opencdarr.ips.ips_once`, not here.
+    ``build_initial`` builds one encounter per particle from that particle's own seed, through the
+    *same* :func:`_encounter_builder` the MC cell uses — the initial cloud is drawn from the
+    encounter distribution MC integrates over (ADR 0017 §4), which is what keeps the two backends
+    comparable, and sharing the builder is what keeps that true for a fleet as well as for a pair.
+    The forward CNS streams are spawned per particle per level inside
+    :func:`~opencdarr.ips.ips_once`, not here.
     """
     cfg = _config_for(condition, base, backend.n_particles)
     m = _resolved_methods(condition, methods)
-    geometry = {k: v for k, v in dict(condition.values).items() if k in _GEOMETRY_SLOTS}
-    perf = _base_perf(m)
+    build = _encounter_builder(condition, m)
 
     def build_initial(seq: np.random.SeedSequence) -> Particle:
         geom_rng = generator(seq)
-        own, intr = sample_pairwise(
-            geom_rng,
-            speed=cfg.scenario.speed, dcpa_max=cfg.scenario.dcpa_max, tlos=cfg.scenario.tlos,
-            rpz=cfg.conflict.rpz, pos_ci95=cfg.scenario.pos_ci95,
-            vel_ci95=cfg.scenario.vel_ci95,
-            pos_ci95_declared=cfg.scenario.pos_ci95_declared,
-            vel_ci95_declared=cfg.scenario.vel_ci95_declared, **geometry,
-        )
-        if m.airframes is None:
-            agents = [
-                Agent(own, perf, kinematics=m.kinematics),
-                Agent(intr, perf, kinematics=m.kinematics),
-            ]
-        else:  # mixed fleet: one airframe per aircraft, ownship first
-            agents = [af.agent(ac) for af, ac in zip(m.airframes, (own, intr), strict=True)]
+        agents = build(geom_rng, cfg)
         env = build_env(
             agents, rpz=cfg.conflict.rpz, t_lookahead=cfg.conflict.t_lookahead,
             dt=cfg.simulation.dt, detector=m.detector, resolver=m.resolver, recovery=m.recovery,
@@ -457,7 +480,7 @@ def _run_ips(condition: Condition, base: Config, methods: Methods, backend: IPS,
 
     return estimate_rare_prob(
         build_initial, backend.shells,
-        n_particles=backend.n_particles, reps=backend.reps, seed=seed,
+        n_particles=backend.n_particles, reps=backend.reps, seed=seed, tail=backend.tail,
     )
 
 
@@ -809,10 +832,13 @@ def _metrics(result: Any) -> dict[str, Any]:
         }
     lo, hi = result.ci
     return {
-        # IPS reports the per-run probability natively; per-aircraft waits on the tail leg
-        "p_los_run": result.prob,
+        # the ladder gives the per-run probability natively; the other two come from the tail leg
+        "p_los_ac": result.p_los_ac,
+        "p_los_run": result.p_los_run,
+        "mean_k": result.mean_k,
         "p_los_run_lo": lo,
         "p_los_run_hi": hi,
+        "n_lineages": result.n_lineages,
         "n_collapsed": result.n_collapsed,
         "reps": len(result.reps),
     }

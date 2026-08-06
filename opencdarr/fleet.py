@@ -181,6 +181,21 @@ class FleetState:
     min_sep: float
     los_pairs: frozenset[tuple[int, int]] = frozenset()  # pairs (i<j) that have crossed rpz so far
 
+    @property
+    def n_los_pairs(self) -> int:
+        """K — how many distinct pairs have lost separation so far."""
+        return len(self.los_pairs)
+
+    @property
+    def n_los_aircraft(self) -> int:
+        """A — how many distinct aircraft appear in at least one losing pair.
+
+        Read off the state rather than recomputed downstream, so the plain runner
+        (:func:`run_fleet`) and the rare-event one (:mod:`opencdarr.ips`, whose tail leg reads K
+        and A straight off a survivor's state) cannot count the same encounter differently.
+        """
+        return len({a for pair in self.los_pairs for a in pair})
+
 
 @dataclass(frozen=True, repr=False)
 class StatesLog:
@@ -624,7 +639,7 @@ def run_fleet(
             frames.append(state)
     return FleetOutcome(
         conflict=state.conflict, los=state.los, min_sep=state.min_sep,
-        n_los_pairs=len(state.los_pairs),
-        n_los_aircraft=len({a for pair in state.los_pairs for a in pair}),
+        n_los_pairs=state.n_los_pairs,
+        n_los_aircraft=state.n_los_aircraft,
         frames=StatesLog(tuple(frames)) if frames is not None else None,
     )

@@ -60,21 +60,34 @@ class Particle:
 class IPSResult:
     """One IPS replication: the estimate and the per-level survival fractions behind it."""
 
-    prob: float  # P̂ = Π_k survival_k (0.0 if a level collapsed)
+    prob: float  # P̂ = Π_k survival_k (0.0 if a level collapsed) — the per-run probability
     levels: tuple[float, ...]  # the shell distances d_1 … d_m [m]
     survival: tuple[float, ...]  # S_k / N per crossed level
     n_particles: int
     collapsed_at: int | None  # index of the level where S_k = 0, or None
+    # --- the tail leg (None when it was not run, or the ladder collapsed) ---
+    tail_k: float | None = None  # mean K over the survivors flown to termination
+    tail_a: float | None = None  # mean A over the same
+    n_lineages: int | None = None  # distinct survivors behind that cloud — the tail's real ESS
+    n_aircraft: int = 0  # N, read off a particle (0 when there were none)
 
 
 @dataclass(frozen=True)
 class RareEventEstimate:
     """The replicated estimate: mean probability with a log-space CI from independent IPS runs."""
 
-    prob: float  # mean of the per-replication P̂ (the unbiased point estimate)
+    p_los_run: float  # mean of the per-replication P̂ — P(LoS) per run
     ci: tuple[float, float]  # 95% CI (log-space when all reps > 0, else the min/max span)
     reps: tuple[IPSResult, ...]  # every replication, for inspection
     n_collapsed: int  # replications that hit an empty level (P̂ = 0)
+    p_los_ac: float = float("nan")  # P(LoS) per aircraft — needs the tail leg
+    mean_k: float = float("nan")  # E[K] — needs the tail leg
+    n_lineages: int = 0  # distinct lineages summed over replications (the tail's ESS)
+
+    @property
+    def prob(self) -> float:
+        """The per-run probability, under its historical name. See :attr:`p_los_run`."""
+        return self.p_los_run
 
 
 def _streams(seq: np.random.SeedSequence) -> FleetStreams:
@@ -103,6 +116,21 @@ def _evolve_to_shell(particle: Particle, target: float, streams: FleetStreams) -
     return state
 
 
+def _evolve_to_terminal(particle: Particle, streams: FleetStreams) -> FleetState:
+    """Fly a survivor **past** its first breach, to the end of the encounter.
+
+    The tail leg. :func:`_evolve_to_shell` stops the instant the running minimum crosses a shell,
+    so at the rare boundary every survivor has exactly one losing pair by construction — K and A
+    are not *measured* there, they are an artefact of where the ladder stopped. Continuing to
+    ``is_terminal`` on fresh streams lets the rest of the encounter happen, which is what makes
+    ``E[A | rare set]`` an observation rather than an assumption of 2.
+    """
+    env, state = particle.env, particle.state
+    while not env.is_terminal(state):
+        state = env.advance(state, streams)
+    return state
+
+
 def evolve_shard(
     particles: Sequence[Particle],
     target: float,
@@ -126,20 +154,27 @@ def resample_level(
     target: float,
     n_particles: int,
     seq: np.random.SeedSequence,
-) -> tuple[float, list[Particle]]:
-    """One level's *barrier*: the survival fraction and the resampled cloud.
+) -> tuple[float, list[Particle], int]:
+    """One level's *barrier*: the survival fraction, the resampled cloud, and its lineage count.
 
     Survivors are those that reached the shell; they are drawn with replacement back up to
     ``n_particles``. An empty returned cloud means the level collapsed (ADR 0017 §2) — the caller
     decides what to record. Independence between clones comes from the next level's fresh
     per-particle streams, not from this draw.
+
+    The third value is how many **distinct** survivors the draw actually took — the cloud's
+    effective sample size, which is what any conditional mean read off it is really based on
+    (``n_particles`` counts clones, not information). Taken from the draw itself rather than by
+    de-duplicating the returned particles: clones *share* one immutable state object, so counting
+    by identity gives the right answer in-process and the wrong one after a worker pickles the
+    cloud, turning one shared object into several equal copies.
     """
     survivors = [p for p in evolved if p.state.min_sep <= target]
     fraction = len(survivors) / n_particles
     if not survivors:
-        return fraction, []
+        return fraction, [], 0
     idx = generator(seq).integers(0, len(survivors), size=n_particles)
-    return fraction, [survivors[i] for i in idx]
+    return fraction, [survivors[i] for i in idx], len(set(idx.tolist()))
 
 
 def ips_once(
@@ -147,6 +182,8 @@ def ips_once(
     levels: Sequence[float],
     n_particles: int,
     seq: np.random.SeedSequence,
+    *,
+    tail: bool = True,
 ) -> IPSResult:
     """One fixed-effort multilevel-splitting run: ``P̂ = Π_k S_k/N`` over the shells ``levels``.
 
@@ -161,24 +198,46 @@ def ips_once(
     sequence comes back untouched. That matters because ``SeedSequence.spawn`` is *stateful* —
     spawning from ``seq`` here would mean a second call on the same object walked a different tree
     and quietly returned a different answer, a difference nothing in the result would reveal.
+
+    ``tail`` runs the continuation leg (:func:`_evolve_to_terminal`) on the final cloud, which is
+    the only way to observe K and A — the ladder stops each survivor at its *first* breach, so
+    without it the per-aircraft number would assume A = 2 and undercount at N > 2. It reads a
+    **third** child of ``seq``: a ``SeedSequence`` child depends only on its index and its parent,
+    so asking for three where there were two leaves the init and evolve subtrees bit-identical and
+    the splitting is the same whether or not the tail runs.
     """
-    init_seq, evolve_seq = children(seq, 0, 2)
+    init_seq, evolve_seq, tail_seq = children(seq, 0, 3)
     particles = [build_initial(s) for s in children(init_seq, 0, n_particles)]
     level_seqs = children(evolve_seq, 0, len(levels))
+    n_aircraft = len(particles[0].state.states) if particles else 0
 
     survival: list[float] = []
+    lineages = 0
     for k, target in enumerate(levels):
         # fresh forward streams per particle this level (+ one resampling stream)
         sub = children(level_seqs[k], 0, n_particles + 1)
         evolved = evolve_shard(particles, target, sub[:n_particles])
-        fraction, particles = resample_level(evolved, target, n_particles, sub[n_particles])
+        fraction, particles, lineages = resample_level(
+            evolved, target, n_particles, sub[n_particles]
+        )
         survival.append(fraction)
         if not particles:
             return IPSResult(prob=0.0, levels=tuple(levels), survival=tuple(survival),
-                             n_particles=n_particles, collapsed_at=k)
+                             n_particles=n_particles, collapsed_at=k, n_aircraft=n_aircraft)
+
+    tail_k = tail_a = None
+    if tail:
+        finals = [
+            _evolve_to_terminal(p, _streams(s))
+            for p, s in zip(particles, children(tail_seq, 0, n_particles), strict=True)
+        ]
+        tail_k = float(np.mean([f.n_los_pairs for f in finals]))
+        tail_a = float(np.mean([f.n_los_aircraft for f in finals]))
 
     return IPSResult(prob=float(np.prod(survival)), levels=tuple(levels),
-                     survival=tuple(survival), n_particles=n_particles, collapsed_at=None)
+                     survival=tuple(survival), n_particles=n_particles, collapsed_at=None,
+                     tail_k=tail_k, tail_a=tail_a,
+                     n_lineages=lineages if tail else None, n_aircraft=n_aircraft)
 
 
 def _log_ci(probs: list[float], z: float = 1.96) -> tuple[float, float]:
@@ -204,13 +263,33 @@ def replication_seeds(seed: int, reps: int) -> tuple[np.random.SeedSequence, ...
 def combine_replications(results: Sequence[IPSResult]) -> RareEventEstimate:
     """Aggregate independent :func:`ips_once` results into the point estimate + CI (ADR 0017 §5):
     mean of the per-replication ``P̂`` (each is unbiased) with a log-space CI across replications.
-    Collapsed replications (an empty level ⇒ ``P̂ = 0``) are counted, not hidden."""
+    Collapsed replications (an empty level ⇒ ``P̂ = 0``) are counted, not hidden.
+
+    The per-aircraft rate and E[K] are each replication's *own* estimate averaged, not a ratio of
+    two averages: a replication measures ``P̂`` and its own ``E[· | rare set]`` from one cloud, so
+    combining them per replication keeps each term unbiased and lets a collapsed replication
+    contribute the zero it actually found. They are ``nan`` when the tail did not run — an absent
+    measurement, which is not the same statement as zero.
+    """
     probs = [r.prob for r in results]
+    tails = [r for r in results if r.tail_a is not None or r.collapsed_at is not None]
+    per_ac = [
+        0.0 if r.collapsed_at is not None else r.prob * (r.tail_a or 0.0) / (r.n_aircraft or 1)
+        for r in tails
+    ]
+    per_k = [
+        0.0 if r.collapsed_at is not None else r.prob * (r.tail_k or 0.0)
+        for r in tails
+    ]
+    ran_tail = any(r.tail_a is not None for r in results)
     return RareEventEstimate(
-        prob=float(np.mean(probs)),
+        p_los_run=float(np.mean(probs)),
         ci=_log_ci(probs),
         reps=tuple(results),
         n_collapsed=sum(1 for r in results if r.collapsed_at is not None),
+        p_los_ac=float(np.mean(per_ac)) if ran_tail else float("nan"),
+        mean_k=float(np.mean(per_k)) if ran_tail else float("nan"),
+        n_lineages=sum(r.n_lineages or 0 for r in results),
     )
 
 
@@ -221,6 +300,7 @@ def estimate_rare_prob(
     n_particles: int,
     reps: int,
     seed: int,
+    tail: bool = True,
 ) -> RareEventEstimate:
     """Estimate the rare-event probability with a CI from ``reps`` independent IPS replications.
 
@@ -228,7 +308,10 @@ def estimate_rare_prob(
     combined by :func:`combine_replications`. Serial — a caller wanting parallel replications runs
     :func:`ips_once` over :func:`replication_seeds` itself (e.g. joblib) and calls
     :func:`combine_replications`, for the identical result.
+
+    ``tail`` (default on) adds the continuation leg that makes ``p_los_ac`` and ``mean_k``
+    measurable; switching it off leaves them ``nan`` and changes no other number.
     """
-    results = [ips_once(build_initial, levels, n_particles, s)
+    results = [ips_once(build_initial, levels, n_particles, s, tail=tail)
                for s in replication_seeds(seed, reps)]
     return combine_replications(results)
