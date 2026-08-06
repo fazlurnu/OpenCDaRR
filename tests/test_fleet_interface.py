@@ -19,7 +19,8 @@ from opencdarr.cns.broadcast import BroadcastSchedule
 from opencdarr.cns.stack import CNS
 from opencdarr.cr import MVP
 from opencdarr.crr import PastCPA
-from opencdarr.fleet import Agent, FleetEnv, FleetStreams, level, run_fleet
+from opencdarr.fleet import Agent, FleetEnv, FleetStreams, run_fleet
+from opencdarr.ips import level
 from opencdarr.kinematics import Multirotor
 from opencdarr.performance import M600
 from opencdarr.separation import SeparationManager

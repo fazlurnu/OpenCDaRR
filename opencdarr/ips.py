@@ -38,6 +38,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from opencdarr.fleet import CnsStreams, FleetEnv, FleetState, FleetStreams
+from opencdarr.relative import pairwise_min_sep
 from opencdarr.rng import children, generator, root_seed_sequence, spawn
 
 # A particle's initial-state factory: sample one geometry from a seed → its env + world state.
@@ -103,6 +104,13 @@ def _streams(seq: np.random.SeedSequence) -> FleetStreams:
         cns=CnsStreams(nav=generator(nav_seq), comm=generator(comm_seq)),
         broadcast=generator(bc_seq),
     )
+
+
+def level(state: FleetState) -> float:
+    """The importance function IPS splits on: the fleet's **current** minimum pairwise separation
+    [m], smaller = closer to the rare event (ADR 0004's starting point; a Phase-8 ADR may refine
+    it for simultaneous multi-aircraft conflict). A pure read of ``state``, independent of N."""
+    return pairwise_min_sep(state.states)
 
 
 def _evolve_to_shell(particle: Particle, target: float, streams: FleetStreams) -> FleetState:
