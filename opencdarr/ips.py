@@ -4,7 +4,7 @@ Fixed-effort multilevel splitting over the fleet estimator interface (``advance 
 is_terminal``, :mod:`opencdarr.fleet`). Where plain Monte Carlo (:func:`opencdarr.estimator.
 estimate_p_los`) starves in the rare regime — a single 10⁴-encounter run can read *zero* events
 ([[rare-event-validation-ladder]]) — IPS concentrates effort on the trajectories heading toward the
-rare set and returns the small probability with a usable confidence interval.
+rare set and returns the small probability at a usable cost.
 
 **The method (ADR 0017).** Nest the rare event in shrinking shells on the **running-minimum**
 separation ``FleetState.min_sep`` (monotone, so crossings are one-way): a decreasing sequence
@@ -22,13 +22,16 @@ forward CNS noise** (§4), so IPS estimates the same probability MC does — whi
 validation meaningful. Scenario-agnostic: the caller supplies ``build_initial`` (one sampled
 particle from a seed) and the shell sequence; everything else rides the interface.
 
-Confidence interval by **independent replications** (§5): within one run the particles interact
-(shared ancestors), so a valid CI comes from ``R`` independent IPS runs, reported in log space.
+**Replications** (§5): within one run the particles interact through resampling (shared
+ancestors), so a single run's spread understates the real one. ``R`` independent runs are averaged
+instead, and their spread is what a reader judges the estimate's stability by. No interval is
+reported — agreement with the Monte-Carlo anchor is judged on the **ratio** of the two estimates (a
+factor of two, or five at 1e-4 and below where the anchor itself rests on few events), because at
+these probabilities an interval invited a precision the shell spacing does not support (ADR 0022).
 """
 
 from __future__ import annotations
 
-import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
@@ -74,10 +77,9 @@ class IPSResult:
 
 @dataclass(frozen=True)
 class RareEventEstimate:
-    """The replicated estimate: mean probability with a log-space CI from independent IPS runs."""
+    """The replicated estimate: the three loss metrics, averaged over independent IPS runs."""
 
     p_los_run: float  # mean of the per-replication P̂ — P(LoS) per run
-    ci: tuple[float, float]  # 95% CI (log-space when all reps > 0, else the min/max span)
     reps: tuple[IPSResult, ...]  # every replication, for inspection
     n_collapsed: int  # replications that hit an empty level (P̂ = 0)
     p_los_ac: float = float("nan")  # P(LoS) per aircraft — needs the tail leg
@@ -240,19 +242,6 @@ def ips_once(
                      n_lineages=lineages if tail else None, n_aircraft=n_aircraft)
 
 
-def _log_ci(probs: list[float], z: float = 1.96) -> tuple[float, float]:
-    """A 95% CI for the mean rare-event probability. Log-space (the product estimator is
-    right-skewed) when every replication is positive; otherwise the raw min/max span, since a
-    collapsed replication (P̂ = 0) has no logarithm and signals under-resolved shells."""
-    positive = [p for p in probs if p > 0.0]
-    if len(positive) < 2 or len(positive) != len(probs):
-        return (min(probs), max(probs))
-    logs = np.log(positive)
-    se = float(np.std(logs, ddof=1)) / math.sqrt(len(logs))
-    centre = float(np.mean(logs))
-    return (math.exp(centre - z * se), math.exp(centre + z * se))
-
-
 def replication_seeds(seed: int, reps: int) -> tuple[np.random.SeedSequence, ...]:
     """The ``reps`` independent seed subtrees for the replications (ADR 0001). Exposed so a caller
     can run :func:`ips_once` in parallel over them and still :func:`combine_replications` the same
@@ -284,7 +273,6 @@ def combine_replications(results: Sequence[IPSResult]) -> RareEventEstimate:
     ran_tail = any(r.tail_a is not None for r in results)
     return RareEventEstimate(
         p_los_run=float(np.mean(probs)),
-        ci=_log_ci(probs),
         reps=tuple(results),
         n_collapsed=sum(1 for r in results if r.collapsed_at is not None),
         p_los_ac=float(np.mean(per_ac)) if ran_tail else float("nan"),

@@ -1,9 +1,8 @@
-"""Functional tests for the plain-MC IPR estimator."""
+"""Functional tests for the plain-MC loss-of-separation estimator."""
 
 from __future__ import annotations
 
 import dataclasses
-import math
 
 import pytest
 
@@ -19,7 +18,12 @@ from opencdarr.config import (
 )
 from opencdarr.cr import MVP
 from opencdarr.crr import PastCPA
-from opencdarr.estimator import MonteCarloEstimate, combine_p_los, estimate_p_los, wilson_interval
+from opencdarr.estimator import (
+    MonteCarloEstimate,
+    combine_p_los,
+    estimate_p_los,
+    pairwise,
+)
 from opencdarr.kinematics import Kinematics, MotionCommand
 from opencdarr.kinematics.base import odometry_update
 from opencdarr.performance import M600, Performance
@@ -53,8 +57,8 @@ def _noisy_config(seed: int = 1, n: int = 200) -> Config:
 
 def test_ipr_is_reproducible() -> None:
     cfg = _config()
-    r1 = estimate_p_los(cfg, M600, StateBased(), MVP(1.05), PastCPA())
-    r2 = estimate_p_los(cfg, M600, StateBased(), MVP(1.05), PastCPA())
+    r1 = estimate_p_los(pairwise(M600), cfg, StateBased(), MVP(1.05), PastCPA())
+    r2 = estimate_p_los(pairwise(M600), cfg, StateBased(), MVP(1.05), PastCPA())
     assert r1 == r2
 
 
@@ -69,7 +73,7 @@ def test_every_sampled_encounter_is_detected_in_this_config() -> None:
     """
     cfg = _config()
     assert cfg.scenario.tlos < cfg.conflict.t_lookahead  # the precondition doing the work here
-    result = estimate_p_los(cfg, M600, StateBased(), MVP(1.05), PastCPA())
+    result = estimate_p_los(pairwise(M600), cfg, StateBased(), MVP(1.05), PastCPA())
     assert result.n_conflict == cfg.n_encounters
     assert result.detection_rate == 1.0
     assert result.n_encounters == cfg.n_encounters
@@ -87,11 +91,11 @@ def test_chunked_run_pools_back_to_the_serial_estimate() -> None:
     would also do if the chunks were concatenated backwards.
     """
     cfg = _config(n=120)
-    whole = estimate_p_los(cfg, M600, StateBased(), MVP(1.05), PastCPA())
+    whole = estimate_p_los(pairwise(M600), cfg, StateBased(), MVP(1.05), PastCPA())
     for jobs in (1, 3, 7):  # 7 divides 120 unevenly, so the bounds are ragged
         bounds = [(120 * i // jobs, 120 * (i + 1) // jobs) for i in range(jobs)]
         pooled = combine_p_los([
-            estimate_p_los(cfg, M600, StateBased(), MVP(1.05), PastCPA(),
+            estimate_p_los(pairwise(M600), cfg, StateBased(), MVP(1.05), PastCPA(),
                          seqs=children(root_seed_sequence(cfg.seed), lo, hi))
             for lo, hi in bounds if hi > lo
         ])
@@ -101,9 +105,9 @@ def test_chunked_run_pools_back_to_the_serial_estimate() -> None:
 def test_combine_p_los_recomputes_the_ratio_from_pooled_counts() -> None:
     """The rates are ratios, so chunks pool by counts — not by averaging their per-chunk ratios."""
     a = MonteCarloEstimate(min_seps=(10.0, 60.0), n_los=1, n_conflict=2,
-                           sum_k=1, sum_a=2, n_aircraft=2)
+                           sum_k=1, sum_a=2, sum_n=4)
     b = MonteCarloEstimate(min_seps=(70.0,) * 98, n_los=0, n_conflict=98,
-                           sum_k=0, sum_a=0, n_aircraft=2)
+                           sum_k=0, sum_a=0, sum_n=196)
     pooled = combine_p_los([a, b])
     assert pooled.n_encounters == 100
     assert pooled.n_los == 1
@@ -112,8 +116,8 @@ def test_combine_p_los_recomputes_the_ratio_from_pooled_counts() -> None:
 
 def test_resolution_cuts_p_los_far_below_baseline() -> None:
     cfg = _config()
-    resolved = estimate_p_los(cfg, M600, StateBased(), MVP(1.05), PastCPA())
-    baseline = estimate_p_los(cfg, M600, StateBased(), None, None)
+    resolved = estimate_p_los(pairwise(M600), cfg, StateBased(), MVP(1.05), PastCPA())
+    baseline = estimate_p_los(pairwise(M600), cfg, StateBased(), None, None)
     assert resolved.p_los_run < 0.1   # good CDR prevents nearly all LoS
     assert baseline.p_los_run > 0.8   # no resolution -> nearly all conflicts become LoS
     assert resolved.p_los_run < baseline.p_los_run
@@ -129,8 +133,8 @@ def test_golden_ipr_at_midrange_noise() -> None:
     deliberate, recorded modelling change.
     """
     result = estimate_p_los(
-        _noisy_config(), M600, StateBased(), MVP(1.05), PastCPA(bouncing_guard=False),
-        GnssNavigation(),
+        pairwise(M600), _noisy_config(), StateBased(), MVP(1.05),
+        PastCPA(bouncing_guard=False), GnssNavigation(),
     )
     assert (result.n_los, result.n_conflict) == (22, 200)
     assert result.p_los_run == 0.11  # 22/200 — was `ipr == 0.89` before the per-aircraft rename
@@ -143,7 +147,7 @@ def test_golden_ipr_at_midrange_noise() -> None:
 def test_min_seps_is_the_record_p_los_was_thresholded_from() -> None:
     """``n_los`` is recoverable from ``min_seps`` — the two are one measurement, not two.
 
-    ``MonteCarloEstimate`` now stores a per-encounter separation and a LoS count, which would be the
+    ``MonteCarloEstimate`` stores a per-encounter separation and a LoS count, which would be the
     same fact written down twice if they could ever disagree. They cannot, and this is why:
     ``FleetEnv.advance`` accumulates ``min_sep`` and ``los`` from the *same* per-step segment
     minimum (``los = state.los or cur < rpz``, ``min_sep = min(state.min_sep, cur)``), so
@@ -156,7 +160,8 @@ def test_min_seps_is_the_record_p_los_was_thresholded_from() -> None:
     """
     for cfg in (_config(), _noisy_config()):
         result = estimate_p_los(
-            cfg, M600, StateBased(), MVP(1.05), PastCPA(bouncing_guard=False), GnssNavigation(),
+            pairwise(M600), cfg, StateBased(), MVP(1.05),
+            PastCPA(bouncing_guard=False), GnssNavigation(),
         )
         assert len(result.min_seps) == cfg.n_encounters == result.n_encounters
         assert result.n_los == sum(1 for s in result.min_seps if s < cfg.conflict.rpz)
@@ -177,7 +182,7 @@ def test_median_min_sep_separates_resolvers_p_los_cannot() -> None:
     tuned to the run rather than a property of the resolver.
     """
     cfg = _config()
-    results = [estimate_p_los(cfg, M600, StateBased(), MVP(m), PastCPA())
+    results = [estimate_p_los(pairwise(M600), cfg, StateBased(), MVP(m), PastCPA())
                for m in (1.05, 1.5, 2.0)]
     assert all(r.p_los_run == 0.0 for r in results)  # premise: p_los_run can't tell them apart
     medians = [r.median_min_sep for r in results]
@@ -204,8 +209,9 @@ def test_denominator_does_not_move_with_the_resolver() -> None:
     )
     assert cfg.scenario.tlos > cfg.conflict.t_lookahead  # spawned outside the horizon
 
-    resolved = estimate_p_los(cfg, M600, StateBased(), MVP(1.05), PastCPA(), GnssNavigation())
-    unresolved = estimate_p_los(cfg, M600, StateBased(), None, None, GnssNavigation())
+    resolved = estimate_p_los(pairwise(M600), cfg, StateBased(), MVP(1.05), PastCPA(),
+                              GnssNavigation())
+    unresolved = estimate_p_los(pairwise(M600), cfg, StateBased(), None, None, GnssNavigation())
 
     # the denominator is the same in both, whatever CDR did
     assert resolved.n_encounters == unresolved.n_encounters == cfg.n_encounters
@@ -215,28 +221,6 @@ def test_denominator_does_not_move_with_the_resolver() -> None:
     # and the safety comparison is still the right way round, on a denominator neither run chose
     assert resolved.p_los_run < unresolved.p_los_run
 
-
-def test_wilson_interval_brackets_the_estimate_and_survives_zero_events() -> None:
-    """The CI is valid because ``n`` is design-fixed, and says something useful at zero events.
-
-    ``k = 0`` is the ordinary case for a safety metric, and the textbook normal interval collapses
-    to ``(0, 0)`` there — false certainty. Wilson still returns a positive upper bound, which is
-    the honest reading of "no events observed in n trials".
-    """
-    lo, hi = wilson_interval(22, 200)
-    assert lo < 22 / 200 < hi
-    assert 0.0 < lo and hi < 1.0
-
-    zero_lo, zero_hi = wilson_interval(0, 200)
-    assert zero_lo == 0.0
-    assert 0.0 < zero_hi < 0.05  # a real bound, not (0, 0)
-
-    # more encounters at the same rate must tighten it
-    wide = wilson_interval(10, 100)
-    tight = wilson_interval(100, 1000)
-    assert (tight[1] - tight[0]) < (wide[1] - wide[0])
-
-    assert all(math.isnan(b) for b in wilson_interval(0, 0))  # nothing observed at all
 
 
 class _Ballistic(Kinematics):
@@ -277,10 +261,10 @@ def test_kinematics_reaches_the_mc_path() -> None:
     """
     cfg = _config()
     fitted = estimate_p_los(
-        cfg, M600, StateBased(), MVP(1.05), PastCPA(), kinematics=_Ballistic()
+        pairwise(M600, kinematics=_Ballistic()), cfg, StateBased(), MVP(1.05), PastCPA(),
     )
-    unresolved = estimate_p_los(cfg, M600, StateBased(), None, None)
-    resolved = estimate_p_los(cfg, M600, StateBased(), MVP(1.05), PastCPA())
+    unresolved = estimate_p_los(pairwise(M600), cfg, StateBased(), None, None)
+    resolved = estimate_p_los(pairwise(M600), cfg, StateBased(), MVP(1.05), PastCPA())
 
     assert fitted == unresolved  # the airframe discarded every resolution command
     assert resolved.n_los == 0  # the same conflicts, resolved, on the default airframe

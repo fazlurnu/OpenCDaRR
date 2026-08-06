@@ -9,9 +9,8 @@ the work is. Every function here returns results **bit-identical** to its serial
 **Why it exists.** Callers used to parallelise by handing one whole replication to each worker
 (``Parallel(delayed(ips_once)) for s in replication_seeds(...)``), which caps usable cores at
 ``reps``. A production sweep cell running ``reps=10`` on a 96-core box left ~89 % of the machine
-idle for the 918 s the IPS phase took. Replication count is a *statistical* choice — how tight the
-confidence interval is (ADR 0017 §5) — and it should not also decide how much of the machine gets
-used. This module decouples the two.
+idle for the 918 s the IPS phase took. Replication count is a *statistical* choice (ADR 0017 §5) —
+and it should not also decide how much of the machine gets used. This module decouples the two.
 
 **How.** Two modes, picked from the shape of the design:
 
@@ -36,11 +35,11 @@ path already makes. Nothing here reorders a floating-point reduction.
         build_initial,          # (SeedSequence) -> Particle; see opencdarr.ips.BuildInitial
         levels=[150, 120, 100, 85, 75, 68, 62, 58, 55, 52, 50],   # decreasing, ends at rpz
         n_particles=10_000,     # per shell
-        reps=10,                # independent replications -> the CI
+        reps=10,                # independent replications
         seed=20260728,
         n_jobs=-1,              # every core, whatever `reps` happens to be
     )
-    print(est.prob, est.ci, est.n_collapsed)
+    print(est.p_los_run, est.p_los_ac, est.n_collapsed)
 
 ``build_initial`` should return a *shared* particle when the geometry is pinned (build the env once
 outside it) — see ``scripts/ips_validate.py``. Pass ``verbose=10`` to watch joblib's progress on a
@@ -367,7 +366,7 @@ def estimate_rare_prob(
     """The parallel twin of :func:`opencdarr.ips.estimate_rare_prob` — same result, more cores.
 
     Unlike the serial version, the worker count is independent of ``reps``: pick ``reps`` for the
-    confidence interval you want (ADR 0017 §5) and ``n_jobs`` for the machine you have.
+    stability you want (ADR 0017 §5) and ``n_jobs`` for the machine you have.
     """
     return combine_replications(
         ips_replications(

@@ -146,7 +146,7 @@ def test_a_fixed_axis_overrides_the_base_config() -> None:
 
 
 def test_columns_adapt_to_the_backend() -> None:
-    """MC reports counts and a Wilson interval; IPS reports replications and collapses.
+    """MC reports counts and a median separation; IPS reports replications and collapses.
 
     They are not forced into one schema, because neither can honestly fill the other's columns —
     there is no ``n_encounters`` for a splitting run and no ``n_collapsed`` for plain MC.
@@ -162,7 +162,7 @@ def test_columns_adapt_to_the_backend() -> None:
                     backend=IPS(shells=[70.0, 60.0, 50.0], n_particles=20, reps=2),
                     base_config=_base(), seed=0).records()[0]
 
-    assert {"p_los_run", "p_los_run_lo", "p_los_run_hi"} <= set(mc) & set(ips)  # the shared core
+    assert {"p_los_run", "p_los_ac", "mean_k"} <= set(mc) & set(ips)  # the shared core
     assert {"n_encounters", "n_los", "p_los_ac", "mean_k", "detection_rate",
             "median_min_sep"} <= set(mc)
     assert "n_collapsed" not in mc
@@ -460,7 +460,7 @@ def test_plot_lays_itself_out_from_the_axis_roles() -> None:
     ax = fig.axes[0]
     assert len(ax.lines) == 2  # one per pos_ci95 level
     assert (ax.get_xlabel(), ax.get_ylabel()) == ("dpsi", "p_los_run")
-    assert ax.collections  # the CI bands
+    assert not ax.collections  # no CI band: intervals are gone (ADR 0022)
     assert not fig._suptitle  # house convention: detail belongs in the caption
     assert ax.get_yscale() == "linear"  # log is the IPS default, not MC's
 

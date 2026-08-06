@@ -130,7 +130,6 @@ def test_estimate_rare_prob_equals_manual_parallel_combine() -> None:
         [ips_once(_build_initial, levels, 24, s) for s in replication_seeds(3, 3)]
     )
     assert est.prob == manual.prob
-    assert est.ci == manual.ci
     assert est.n_collapsed == manual.n_collapsed
     assert len(est.reps) == 3
 
@@ -140,22 +139,28 @@ def _fake(prob: float, collapsed_at: int | None = None) -> IPSResult:
                      collapsed_at=collapsed_at)
 
 
-def test_combine_mean_and_log_ci() -> None:
-    """combine_replications reports the arithmetic mean (unbiased point) and a positive log CI."""
+def test_combine_reports_the_arithmetic_mean() -> None:
+    """combine_replications reports the arithmetic mean — each replication is unbiased on its own.
+
+    No interval is reported: the estimates are compared with the Monte-Carlo anchor on their ratio
+    instead (ADR 0022), so what has to hold here is that the point estimate is the plain mean and
+    not, say, a geometric one.
+    """
     c = combine_replications([_fake(0.01), _fake(0.02), _fake(0.03), _fake(0.04)])
-    assert c.prob == pytest.approx(0.025)
+    assert c.p_los_run == pytest.approx(0.025)
     assert c.n_collapsed == 0
-    lo, hi = c.ci
-    assert 0.0 < lo < hi
 
 
-def test_combine_counts_collapses_and_falls_back_to_span() -> None:
-    """A collapsed replication (prob 0) is counted, and the CI falls back to the min/max span
-    because a zero has no logarithm (ADR 0017 §5)."""
+def test_combine_counts_collapses_without_hiding_them() -> None:
+    """A collapsed replication (prob 0) is counted *and* averaged in — it is a real zero here.
+
+    Reported rather than dropped: a collapse means the shells are spaced too aggressively (ADR 0017
+    §2), and silently excluding it would bias the mean upward while removing the only signal that
+    the ladder needs re-spacing.
+    """
     c = combine_replications([_fake(0.02), _fake(0.0, collapsed_at=1), _fake(0.03)])
     assert c.n_collapsed == 1
-    assert c.prob == pytest.approx((0.02 + 0.0 + 0.03) / 3)
-    assert c.ci == (0.0, 0.03)
+    assert c.p_los_run == pytest.approx((0.02 + 0.0 + 0.03) / 3)
 
 
 def test_replication_seeds_deterministic_and_distinct() -> None:

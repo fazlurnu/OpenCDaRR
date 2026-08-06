@@ -1,6 +1,7 @@
 """Plain Monte Carlo loss-of-separation estimator.
 
-Samples ``config.n_encounters`` independent pairwise encounters and aggregates
+Samples ``config.n_encounters`` independent encounters — pairwise or a whole fleet, whichever the
+:data:`EncounterBuilder` builds — and aggregates
 ``P(LoS) = n_los/n_encounters`` (see :class:`MonteCarloEstimate` on why
 the denominator is the encounter count and not the detected-conflict count). Each encounter gets
 its own RNG substream spawned from the run seed (ADR 0001), so the estimate is reproducible and
@@ -21,9 +22,8 @@ one backend and be ignored under the other — with nothing in either result to 
 
 from __future__ import annotations
 
-import math
 import statistics
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -40,26 +40,6 @@ from opencdarr.performance import Performance
 from opencdarr.rng import generator, root_seed_sequence, spawn
 from opencdarr.scenario import Draw, sample_pairwise
 from opencdarr.wind import NO_WIND, WindField
-
-
-def wilson_interval(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
-    """A 95% Wilson score interval for ``k`` successes in ``n`` Bernoulli trials.
-
-    Preferred over the textbook normal approximation ``p̂ ± z√(p̂(1-p̂)/n)`` because it stays
-    inside ``[0, 1]`` and keeps sensible coverage when ``p̂`` is near 0 — which is the regime every
-    interesting safety number lives in. At ``k = 0`` it still returns a positive upper bound, i.e.
-    "no events observed" becomes a real bound rather than the false certainty of ``(0, 0)``.
-
-    Valid here because ``n`` is the *encounter count*, fixed by the experiment design, so this is a
-    genuine binomial and not a ratio with a random denominator (see :class:`MonteCarloEstimate`).
-    """
-    if n <= 0:
-        return (float("nan"), float("nan"))
-    p_hat = k / n
-    denom = 1.0 + z * z / n
-    centre = (p_hat + z * z / (2 * n)) / denom
-    half = z / denom * math.sqrt(p_hat * (1.0 - p_hat) / n + z * z / (4 * n * n))
-    return (max(0.0, centre - half), min(1.0, centre + half))
 
 
 @dataclass(frozen=True)
@@ -103,7 +83,7 @@ class MonteCarloEstimate:
     n_conflict: int  # diagnostic: how many were *detected* as conflicts, not the denominator
     sum_k: int  # Σ K over runs — losing pairs summed (the E[K] numerator)
     sum_a: int  # Σ A over runs — aircraft-involved summed (the per-aircraft numerator)
-    n_aircraft: int  # N: aircraft per run (2 for this pairwise estimator)
+    sum_n: int  # Σ N over runs — the aircraft that flew (the per-aircraft denominator)
 
     @property
     def n_encounters(self) -> int:
@@ -121,12 +101,15 @@ class MonteCarloEstimate:
 
     @property
     def p_los_ac(self) -> float:
-        """P(LoS) per aircraft (Blom & Bakker 2015) — the headline: the aircraft that lost
-        separation over the aircraft that flew, ``Σ A / (n_encounters · N)``. Unlike
-        :attr:`p_los_run` it does not saturate as the fleet grows; at N = 2 it equals it exactly.
+        """P(LoS) per aircraft (Blom & Bakker 2015) — the headline, and literally the aircraft
+        that lost separation over the aircraft that flew, ``Σ A / Σ N``.
+
+        Summing the denominator rather than assuming ``n_encounters · N`` costs nothing at a fixed
+        fleet size and keeps the ratio meaningful when the builder draws a different number of
+        aircraft per encounter. Unlike :attr:`p_los_run` it does not saturate as the fleet grows;
+        at N = 2 the two are equal exactly.
         """
-        denom = self.n_encounters * self.n_aircraft
-        return self.sum_a / denom if denom else float("nan")
+        return self.sum_a / self.sum_n if self.sum_n else float("nan")
 
     @property
     def mean_k(self) -> float:
@@ -151,11 +134,6 @@ class MonteCarloEstimate:
         leave when it did not" — and a resolver can win one while losing the other.
         """
         return statistics.median(self.min_seps) if self.min_seps else float("nan")
-
-    @property
-    def ci95(self) -> tuple[float, float]:
-        """95% Wilson interval for :attr:`p_los_run` (its per-run binomial)."""
-        return wilson_interval(self.n_los, self.n_encounters)
 
     @property
     def detection_rate(self) -> float:
@@ -189,13 +167,81 @@ def combine_p_los(results: Sequence[MonteCarloEstimate]) -> MonteCarloEstimate:
         n_conflict=sum(r.n_conflict for r in results),
         sum_k=sum(r.sum_k for r in results),
         sum_a=sum(r.sum_a for r in results),
-        n_aircraft=results[0].n_aircraft if results else 0,
+        sum_n=sum(r.sum_n for r in results),
     )
 
 
-def estimate_p_los(
-    config: Config,
+EncounterBuilder = Callable[[np.random.Generator, Config], list[Agent]]
+"""Build one encounter's fleet from its own geometry stream and the run's config.
+
+The estimator's encounter model, and the only thing that decides **N**: whatever list of
+:class:`~opencdarr.fleet.Agent` comes back is flown as-is, so a builder returning two agents is a
+pairwise study and one returning eight is a fleet study, through the same estimator. The IPS side
+takes the same shape (``build_initial``), which is what lets one campaign drive both backends.
+
+Draw every random choice from the generator handed in — it is this encounter's own substream, so a
+builder that draws from anywhere else breaks reproducibility (ADR 0001).
+"""
+
+
+def pairwise(
     perf: Performance,
+    *,
+    kinematics: Kinematics | None = None,
+    airframes: Sequence[Airframe] | None = None,
+    dpsi: float | Draw | None = None,
+    dcpa: float | Draw | None = None,
+    side: int | Draw | None = None,
+    gs_intr: float | Draw | None = None,
+) -> EncounterBuilder:
+    """The two-aircraft encounter builder: one ownship, one intruder crossing it.
+
+    The standard :data:`EncounterBuilder` — :func:`~opencdarr.scenario.sample_pairwise` drawn from
+    the encounter's own stream, wrapped as a pair of agents. Everything specific to a *pairwise*
+    encounter lives here rather than on :func:`estimate_p_los`, which is what leaves that function
+    with nothing to say about N.
+
+    ``kinematics`` is the airframe both aircraft fly (``None`` = the fleet default
+    :class:`~opencdarr.kinematics.Multirotor`, ADR 0007).
+
+    ``airframes`` is the **mixed-fleet** spelling: one :class:`~opencdarr.fleet.Airframe` per
+    aircraft (ownship first), overriding ``perf`` and ``kinematics`` entirely. Give the two
+    aircraft different envelopes and the sampler must give each a speed its own airframe can fly —
+    ``speed`` for the ownship, ``gs_intr`` for the intruder — or :class:`~opencdarr.fleet.Agent`
+    refuses the encounter.
+
+    ``dpsi`` / ``dcpa`` / ``side`` / ``gs_intr`` pin or re-distribute one geometry parameter (a
+    constant pins it, a callable draws it, ``None`` keeps the built-in draw). ``dpsi=90.0`` is the
+    single-crossing response-curve case; the rest of the encounter distribution is untouched,
+    because a pinned slot still consumes its own draw.
+    """
+    def build(rng: np.random.Generator, config: Config) -> list[Agent]:
+        own, intr = sample_pairwise(
+            rng,
+            speed=config.scenario.speed,
+            dcpa_max=config.scenario.dcpa_max,
+            tlos=config.scenario.tlos,
+            rpz=config.conflict.rpz,
+            pos_ci95=config.scenario.pos_ci95,
+            vel_ci95=config.scenario.vel_ci95,
+            pos_ci95_declared=config.scenario.pos_ci95_declared,
+            vel_ci95_declared=config.scenario.vel_ci95_declared,
+            dpsi=dpsi,
+            dcpa=dcpa,
+            side=side,
+            gs_intr=gs_intr,
+        )
+        if airframes is None:
+            return [Agent(own, perf, kinematics=kinematics),
+                    Agent(intr, perf, kinematics=kinematics)]
+        return [af.agent(ac) for af, ac in zip(airframes, (own, intr), strict=True)]
+
+    return build
+
+
+def estimate_p_los(
+    build: EncounterBuilder,
+    config: Config,
     detector: ConflictDetector,
     resolver: ConflictResolver | None,
     recovery: RecoveryCriterion | None,
@@ -203,36 +249,19 @@ def estimate_p_los(
     communication: CommunicationModel | None = None,
     surveillance: SurveillanceModel | None = None,
     *,
-    kinematics: Kinematics | None = None,
-    airframes: Sequence[Airframe] | None = None,
     wind: WindField = NO_WIND,
     share_intent: bool = False,
-    dpsi: float | Draw | None = None,
-    dcpa: float | Draw | None = None,
-    side: int | Draw | None = None,
-    gs_intr: float | Draw | None = None,
     seqs: Sequence[np.random.SeedSequence] | None = None,
 ) -> MonteCarloEstimate:
     """Run the plain-MC estimate over ``config.n_encounters`` sampled encounters.
 
-    ``kinematics`` is the airframe both aircraft fly (``None`` = the fleet default
-    :class:`~opencdarr.kinematics.Multirotor`, ADR 0007); ``wind`` and ``share_intent`` are the
-    other two per-run settings the fleet environment takes.
+    ``build`` is the encounter model (:data:`EncounterBuilder`) and the only thing that sets the
+    fleet size: :func:`pairwise` for the two-aircraft study, any other builder for a fleet. This
+    function itself is N-agnostic — it flies whatever comes back and normalises by the aircraft
+    that flew — so the same estimator serves a crossing pair and an eight-aircraft ring.
 
-    ``airframes`` is the **mixed-fleet** spelling: one :class:`~opencdarr.fleet.Airframe` per
-    aircraft (ownship first), overriding ``perf`` and ``kinematics`` entirely. Left ``None``, every
-    aircraft flies ``perf`` + ``kinematics``, which is the single-airframe case and is unchanged.
-    Give the two aircraft different envelopes and the sampler must give each a speed its own
-    airframe can fly — ``speed`` for the ownship, ``gs_intr`` for the intruder — or
-    :class:`~opencdarr.fleet.Agent` refuses the encounter. All three are keyword-only additions
-    that were previously reachable through IPS but *not* through this estimator — see the module
-    docstring for why that asymmetry mattered.
-
-    ``dpsi`` / ``dcpa`` / ``side`` / ``gs_intr`` pin or re-distribute one geometry parameter of the
-    sampled encounter, passed straight through to :func:`~opencdarr.scenario.sample_pairwise` (a
-    constant pins it, a callable draws it, ``None`` keeps the built-in draw). ``dpsi=90.0`` is the
-    single-crossing response-curve case; the rest of the encounter distribution is untouched,
-    because a pinned slot still consumes its own draw.
+    ``wind`` and ``share_intent`` are the per-run settings the fleet environment takes; everything
+    about *which* aircraft fly, and how they are equipped, belongs to ``build``.
 
     ``seqs`` overrides which per-encounter substreams to run, defaulting to the whole fan-out
     ``spawn(root_seed_sequence(config.seed), config.n_encounters)``. It exists so a caller can run
@@ -247,6 +276,7 @@ def estimate_p_los(
     n_los = 0
     sum_k = 0
     sum_a = 0
+    sum_n = 0
     encounters = (
         spawn(root_seed_sequence(config.seed), config.n_encounters) if seqs is None else seqs
     )
@@ -258,38 +288,19 @@ def estimate_p_los(
         # the first three bit-identical to the three-child tree every published number came from.
         geom_seq, nav_seq, comm_seq, bc_seq = spawn(seq, 4)
         geom_rng = generator(geom_seq)
-        own, intr = sample_pairwise(
-            geom_rng,
-            speed=config.scenario.speed,
-            dcpa_max=config.scenario.dcpa_max,
-            tlos=config.scenario.tlos,
-            rpz=config.conflict.rpz,
-            pos_ci95=config.scenario.pos_ci95,
-            vel_ci95=config.scenario.vel_ci95,
-            pos_ci95_declared=config.scenario.pos_ci95_declared,
-            vel_ci95_declared=config.scenario.vel_ci95_declared,
-            dpsi=dpsi,
-            dcpa=dcpa,
-            side=side,
-            gs_intr=gs_intr,
-        )
+        agents = build(geom_rng, config)
         # the transmit timing, built the same way IPS builds it (:func:`schedule_for`). The phase
-        # draws from ``geom_rng`` — which the geometry has finished with — so switching it on
+        # draws from ``geom_rng`` — which the builder has finished with — so switching it on
         # appends draws instead of shifting the ones already there.
         schedule = schedule_for(
-            2,
+            len(agents),
             config.simulation.broadcast_interval,
             geom_rng,
             jitter=config.simulation.broadcast_jitter,
             random_phase=config.simulation.broadcast_random_phase,
         )
-        if airframes is None:
-            pair = [Agent(own, perf, kinematics=kinematics),
-                    Agent(intr, perf, kinematics=kinematics)]
-        else:  # mixed fleet: one airframe per aircraft, ownship first
-            pair = [af.agent(ac) for af, ac in zip(airframes, (own, intr), strict=True)]
         outcome = run_fleet(
-            pair,
+            agents,
             rpz=config.conflict.rpz,
             t_lookahead=config.conflict.t_lookahead,
             dt=config.simulation.dt,
@@ -317,8 +328,9 @@ def estimate_p_los(
         n_los += int(outcome.los)
         sum_k += outcome.n_los_pairs
         sum_a += outcome.n_los_aircraft
+        sum_n += len(agents)
 
     return MonteCarloEstimate(
         min_seps=tuple(min_seps), n_los=n_los, n_conflict=n_conflict,
-        sum_k=sum_k, sum_a=sum_a, n_aircraft=2,  # pairwise; the builder step sets len(agents)
+        sum_k=sum_k, sum_a=sum_a, sum_n=sum_n,
     )

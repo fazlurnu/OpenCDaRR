@@ -16,7 +16,7 @@ from opencdarr.config import (
 )
 from opencdarr.cr import MVP
 from opencdarr.crr import PastCPA
-from opencdarr.estimator import estimate_p_los
+from opencdarr.estimator import estimate_p_los, pairwise
 from opencdarr.loop import run_encounter
 from opencdarr.performance import M600
 from opencdarr.rng import generator, root_seed_sequence, spawn
@@ -42,8 +42,9 @@ def _config(seed: int = 1, n: int = 200, pos_ci95: float = 0.0, vel_ci95: float 
 def _ipr(pos_ci95: float, vel_ci95: float, navigation: GnssNavigation | None) -> float:
     # IPR = 1 - P(LoS); no longer a stored property, so derive it from p_los_run here
     return 1.0 - estimate_p_los(
+        pairwise(M600),
         _config(pos_ci95=pos_ci95, vel_ci95=vel_ci95),
-        M600, StateBased(), MVP(1.05), PastCPA(), navigation=navigation,
+        StateBased(), MVP(1.05), PastCPA(), navigation=navigation,
     ).p_los_run
 
 
@@ -68,8 +69,8 @@ def test_ipr_degrades_monotonically_with_gps_noise() -> None:
 def test_reproducible_with_navigation() -> None:
     cfg = _config(pos_ci95=50.0, vel_ci95=_VEL_CI95_2SIGMA)
     nav = GnssNavigation()
-    r1 = estimate_p_los(cfg, M600, StateBased(), MVP(1.05), PastCPA(), navigation=nav)
-    r2 = estimate_p_los(cfg, M600, StateBased(), MVP(1.05), PastCPA(), navigation=nav)
+    r1 = estimate_p_los(pairwise(M600), cfg, StateBased(), MVP(1.05), PastCPA(), navigation=nav)
+    r2 = estimate_p_los(pairwise(M600), cfg, StateBased(), MVP(1.05), PastCPA(), navigation=nav)
     assert r1 == r2
 
 
@@ -79,7 +80,8 @@ def test_reproducible_with_navigation() -> None:
 def _ipr_comm(communication) -> float:
     """No navigation noise, so communication is the only stochastic driver of the outcome."""
     return 1.0 - estimate_p_los(
-        _config(), M600, StateBased(), MVP(1.05), PastCPA(), communication=communication
+        pairwise(M600), _config(), StateBased(), MVP(1.05), PastCPA(),
+        communication=communication,
     ).p_los_run
 
 
@@ -125,8 +127,9 @@ def test_comm_rng_required_when_communication_set() -> None:
 def test_reproducible_with_communication() -> None:
     cfg = _config()
     comm = Comm(reception_prob=0.02, latency=uniform_latency(0.0, 5.0))
-    r1 = estimate_p_los(cfg, M600, StateBased(), MVP(1.05), PastCPA(), communication=comm)
-    r2 = estimate_p_los(cfg, M600, StateBased(), MVP(1.05), PastCPA(), communication=comm)
+    kw = dict(communication=comm)
+    r1 = estimate_p_los(pairwise(M600), cfg, StateBased(), MVP(1.05), PastCPA(), **kw)
+    r2 = estimate_p_los(pairwise(M600), cfg, StateBased(), MVP(1.05), PastCPA(), **kw)
     assert r1 == r2
 
 
