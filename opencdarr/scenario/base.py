@@ -10,7 +10,7 @@ that describes it change for the same reason, so they stay together.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 import numpy as np
 
@@ -49,5 +49,29 @@ def _heading_to(lat: float, lon: float, target: tuple[float, float], speed: floa
     """An aircraft at ``(lat, lon)`` flying at ``speed`` toward ``target`` (nose on the bearing)"""
     trk, _ = geo.qdrdist(lat, lon, target[0], target[1])
     return AircraftState(id=ac_id, lat=lat, lon=lon, trk=trk % 360.0, gs=speed)
+
+
+def _per_aircraft_speeds(speed: float | Sequence[float], n: int) -> list[float]:
+    """One cruise speed per aircraft: a scalar applies to all, a sequence gives each its own.
+
+    A mixed fleet needs the sequence form. :data:`~opencdarr.performance.SMALL_FIXEDWING` stalls at
+    12 m/s, above the 10 m/s a multirotor normally cruises at, so a single fleet speed either
+    stalls one airframe or flies the other well above its real cruise.
+    :class:`~opencdarr.fleet.Agent` already refuses an out-of-envelope speed, so the mismatch fails
+    where it is written; this is what lets the *scenario* express the difference instead of the
+    caller working around it — and it makes the speed difference a subject of study, which is what
+    a GA-versus-UAS encounter is.
+
+    A length mismatch is refused rather than recycled or truncated: either would fly a fleet nobody
+    declared, and the run would look entirely normal afterwards.
+    """
+    if isinstance(speed, int | float):
+        return [float(speed)] * n
+    speeds = [float(v) for v in speed]
+    if len(speeds) != n:
+        raise ValueError(
+            f"speed has {len(speeds)} entries but the scenario places {n} aircraft"
+        )
+    return speeds
 
 

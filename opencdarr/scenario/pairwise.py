@@ -18,11 +18,18 @@ Governing equations: ``vault/derivations/conflict-geometry.md``.
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 
 import numpy as np
 
 from opencdarr import geo
-from opencdarr.scenario.base import Draw, FleetScenario, _heading_to, _resolve
+from opencdarr.scenario.base import (
+    Draw,
+    FleetScenario,
+    _heading_to,
+    _per_aircraft_speeds,
+    _resolve,
+)
 from opencdarr.state import AircraftState
 
 _PARALLEL_EPS = 1e-9  # |v_rel| below this = no closing geometry
@@ -182,30 +189,40 @@ def sample_pairwise(
 
 
 def swap_pair(
-    *, speed: float = 10.0, span: float = 3000.0, lat0: float = 52.0, lon0: float = 4.0
+    *, speed: float | Sequence[float] = 10.0, span: float = 3000.0,
+    lat0: float = 52.0, lon0: float = 4.0,
 ) -> FleetScenario:
     """Two aircraft ``span`` m apart, each flying to the *other's* start — a head-on swap
     (Phase-6 scenario 1). Placed so the DAA clears with the waypoint still ahead.
+
+    ``speed`` is one value for both, or ``[west, east]`` — the mixed-fleet spelling.
     """
+    west_speed, east_speed = _per_aircraft_speeds(speed, 2)
     a = geo.forward(lat0, lon0, 270.0, span / 2)  # west
     b = geo.forward(lat0, lon0, 90.0, span / 2)  # east
     return [
-        (_heading_to(a[0], a[1], (b[0], b[1]), speed, "A"), (b[0], b[1])),
-        (_heading_to(b[0], b[1], (a[0], a[1]), speed, "B"), (a[0], a[1])),
+        (_heading_to(a[0], a[1], (b[0], b[1]), west_speed, "A"), (b[0], b[1])),
+        (_heading_to(b[0], b[1], (a[0], a[1]), east_speed, "B"), (a[0], a[1])),
     ]
 
 
 
 def near_parallel(
-    *, speed: float = 10.0, dpsi: float = 5.0, tlos: float = 90.0, rpz: float = 50.0,
-    reach: float = 3000.0, lat0: float = 52.0, lon0: float = 4.0
+    *, speed: float | Sequence[float] = 10.0, dpsi: float = 5.0, tlos: float = 90.0,
+    rpz: float = 50.0, reach: float = 3000.0, lat0: float = 52.0, lon0: float = 4.0,
 ) -> FleetScenario:
     """Two aircraft crossing at a shallow ``dpsi`` (default 5°) — the near-parallel, slow-closing
     hard case (Phase-6 scenario 4). The ownship heads north; the intruder is placed by
     :func:`create_conflict`; each aircraft's waypoint is ``reach`` metres ahead along its track.
+
+    ``speed`` is one value for both, or ``[ownship, intruder]``. The intruder's speed reaches
+    :func:`create_conflict` as ``gs_intr``, so the geometry is still solved for the pair that
+    actually flies rather than for two aircraft at one speed.
     """
-    own = AircraftState(id="OWN", lat=lat0, lon=lon0, trk=0.0, gs=speed)
-    intr = create_conflict(own, intr_id="INT", dpsi=dpsi, dcpa=0.0, tlos=tlos, rpz=rpz, side=1)
+    own_speed, intr_speed = _per_aircraft_speeds(speed, 2)
+    own = AircraftState(id="OWN", lat=lat0, lon=lon0, trk=0.0, gs=own_speed)
+    intr = create_conflict(own, intr_id="INT", dpsi=dpsi, dcpa=0.0, tlos=tlos, rpz=rpz, side=1,
+                           gs_intr=intr_speed)
     out: FleetScenario = []
     for ac in (own, intr):
         target = geo.forward(ac.lat, ac.lon, ac.trk, reach)
