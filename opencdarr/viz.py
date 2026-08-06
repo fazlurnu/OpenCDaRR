@@ -26,7 +26,7 @@ from numpy.typing import NDArray
 
 from opencdarr import geo
 from opencdarr.fleet import FleetOutcome, FleetState, StatesLog
-from opencdarr.state import AircraftState
+from opencdarr.relative import pairwise_min_sep
 
 if TYPE_CHECKING:  # matplotlib is an optional (``examples``) dependency, imported lazily below.
     from matplotlib.axes import Axes
@@ -54,16 +54,6 @@ def _enu(origin: LatLon, lat: float, lon: float) -> tuple[float, float]:
     qdr, dist = geo.qdrdist(origin[0], origin[1], lat, lon)
     r = math.radians(qdr)
     return dist * math.sin(r), dist * math.cos(r)
-
-
-def _min_pairwise_sep(states: Sequence[AircraftState]) -> float:
-    """Smallest great-circle distance over every aircraft pair this tick [m]."""
-    smallest = math.inf
-    for i in range(len(states)):
-        for j in range(i + 1, len(states)):
-            _, dist = geo.qdrdist(states[i].lat, states[i].lon, states[j].lat, states[j].lon)
-            smallest = min(smallest, dist)
-    return smallest
 
 
 @dataclass(frozen=True)
@@ -95,7 +85,7 @@ def extract_tracks(run: Run) -> Tracks:
         for k in range(n)
     )
     times = np.array([f.t for f in frames], dtype=float)
-    separation = np.array([_min_pairwise_sep(f.states) for f in frames], dtype=float)
+    separation = np.array([pairwise_min_sep(f.states) for f in frames], dtype=float)
     resolving = np.array([any(m.resolving for m in f.mems) for f in frames], dtype=bool)
     return Tracks(ids=ids, times=times, tracks=tracks, separation=separation,
                   resolving=resolving, origin=origin)

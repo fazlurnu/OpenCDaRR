@@ -127,7 +127,7 @@ class MonteCarloEstimate:
         Named for what it measures. It is *not* ``dcpa``, which everywhere else in this package is
         the **predicted** miss distance a detector computes from a straight-line extrapolation;
         this is the miss distance the encounter actually flew, after resolution, measured over each
-        step rather than at its endpoints (:func:`~opencdarr.fleet._segment_min_sep`).
+        step rather than at its endpoints (:func:`~opencdarr.relative.segment_min_sep`).
 
         A median rather than a mean because the distribution is bounded below by zero and skewed:
         a resolver that clears almost everything but folds a few encounters onto the protected zone

@@ -42,7 +42,7 @@ from opencdarr.crr import PastCPA  # noqa: E402
 from opencdarr.kinematics import Multirotor  # noqa: E402
 from opencdarr.mission import Mission  # noqa: E402
 from opencdarr.performance import M600  # noqa: E402
-from opencdarr.relative import relative_enu  # noqa: E402
+from opencdarr.relative import pairwise_min_sep, relative_enu  # noqa: E402
 from opencdarr.separation import INACTIVE, FleetMemory, SeparationManager  # noqa: E402
 from opencdarr.state import AircraftState, DesiredVelocity  # noqa: E402
 
@@ -68,13 +68,6 @@ def _enu(lat: float, lon: float) -> tuple[float, float]:
     qdr, dist = geo.qdrdist(LAT0, LON0, lat, lon)
     r = math.radians(qdr)
     return dist * math.sin(r), dist * math.cos(r)
-
-
-def _pairwise_min_sep(states: list[AircraftState]) -> float:
-    return min(
-        geo.qdrdist(states[a].lat, states[a].lon, states[b].lat, states[b].lon)[1]
-        for a in range(len(states)) for b in range(a + 1, len(states))
-    )
 
 
 def _all_clear(states: list[AircraftState], mems: list[FleetMemory]) -> bool:
@@ -111,7 +104,7 @@ def simulate(fleet: sc.FleetScenario, resolver: ConflictResolver | None) -> _Sim
     while t < T_MAX:
         for i in range(n):
             tracks[i].append(_enu(states[i].lat, states[i].lon))
-        min_sep.append(_pairwise_min_sep(states))
+        min_sep.append(pairwise_min_sep(states))
         if t + 1e-9 >= next_bcast:
             for i in range(n):
                 nom, gms[i] = aps[i].step(states[i], gms[i], M600)

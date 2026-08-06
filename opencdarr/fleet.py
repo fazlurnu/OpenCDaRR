@@ -59,7 +59,13 @@ from opencdarr.crr.base import RecoveryCriterion
 from opencdarr.kinematics import FixedWing, Kinematics, MotionCommand, Multirotor
 from opencdarr.measurement import MeasurementArea
 from opencdarr.performance import Performance
-from opencdarr.relative import Relative, relative_enu, segment_min_range
+from opencdarr.relative import (
+    pair_ids,
+    pair_min_ranges,
+    pairwise_min_sep,
+    pairwise_relative,
+    relative_enu,
+)
 from opencdarr.separation import (
     INACTIVE,
     FleetMemory,
@@ -258,71 +264,11 @@ class FleetStreams:
     broadcast: np.random.Generator | None = None
 
 
-def _pairwise_min_sep(states: tuple[AircraftState, ...] | list[AircraftState]) -> float:
-    """Smallest separation over all unordered pairs [m], at this instant."""
-    smallest = float("inf")
-    for i in range(len(states)):
-        for j in range(i + 1, len(states)):
-            _, dist = geo.qdrdist(states[i].lat, states[i].lon, states[j].lat, states[j].lon)
-            smallest = min(smallest, dist)
-    return smallest
-
-
-def _pairwise_relative(
-    states: tuple[AircraftState, ...] | list[AircraftState]
-) -> tuple[Relative, ...]:
-    """Relative position of every unordered pair, in the fixed ``i < j`` order [m].
-
-    The vector form of :func:`_pairwise_min_sep` — same one ``geo.qdrdist`` per pair, so it costs
-    essentially the same, but it returns the geometry rather than only its magnitude. That is what
-    :func:`_segment_min_sep` needs to close the gap *between* two sampled instants.
-    """
-    return tuple(
-        relative_enu(states[i], states[j])
-        for i in range(len(states))
-        for j in range(i + 1, len(states))
-    )
-
-
-def _pair_ids(n: int) -> tuple[tuple[int, int], ...]:
-    """The unordered pairs ``(i, j)``, ``i < j`` — the order every pairwise helper walks."""
-    return tuple((i, j) for i in range(n) for j in range(i + 1, n))
-
-
-def _pair_min_ranges(pre: tuple[Relative, ...], post: tuple[Relative, ...]) -> tuple[float, ...]:
-    """Each pair's smallest separation across the step [m], in the fixed ``i < j`` order.
-
-    The per-pair form of :func:`_segment_min_sep` — the ``min`` of this *is* that. Keeping the
-    whole vector lets :meth:`FleetEnv.advance` name *which* pairs crossed ``rpz`` (K, A) rather
-    than only whether one did, at no extra geometry: the same one :func:`segment_min_range` per
-    pair either way.
-    """
-    return tuple(segment_min_range(r0, r1) for r0, r1 in zip(pre, post, strict=True))
-
-
-def _segment_min_sep(pre: tuple[Relative, ...], post: tuple[Relative, ...]) -> float:
-    """Smallest separation over all pairs across a whole ``dt`` step, endpoints included [m].
-
-    Interpolates each pair's relative position linearly between the two ends of the step and takes
-    the closed-form minimum of that segment. Sampling separation only at the step *endpoints*
-    misses a pass that dips inside a threshold and back out within one step, and the miss is
-    one-sided — it can only report *more* separation than there was. The bias is negligible against
-    ``rpz`` but severe at the small radii IPS splits on: the relative error in
-    ``P(min_sep <= d)`` goes as ``(v_rel*dt)^2 / (24 d^2)``, i.e. it grows as the target tightens.
-    See ``vault/observations/segment-min-separation.md`` for the measurements.
-
-    The per-pair algebra is :func:`~opencdarr.relative.segment_min_range`. The ``min`` is taken
-    through :func:`_pair_min_ranges`, the one place the per-pair vector is formed, so ``advance``'s
-    K/A read and this scalar cannot disagree.
-    """
-    return min(_pair_min_ranges(pre, post), default=float("inf"))
-
-
 def level(state: FleetState) -> float:
     """The importance function IPS splits on: the fleet's **current** minimum pairwise separation
     [m], smaller = closer to the rare event (ADR 0004's starting point; a Phase-8 ADR may refine
     it for simultaneous multi-aircraft conflict). A pure read of ``state``, independent of N."""
-    return _pairwise_min_sep(state.states)
+    return pairwise_min_sep(state.states)
 
 
 def _all_clear(states: list[AircraftState], mems: tuple[FleetMemory, ...], rpz: float) -> bool:
@@ -448,7 +394,7 @@ class FleetEnv:
         # detect on the true states, before any decision or step (top of the old loop). The
         # separation measurement needs both ends of the step, so it is taken *after* integrating;
         # only the pre-step geometry is captured here.
-        rel_pre = _pairwise_relative(states)
+        rel_pre = pairwise_relative(states)
         conflict = state.conflict or any(
             i != j and self.detector.detect(states[i], states[j], self.rpz, self.t_lookahead)
             for i in range(n)
@@ -488,7 +434,7 @@ class FleetEnv:
         # from t=0 (the first segment's left end) rather than at a comb of sampled instants. The
         # per-pair vector (not just its min) also names which pairs crossed rpz, so K and A
         # accumulate here at no extra geometry (ADR 0022).
-        per_pair = _pair_min_ranges(rel_pre, _pairwise_relative(states))
+        per_pair = pair_min_ranges(rel_pre, pairwise_relative(states))
         if self.area is not None:
             # Flown, but not measured. A pair counts only where **both** aircraft are inside the
             # study region: one of them still on its way in is the release artefact the area exists
@@ -498,13 +444,13 @@ class FleetEnv:
             inside = [self.area.contains(s.lat, s.lon) for s in states]
             per_pair = tuple(
                 d if (inside[i] and inside[j]) else float("inf")
-                for (i, j), d in zip(_pair_ids(n), per_pair, strict=True)
+                for (i, j), d in zip(pair_ids(n), per_pair, strict=True)
             )
         cur = min(per_pair, default=float("inf"))
         min_sep = min(state.min_sep, cur)
         los = state.los or cur < self.rpz
         los_pairs = state.los_pairs | frozenset(
-            ids for ids, d in zip(_pair_ids(n), per_pair, strict=True) if d < self.rpz
+            ids for ids, d in zip(pair_ids(n), per_pair, strict=True) if d < self.rpz
         )
 
         clear = _all_clear(states, tuple(mems), self.rpz)

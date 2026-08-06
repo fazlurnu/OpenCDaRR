@@ -38,8 +38,9 @@ from opencdarr.cd import StateBased  # noqa: E402
 from opencdarr.cns import CnsStreams, GnssNavigation  # noqa: E402
 from opencdarr.cr import MVP  # noqa: E402
 from opencdarr.crr import PastCPA  # noqa: E402
-from opencdarr.fleet import Agent, FleetStreams, _pairwise_min_sep, build_env  # noqa: E402
+from opencdarr.fleet import Agent, FleetStreams, build_env  # noqa: E402
 from opencdarr.performance import M600  # noqa: E402
+from opencdarr.relative import pairwise_min_sep  # noqa: E402
 from opencdarr.rng import generator, root_seed_sequence  # noqa: E402
 from opencdarr.scenario import create_conflict  # noqa: E402
 from opencdarr.state import AircraftState  # noqa: E402
@@ -75,7 +76,7 @@ def build_pair(a: argparse.Namespace):
 
 
 def _sep(state) -> float:
-    return _pairwise_min_sep(state.states)
+    return pairwise_min_sep(state.states)
 
 
 def _enu_pair(state):

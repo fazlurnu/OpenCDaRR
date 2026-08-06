@@ -24,9 +24,9 @@ from opencdarr.cns.base import NavigationModel
 from opencdarr.cns.stack import CNS, CnsStreams
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr.base import RecoveryCriterion
-from opencdarr.fleet import Agent, _all_clear, _pairwise_min_sep
+from opencdarr.fleet import Agent, _all_clear, _setpoint_adapter
 from opencdarr.kinematics import Kinematics, Multirotor
-from opencdarr.fleet import _setpoint_adapter
+from opencdarr.relative import pairwise_min_sep
 from opencdarr.separation import INACTIVE, FleetMemory, SeparationManager
 from opencdarr.state import AircraftState, DesiredVelocity
 
@@ -108,7 +108,7 @@ def run_fleet_traced(
         tr.t.append(t)
         for i in range(n):
             tr.tracks[i].append(enu(origin, states[i].lat, states[i].lon))
-        tr.min_sep.append(_pairwise_min_sep(states))
+        tr.min_sep.append(pairwise_min_sep(states))
         tr.resolving.append(any(m.resolving for m in mems))
 
         if t + 1e-9 >= next_bcast:
