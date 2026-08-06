@@ -163,15 +163,6 @@ class MotionCommand:
         return math.degrees(math.atan2(v_east, v_north)) % 360.0
 
 
-# Backward-compatible name for the pure-velocity command (ADR 0008), which :class:`MotionCommand`
-# (ADR 0011) supersedes. The alias keeps ``from_track_speed`` / ``gs`` / ``trk`` / ``isinstance``
-# call sites reading unchanged through the Phase-4a migration; it is removed once the loop and its
-# callers speak ``MotionCommand`` directly. Note: direct ``Command(v_east=, v_north=)`` positional
-# construction no longer exists — build a velocity command via :meth:`MotionCommand.from_velocity`
-# or ``MotionCommand(target_velocity=(...))``.
-Command = MotionCommand
-
-
 def _clip(value: float, low: float, high: float) -> float:
     """Clamp ``value`` to ``[low, high]``."""
     return max(low, min(value, high))
@@ -195,8 +186,8 @@ class Kinematics(ABC):
     """Base class every motion model implements — the contribution surface for how an aircraft's
     state evolves under a command (ADR 0007).
 
-    A model subclasses :class:`Kinematics` and implements ``step``; it is passed into
-    :func:`~opencdarr.loop.run_encounter` as ``kinematics=...`` in place of the default. This
+    A model subclasses :class:`Kinematics` and implements ``step``; it is carried per aircraft as
+    :class:`~opencdarr.fleet.Agent`'s ``kinematics=`` in place of the default. This
     mirrors every other model family in the library (:class:`~opencdarr.cd.base.ConflictDetector`,
     :class:`~opencdarr.cr.base.ConflictResolver`, ...): a new physical effect adds a file, not a
     fork of the loop (``design_brief.md``: the interface is the contribution surface).

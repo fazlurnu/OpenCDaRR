@@ -50,7 +50,7 @@ class FTR(RecoveryCriterion):
     def should_resume(self, own: AircraftState, intr: AircraftState, rpz: float) -> bool:
         if own.desired is None:
             raise ValueError(
-                "FTR needs the ownship's desired (nominal) velocity; run_encounter sets it, or "
+                "FTR needs the ownship's desired (nominal) velocity; run_fleet sets it, or "
                 "set AircraftState.desired explicitly."
             )
         rel = relative_enu(own, intr)  # rx,ry = intr − own position

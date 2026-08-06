@@ -1,9 +1,9 @@
 """Broadcast-phase offset: aligned vs staggered transmit clocks (motivates Phase 6f).
 
 Aircraft "spawned" at different times run the *same* broadcast interval at *different phase* — A
-transmits at 0,1,2,... while B (spawned 0.3 s later) transmits at 0.3,1.3,2.3,.... The current
-``run_fleet`` / ``run_encounter`` loop hardcodes a **single global** ``next_broadcast`` from 0, so
-every aircraft is phase-aligned; this shows what the realistic offset changes.
+transmits at 0,1,2,... while B (spawned 0.3 s later) transmits at 0.3,1.3,2.3,.... The pre-6f
+``run_fleet`` loop hardcoded a **single global** ``next_broadcast`` from 0, so every aircraft was
+phase-aligned; this shows what the realistic offset changes.
 
 Setup: one ego observer watches **four** intruders (straight flights, 20 m/s) through the real
 :class:`~opencdarr.cns.communication.Comm` + :class:`~opencdarr.cns.surveillance.LastKnown` models,

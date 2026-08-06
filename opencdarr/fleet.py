@@ -1,7 +1,6 @@
 """The N-aircraft encounter runner — the fleet environment (Phase 6b), over a stepwise interface.
 
-:func:`run_fleet` is the multi-aircraft generalisation of
-:func:`~opencdarr.loop.run_encounter`: a **list of aircraft**, each with its own
+:func:`run_fleet` advances a **list of aircraft**, each with its own
 :class:`~opencdarr.autopilot.Autopilot` / :class:`~opencdarr.kinematics.Kinematics` /
 :class:`~opencdarr.performance.Performance`, all advancing simultaneously. Every aircraft runs its
 own detect → resolve → recover against **all the others it perceives** (the cooperative fleet — no
@@ -32,11 +31,10 @@ over exactly these — the loop that IPS replaces with resample-and-split.
 delivery), with optional GNSS self-noise (``navigation`` + ``rng``). Passing ``communication`` /
 ``surveillance`` / ``comm_rng`` (6f) makes perception **lossy and asymmetric** over the n(n−1)
 directed links — per-link reception + latency, each aircraft acting on the last message *that* link
-delivered (or ``None`` before first contact ⇒ fly nominal) — mirroring :func:`run_encounter`.
+delivered (or ``None`` before first contact ⇒ fly nominal).
 
-**Reduces to the pairwise runner** at n = 2: ``run_fleet`` with two agents reproduces
-:func:`~opencdarr.loop.run_encounter` (no-communication path) bit-for-bit — the free multi-aircraft
-regression (ADR 0004). Pure given its inputs; no globals.
+**The n = 2 anchors** (``tests/test_fleet.py``) pin the pairwise reduction bit-for-bit — the free
+multi-aircraft regression (ADR 0004). Pure given its inputs; no globals.
 """
 
 from __future__ import annotations
@@ -58,17 +56,41 @@ from opencdarr.cns.broadcast import BroadcastSchedule
 from opencdarr.cns.stack import CNS, CnsState, CnsStreams
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr.base import RecoveryCriterion
-from opencdarr.kinematics import Kinematics, MotionCommand
-from opencdarr.loop import _DEFAULT_KINEMATICS, _setpoint_adapter
+from opencdarr.kinematics import FixedWing, Kinematics, MotionCommand, Multirotor
 from opencdarr.measurement import MeasurementArea
 from opencdarr.performance import Performance
 from opencdarr.relative import Relative, relative_enu, segment_min_range
-from opencdarr.separation import INACTIVE, FleetMemory, SeparationManager, SetpointAdapter
+from opencdarr.separation import (
+    INACTIVE,
+    FleetMemory,
+    SeparationManager,
+    SetpointAdapter,
+    project_to_fixedwing,
+)
 from opencdarr.state import AircraftState, DesiredVelocity
 from opencdarr.wind import NO_WIND, WindField
 
 _DEFAULT_SCHEDULE = BroadcastSchedule()  # interval 1 s, aligned, no jitter (default singleton)
 _BROADCAST_EPS = 1e-9  # float guard so a tick lands on a broadcast time reached by dt steps
+
+# module-level singleton, not a call in the signature default (ruff B008) - safe to share
+# since Multirotor is stateless (ADR 0007)
+_DEFAULT_KINEMATICS: Kinematics = Multirotor()
+
+
+def _setpoint_adapter(kinematics: Kinematics, perf: Performance) -> SetpointAdapter | None:
+    """The command projection this airframe needs before its final command reaches the kinematics.
+
+    A :class:`~opencdarr.kinematics.FixedWing` cannot fly a raw velocity (ADR 0013 §4), so its
+    final command is projected onto course/airspeed
+    (:func:`~opencdarr.separation.project_to_fixedwing`, Phase 4e); a
+    :class:`~opencdarr.kinematics.Multirotor` flies the resolver's velocity directly, so it needs
+    no projection (``None`` = identity, the byte-identical pre-Phase-4e path). :func:`build_env` is
+    the composition root pairing an airframe with its adapter — the manager stays vehicle-neutral.
+    """
+    if isinstance(kinematics, FixedWing):
+        return lambda command: project_to_fixedwing(command, perf)
+    return None
 
 
 @dataclass(frozen=True)
@@ -289,10 +311,9 @@ def _segment_min_sep(pre: tuple[Relative, ...], post: tuple[Relative, ...]) -> f
     ``P(min_sep <= d)`` goes as ``(v_rel*dt)^2 / (24 d^2)``, i.e. it grows as the target tightens.
     See ``vault/observations/segment-min-separation.md`` for the measurements.
 
-    The per-pair algebra is :func:`~opencdarr.relative.segment_min_range`, shared with
-    :func:`~opencdarr.loop.run_encounter` so the two runners cannot drift apart on the n = 2
-    reduction. The ``min`` is taken through :func:`_pair_min_ranges`, the one place the per-pair
-    vector is formed, so ``advance``'s K/A read and this scalar cannot disagree.
+    The per-pair algebra is :func:`~opencdarr.relative.segment_min_range`. The ``min`` is taken
+    through :func:`_pair_min_ranges`, the one place the per-pair vector is formed, so ``advance``'s
+    K/A read and this scalar cannot disagree.
     """
     return min(_pair_min_ranges(pre, post), default=float("inf"))
 
@@ -620,8 +641,8 @@ def run_fleet(
 
     ``schedule`` (a :class:`~opencdarr.cns.broadcast.BroadcastSchedule`) owns the transmit timing —
     the interval, an optional per-aircraft phase offset, and optional per-transmission jitter. The
-    default (interval 1 s, aligned phase, no jitter) is today's behaviour and the reduction to
-    :func:`~opencdarr.loop.run_encounter` at n = 2. A non-zero ``schedule.jitter`` requires
+    default (interval 1 s, aligned phase, no jitter) is today's behaviour. A non-zero
+    ``schedule.jitter`` requires
     ``broadcast_rng`` (its own substream, ADR 0006 §6); aircraft ``i`` broadcasts *and* decides on
     its own clock, reading each other aircraft's **last** transmitted state rather than a
     synchronous snapshot.

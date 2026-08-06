@@ -26,7 +26,7 @@ from opencdarr.kinematics import MotionCommand, Multirotor
 from opencdarr.mission import Mission, Waypoint
 from opencdarr.performance import M600
 from opencdarr.scenario import create_conflict
-from opencdarr.separation import INACTIVE, PairMemory, SeparationManager
+from opencdarr.separation import INACTIVE, FleetMemory, SeparationManager
 from opencdarr.state import AircraftState
 
 _RPZ, _LOOKAHEAD, _DT = 50.0, 20.0, 0.1
@@ -45,8 +45,8 @@ def _setup() -> tuple[Mission, AircraftState, AircraftState]:
 
 def _decide(
     own: AircraftState, intr: AircraftState, ap: Autopilot, gm: GuidanceMemory,
-    sep: SeparationManager, mem: PairMemory,
-) -> tuple[MotionCommand, GuidanceMemory, PairMemory]:
+    sep: SeparationManager, mem: FleetMemory,
+) -> tuple[MotionCommand, GuidanceMemory, FleetMemory]:
     """One broadcast decision: nominal from the autopilot, overlaid by the separation manager."""
     nom, gm = ap.step(own, gm, M600)
     cmd, mem = sep.step(
@@ -88,7 +88,7 @@ def test_mission_interrupts_and_resumes_the_same_leg() -> None:
 
 def _fly(
     mission: Mission, own: AircraftState, intr: AircraftState, gm: GuidanceMemory,
-    mem: PairMemory, intr_cmd: MotionCommand, n: int,
+    mem: FleetMemory, intr_cmd: MotionCommand, n: int,
 ) -> tuple[AircraftState, GuidanceMemory]:
     """Fly forward ``n`` broadcast-cadence seconds from a captured particle (stateless ap/sep)."""
     ap, sep = WaypointAutopilot(mission, capture_radius=30.0), SeparationManager()

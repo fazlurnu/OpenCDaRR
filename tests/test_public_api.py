@@ -56,7 +56,6 @@ def test_the_contributor_path_imports() -> None:
         estimate_p_los,
         estimate_rare_prob,
         load_config,
-        run_encounter,
         run_fleet,
     )
 

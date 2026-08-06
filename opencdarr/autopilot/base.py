@@ -17,7 +17,7 @@ Implementations live beside this file:
 
 No-hidden-state obligation (ADR 0011 §5): any guidance progress an autopilot accumulates (e.g. the
 active-waypoint index, Phase 4d) must live in **clonable value state**, threaded through, never as
-a mutable attribute on the autopilot object — the same invariant ``PairMemory`` obeys, for the
+a mutable attribute on the autopilot object — the same invariant ``FleetMemory`` obeys, for the
 same reason (an IPS clone that lost it would fly differently from its parent).
 """
 
@@ -38,8 +38,9 @@ class GuidanceMemory:
 
     Currently just the active-leg index into the mission's ``flight_plan``. Held as a value passed
     **in** to :meth:`Autopilot.step` and returned **out**, never as a mutable attribute on the
-    autopilot object — the same no-hidden-state invariant :class:`~opencdarr.separation.PairMemory`
-    obeys, for the same reason: an IPS clone taken mid-plan must resume the *same* leg, so the
+    autopilot object — the same no-hidden-state invariant
+    :class:`~opencdarr.separation.FleetMemory` obeys, for the same reason: an IPS clone taken
+    mid-plan must resume the *same* leg, so the
     index has to travel inside the clonable particle. A stateless autopilot (``CruiseAutopilot``)
     simply threads it through untouched.
     """
@@ -50,7 +51,7 @@ class GuidanceMemory:
 class Autopilot(ABC):
     """Base class every guidance strategy implements — the mission-executor (navigator) layer.
 
-    Passed into :func:`~opencdarr.loop.run_encounter` per aircraft; ``step`` runs at the broadcast
+    Carried per aircraft by :class:`~opencdarr.fleet.Agent`; ``step`` runs at the broadcast
     decision cadence and produces the aircraft's **nominal** command (a position/leg setpoint the
     airframe then tracks), which the :class:`~opencdarr.separation.SeparationManager` may
     override for safety. Guidance *progress* rides in the threaded :class:`GuidanceMemory`, not on

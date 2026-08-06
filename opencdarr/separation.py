@@ -7,8 +7,9 @@ is physically able to do): it runs detect → resolve → recover, replacing the
 avoidance command while a conflict is live and **releasing back to the nominal** on recovery — the
 Mission → Offboard → Mission switch a real DAA-equipped vehicle flies (``vault/phase-4-plan.md``).
 
-This is the loop's old ``_decide`` given a home and a name, **substantively unchanged** — the
-control flow, the ``resopairs`` semantics, and the inferred-intent fallback are ported verbatim.
+This is the pre-Phase-4a pairwise runner's ``_decide`` given a home and a name, **substantively
+unchanged** — the control flow, the ``resopairs`` semantics, and the inferred-intent fallback are
+ported verbatim.
 
 No-hidden-state invariant (load-bearing, ADR 0011 §5)
 -----------------------------------------------------
@@ -111,11 +112,6 @@ class FleetMemory:
                 return onset
         return None
 
-
-#: Backward-compatible alias for the pre-Phase-6 single-pair memory name. The value is now a
-#: per-aircraft :class:`FleetMemory` (a set of directed pairs); at n = 2 it carries one entry whose
-#: ``resolving`` / ``onset_velocity`` read exactly as the old ``PairMemory`` did.
-PairMemory = FleetMemory
 
 #: The inactive (no live conflict) memory — a fresh aircraft carries this.
 INACTIVE = FleetMemory()

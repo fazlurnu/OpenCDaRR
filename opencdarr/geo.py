@@ -15,8 +15,8 @@ results are **bit-identical**: verified over 200,000 points spanning ±80° lati
 from 0.1 m to 500 km, with zero differing results for any of the three. On the ring benchmark in
 ``scripts/bluesky_wallclock_comparison.ipynb`` this is worth roughly 5.7× end to end.
 
-So: do not "modernise" these back to numpy. It is slower, and the equality the reduction tests
-assert (``run_fleet`` at n = 2 reproducing ``run_encounter`` to the bit) is exact, not approximate.
+So: do not "modernise" these back to numpy. It is slower, and the equality the n = 2 anchor tests
+assert (``tests/test_fleet.py``, bit-for-bit ``min_sep``) is exact, not approximate.
 Anything vectorised belongs in a *batch* function beside these, not in place of them.
 """
 

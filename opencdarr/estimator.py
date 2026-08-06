@@ -11,9 +11,10 @@ Pure: no I/O.
 
 **One environment, both estimators.** Each encounter runs through :func:`opencdarr.fleet.run_fleet`
 at ``n = 2`` — the same ``build_env`` / ``advance`` / ``is_terminal`` interface the rare-event
-estimator drives (:mod:`opencdarr.ips`) — rather than calling :func:`opencdarr.loop.run_encounter`
-directly. The two runners are equal at ``n = 2`` by construction, pinned across the whole sampled
-crossing-angle support (``tests/test_fleet.py``), so this changes no number. What it buys is that a
+estimator drives (:mod:`opencdarr.ips`) — rather than through a dedicated pairwise loop. The move
+changed no number: the reduction was pinned bit-for-bit across the whole sampled crossing-angle
+support before the pairwise runner was deleted, and the n = 2 anchors in ``tests/test_fleet.py``
+carry it now. What it buys is that a
 model handed to *this* estimator is the same model IPS would run. Before it, ``kinematics`` never
 reached the encounter at all: plain MC silently used the default multirotor while IPS honoured
 whatever the caller built into its ``FleetEnv``, so a contributed airframe appeared to work under

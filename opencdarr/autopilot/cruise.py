@@ -1,7 +1,7 @@
 """Constant-cruise guidance: :class:`CruiseAutopilot` (ADR 0011, Phase 4a).
 
-The behaviour-preserving stand-in for the loop's old frozen nominal. Before Phase 4a,
-``run_encounter`` computed ``nom_own = Command.from_track_speed(own.trk, own.gs)`` once from the
+The behaviour-preserving stand-in for the old frozen nominal. Before Phase 4a, the pairwise
+runner computed ``nom_own = Command.from_track_speed(own.trk, own.gs)`` once from the
 *true initial* state and held it for the whole encounter — the aircraft could only cruise a fixed
 heading, never navigate. :class:`CruiseAutopilot` is exactly that behaviour given a home: it
 returns the same command every tick, **independent of the (noisy) state passed in**, which is what
@@ -26,7 +26,8 @@ class CruiseAutopilot(Autopilot):
     Constructed from the aircraft's initial cruise track and ground speed; :meth:`step` ignores the
     state, memory, and performance it is passed and returns the constant command (threading the
     memory through untouched), so the encounter's nominal is frozen exactly as the pre-Phase-4a
-    loop froze it — the behaviour-preserving default the loop still uses when no mission is given.
+    loop froze it — the behaviour-preserving default the runner still uses when no mission is
+    given.
     """
 
     def __init__(self, heading: float, speed: float) -> None:

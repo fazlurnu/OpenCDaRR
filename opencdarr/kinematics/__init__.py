@@ -17,16 +17,13 @@ the implementations, one per file beside ``base.py`` (mirroring ``cd/``, ``cr/``
 
 The public surface is re-exported here, so ``from opencdarr.kinematics import MotionCommand,
 Kinematics, Multirotor, FixedWing`` reaches everything without knowing the file layout.
-``Command`` remains a backward-compatible alias of :class:`MotionCommand` during the Phase-4
-migration.
 """
 
-from opencdarr.kinematics.base import Command, Kinematics, MotionCommand
+from opencdarr.kinematics.base import Kinematics, MotionCommand
 from opencdarr.kinematics.fixedwing import FixedWing
 from opencdarr.kinematics.multirotor import Multirotor
 
 __all__ = [
-    "Command",
     "FixedWing",
     "Kinematics",
     "MotionCommand",

@@ -14,7 +14,7 @@ level exports what a contributor needs to *write* one and *run* it against the b
 - **reference implementations** to compare against — ``StateBased``, ``MVP``, ``VO``,
   ``PastCPA``, ``FTR``, ``ProbabilisticFTR``, ``Multirotor``, ``FixedWing``,
   ``GnssNavigation``, ``Comm``, ``TransceiverComm``, ``LastKnown``;
-- **runners and estimators** — ``run_encounter``, ``run_fleet``, ``estimate_p_los`` (with
+- **runners and estimators** — ``run_fleet``, ``estimate_p_los`` (with
   ``pairwise``, the two-aircraft ``EncounterBuilder``), ``estimate_rare_prob``,
   ``run_one_experiment``;
 - **the values you construct** — ``AircraftState``, ``MotionCommand``, ``Performance``, ``Agent``,
@@ -82,7 +82,6 @@ from opencdarr.ips import estimate_rare_prob
 from opencdarr.kinematics.base import Kinematics, MotionCommand
 from opencdarr.kinematics.fixedwing import FixedWing
 from opencdarr.kinematics.multirotor import Multirotor
-from opencdarr.loop import run_encounter
 from opencdarr.measurement import Disc, MeasurementArea, Polygon, Rectangle
 from opencdarr.performance import M600, SMALL_FIXEDWING, Performance
 from opencdarr.rng import generator, root_seed_sequence, spawn
@@ -152,7 +151,6 @@ __all__ = [
     "pairwise",
     "plot_pairwise",
     "root_seed_sequence",
-    "run_encounter",
     "run_fleet",
     "run_experiment",
     "run_one_experiment",

@@ -26,7 +26,7 @@ from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr.base import RecoveryCriterion
 from opencdarr.fleet import Agent, _all_clear, _pairwise_min_sep
 from opencdarr.kinematics import Kinematics, Multirotor
-from opencdarr.loop import _setpoint_adapter
+from opencdarr.fleet import _setpoint_adapter
 from opencdarr.separation import INACTIVE, FleetMemory, SeparationManager
 from opencdarr.state import AircraftState, DesiredVelocity
 

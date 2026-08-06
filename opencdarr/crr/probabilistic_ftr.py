@@ -263,7 +263,7 @@ class ProbabilisticFTR(RecoveryCriterion):
         if own.desired is None:
             raise ValueError(
                 "ProbabilisticFTR needs the ownship's desired (nominal) velocity; "
-                "run_encounter sets it, or set AircraftState.desired explicitly."
+                "run_fleet sets it, or set AircraftState.desired explicitly."
             )
         rel = relative_enu(own, intr)  # rx,ry = intr − own position
         mu_r = np.array([rel.rx, rel.ry])

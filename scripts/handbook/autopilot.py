@@ -64,7 +64,7 @@ CAPTURE, LOITER, CRUISE = 40.0, 80.0, 17.0
 def _fly_mission(kinematics: Kinematics, perf: Performance, s0: AircraftState,
                  tmax: float, dt: float = 0.2) -> tuple[list[float], list[float]]:
     """Fly ``PLAN_ENU`` through the real ``WaypointAutopilot`` -> ``Kinematics`` loop (no wind),
-    exactly as ``run_encounter`` threads the two layers. Returns the ground track (east, north)."""
+    exactly as the fleet runner threads the two layers. Returns the ground track (east, north)."""
     plan = tuple(Waypoint(*_latlon(e, n)) for e, n in PLAN_ENU)
     ap = WaypointAutopilot(Mission(flight_plan=plan), cruise_airspeed=CRUISE,
                            capture_radius=CAPTURE, loiter_radius=LOITER)

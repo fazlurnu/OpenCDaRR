@@ -1,6 +1,6 @@
 """IPR vs. communication quality — reception loss and latency, through the real loop.
 
-Two sweeps, both via the actual ``estimate_p_los`` / ``run_encounter`` path (not a standalone
+Two sweeps, both via the actual ``estimate_p_los`` / ``run_fleet`` path (not a standalone
 simulation): (1) IPR vs. ``reception_prob`` at zero latency, (2) IPR vs. latency spread at
 perfect reception. Same random-angle scenario as ``configs/pairwise.yaml`` (``dcpa_max=50``,
 ``tlos=60``, ``rpz=50``, ``lookahead=120``), no GPS noise, so communication is the only

@@ -61,7 +61,7 @@ class DesiredVelocity:
     :meth:`from_track_speed`; read ``trk`` / ``gs`` back as derived properties.
 
     This is *intent* — where the aircraft wants to go — and it is **private by default**: another
-    aircraft perceives it only when intent-sharing is explicitly enabled (``run_encounter``'s
+    aircraft perceives it only when intent-sharing is explicitly enabled (``run_fleet``'s
     ``share_intent``). Intent-based recovery (:class:`~opencdarr.crr.FTR`) reads the ownship's own
     ``desired`` to decide whether reverting to it would re-trigger a conflict.
 
@@ -71,8 +71,8 @@ class DesiredVelocity:
       autopilot target), never observed kinematics.
     - On a **perceived** state it is the best available estimate of that aircraft's intent:
       declared when shared, otherwise *inferred* from its velocity when the conflict pair became
-      active (``loop.PairMemory.onset_velocity``). The value does not distinguish the two — a
-      consumer cannot tell declared from inferred.
+      active (``separation.FleetMemory.onset_velocity``). The value does not distinguish the
+      two — a consumer cannot tell declared from inferred.
     """
 
     v_east: float

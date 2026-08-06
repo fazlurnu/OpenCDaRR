@@ -114,10 +114,9 @@ def segment_min_range(r0: Relative, r1: Relative) -> float:
 
     Takes a pair's relative position at both ends of a ``dt`` step and returns the minimum of the
     straight segment between them. This is a **measurement** helper, not a CDR algorithm — it lives
-    here rather than beside the CPA equations in ``cd/`` because both encounter runners
-    (:mod:`~opencdarr.fleet` and :mod:`~opencdarr.loop`) must measure separation *identically* for
-    the n = 2 reduction to hold, and the one thing worse than sharing this algebra would be two
-    copies of it drifting apart.
+    here rather than beside the CPA equations in ``cd/`` because separation measurement is the
+    runner's concern (:mod:`~opencdarr.fleet`), and sharing the one copy here is what keeps every
+    consumer measuring identically.
 
     Reading separation only at step endpoints under-reports it: a pass that dips inside a threshold
     and back out within one step leaves no sampled point inside, and the error is one-sided — the

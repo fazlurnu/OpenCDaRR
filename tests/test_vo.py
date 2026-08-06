@@ -13,7 +13,7 @@ import pytest
 
 from opencdarr import geo
 from opencdarr.cr import VO
-from opencdarr.kinematics import Command
+from opencdarr.kinematics import MotionCommand
 from opencdarr.scenario import create_conflict
 from opencdarr.state import AircraftState
 
@@ -35,7 +35,7 @@ def _miss_distance(own: AircraftState, intr: AircraftState) -> float:
     return math.hypot(rx + vx * t_cpa, ry + vy * t_cpa)
 
 
-def _apply(own: AircraftState, cmd: Command) -> AircraftState:
+def _apply(own: AircraftState, cmd: MotionCommand) -> AircraftState:
     return dataclasses.replace(own, trk=cmd.trk, gs=cmd.gs)
 
 
@@ -70,5 +70,5 @@ def test_vo_returns_a_command() -> None:
     own = _own()
     intr = create_conflict(own, intr_id="INT", dpsi=90.0, dcpa=20.0, tlos=60.0, rpz=_RPZ)
     cmd = VO().resolve(own, [intr], _RPZ)
-    assert isinstance(cmd, Command)
+    assert isinstance(cmd, MotionCommand)
     assert 0.0 <= cmd.trk < 360.0

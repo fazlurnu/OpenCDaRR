@@ -16,7 +16,7 @@ import math
 
 import pytest
 
-from opencdarr.kinematics import Command, MotionCommand
+from opencdarr.kinematics import MotionCommand
 
 # --- Velocity-channel round-trip (behaviour-preserving over the old Command) -----------------
 
@@ -87,9 +87,3 @@ def test_all_channels_default_unspecified() -> None:
     assert cmd.target_airspeed is None
     assert cmd.target_altitude is None
     assert cmd.target_vertical_speed is None
-
-
-def test_command_alias_is_motion_command() -> None:
-    """The Phase-4a backward-compatible alias is literally MotionCommand (isinstance holds)."""
-    assert Command is MotionCommand
-    assert isinstance(MotionCommand.from_track_speed(0.0, 10.0), Command)
