@@ -150,6 +150,8 @@ class FleetOutcome:
     conflict: bool  # was any directed pair predicted in conflict at any step?
     los: bool  # was any pair ever in loss of separation?
     min_sep: float  # minimum pairwise separation reached across all pairs [m]
+    n_los_pairs: int = 0  # K: distinct pairs that ever lost separation (min_sep < rpz)
+    n_los_aircraft: int = 0  # A: distinct aircraft in at least one losing pair
     frames: StatesLog | None = None  # states log, only when record=True
 
 
@@ -177,6 +179,7 @@ class FleetState:
     conflict: bool
     los: bool
     min_sep: float
+    los_pairs: frozenset[tuple[int, int]] = frozenset()  # pairs (i<j) that have crossed rpz so far
 
 
 @dataclass(frozen=True, repr=False)
@@ -243,6 +246,22 @@ def _pairwise_relative(
     )
 
 
+def _pair_ids(n: int) -> tuple[tuple[int, int], ...]:
+    """The unordered pairs ``(i, j)``, ``i < j`` — the order every pairwise helper walks."""
+    return tuple((i, j) for i in range(n) for j in range(i + 1, n))
+
+
+def _pair_min_ranges(pre: tuple[Relative, ...], post: tuple[Relative, ...]) -> tuple[float, ...]:
+    """Each pair's smallest separation across the step [m], in the fixed ``i < j`` order.
+
+    The per-pair form of :func:`_segment_min_sep` — the ``min`` of this *is* that. Keeping the
+    whole vector lets :meth:`FleetEnv.advance` name *which* pairs crossed ``rpz`` (K, A) rather
+    than only whether one did, at no extra geometry: the same one :func:`segment_min_range` per
+    pair either way.
+    """
+    return tuple(segment_min_range(r0, r1) for r0, r1 in zip(pre, post, strict=True))
+
+
 def _segment_min_sep(pre: tuple[Relative, ...], post: tuple[Relative, ...]) -> float:
     """Smallest separation over all pairs across a whole ``dt`` step, endpoints included [m].
 
@@ -256,12 +275,10 @@ def _segment_min_sep(pre: tuple[Relative, ...], post: tuple[Relative, ...]) -> f
 
     The per-pair algebra is :func:`~opencdarr.relative.segment_min_range`, shared with
     :func:`~opencdarr.loop.run_encounter` so the two runners cannot drift apart on the n = 2
-    reduction.
+    reduction. The ``min`` is taken through :func:`_pair_min_ranges`, the one place the per-pair
+    vector is formed, so ``advance``'s K/A read and this scalar cannot disagree.
     """
-    return min(
-        (segment_min_range(r0, r1) for r0, r1 in zip(pre, post, strict=True)),
-        default=float("inf"),
-    )
+    return min(_pair_min_ranges(pre, post), default=float("inf"))
 
 
 def level(state: FleetState) -> float:
@@ -338,6 +355,7 @@ class FleetEnv:
             conflict=False,
             los=False,
             min_sep=float("inf"),
+            los_pairs=frozenset(),
         )
 
     def is_terminal(self, state: FleetState) -> bool:
@@ -427,10 +445,16 @@ class FleetEnv:
 
         # measure separation over the whole step just flown, not only at its ends — consecutive
         # segments share an endpoint, so the running minimum covers the trajectory continuously
-        # from t=0 (the first segment's left end) rather than at a comb of sampled instants
-        cur = _segment_min_sep(rel_pre, _pairwise_relative(states))
+        # from t=0 (the first segment's left end) rather than at a comb of sampled instants. The
+        # per-pair vector (not just its min) also names which pairs crossed rpz, so K and A
+        # accumulate here at no extra geometry (ADR 0022).
+        per_pair = _pair_min_ranges(rel_pre, _pairwise_relative(states))
+        cur = min(per_pair, default=float("inf"))
         min_sep = min(state.min_sep, cur)
         los = state.los or cur < self.rpz
+        los_pairs = state.los_pairs | frozenset(
+            ids for ids, d in zip(_pair_ids(n), per_pair, strict=True) if d < self.rpz
+        )
 
         clear = _all_clear(states, tuple(mems), self.rpz)
         done_timer = state.done_timer + self.dt if clear else 0.0
@@ -447,6 +471,7 @@ class FleetEnv:
             conflict=conflict,
             los=los,
             min_sep=min_sep,
+            los_pairs=los_pairs,
         )
 
 
@@ -599,5 +624,7 @@ def run_fleet(
             frames.append(state)
     return FleetOutcome(
         conflict=state.conflict, los=state.los, min_sep=state.min_sep,
+        n_los_pairs=len(state.los_pairs),
+        n_los_aircraft=len({a for pair in state.los_pairs for a in pair}),
         frames=StatesLog(tuple(frames)) if frames is not None else None,
     )
