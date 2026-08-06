@@ -42,8 +42,7 @@ path already makes. Nothing here reorders a floating-point reduction.
     print(est.p_los_run, est.p_los_ac, est.n_collapsed)
 
 ``build_initial`` should return a *shared* particle when the geometry is pinned — build the env
-once outside it. Pass ``verbose=10`` to watch joblib's progress on a long run, and
-:func:`describe_schedule` to log how the work was actually spread.
+once outside it. Pass ``verbose=10`` to watch joblib's progress on a long run.
 
 joblib is an optional dependency (``pip install 'opencdarr[parallel]'``), imported on use: this
 module must import cleanly without it, and only fails when actually asked for more than one worker.
@@ -131,28 +130,6 @@ def _shard_count(
     """
     want = -(-oversubscribe * workers // live_reps)  # ceil
     return max(1, min(want, max(1, n_particles // min_shard)))
-
-
-def describe_schedule(
-    reps: int,
-    n_particles: int,
-    n_jobs: int,
-    *,
-    oversubscribe: int = 2,
-    min_shard: int = 64,
-) -> str:
-    """A one-line summary of how :func:`ips_replications` will spread this design, for logs.
-
-    Printing the schedule next to the estimate makes an under-filled machine visible in the run
-    log, rather than only in a wall-clock number nobody thinks to compare.
-    """
-    workers = resolve_jobs(n_jobs)
-    if workers <= 1:
-        return "serial"
-    if _whole_replications(reps, workers):
-        return f"whole-reps, {reps // workers} wave x {workers} workers"
-    shards = _shard_count(reps, workers, n_particles, oversubscribe, min_shard)
-    return f"lockstep, {shards}x{reps} = {shards * reps} tasks/level, {workers} workers"
 
 
 def _shard_bounds(n: int, shards: int) -> list[tuple[int, int]]:

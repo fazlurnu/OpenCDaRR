@@ -43,6 +43,8 @@ Python call is not, so ``config + seed -> result`` stays reproducible without wr
 from __future__ import annotations
 
 import dataclasses
+import hashlib
+import inspect
 import itertools
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -603,9 +605,6 @@ def _source_digest(obj: Any) -> str:
     result. Source is unavailable for a class defined in a plain REPL, which is refused rather than
     silently keyed on its name alone.
     """
-    import hashlib
-    import inspect
-
     try:
         source = inspect.getsource(obj)
     except (OSError, TypeError) as exc:  # REPL-defined, C-implemented, or otherwise sourceless
@@ -646,7 +645,7 @@ def identity(value: Any) -> str:
             f"{f.name}={identity(getattr(value, f.name))}" for f in dataclasses.fields(value)
         )
         return f"{_qualified(type(value))}({inner})"
-    if inspect_isfunction(value):
+    if inspect.isfunction(value):
         return _function_identity(value)
     if isinstance(value, type):
         return f"{_qualified(value)}#{_source_digest(value)}"
@@ -656,13 +655,6 @@ def identity(value: Any) -> str:
         f"no cache identity for {value!r} (type {type(value).__name__}). "
         f"Give it a `cache_id` attribute if it is stable."
     )
-
-
-def inspect_isfunction(value: Any) -> bool:
-    """Whether ``value`` is a plain Python function (so it has a closure worth inspecting)."""
-    import inspect
-
-    return inspect.isfunction(value)
 
 
 def _function_identity(func: Any) -> str:
