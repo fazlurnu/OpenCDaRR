@@ -86,6 +86,15 @@ above — one module per notebook — and several of them generate the figures t
   at every density — `FTR` resumes as soon as reverting is clear, so the fleet rides the boundary
   and traffic density barely registers. Uncertainty of this size mostly *adds* margin through
   over-avoidance, and only turns over at the top of the range.
+- [`handbook/rare_event_mc_vs_ips.ipynb`](handbook/rare_event_mc_vs_ips.ipynb) — the rare-event
+  gate: plain Monte Carlo and interacting particle splitting on the *same* declaration, walked down
+  one knob (GNSS self-noise) from P(LoS) ~ 3e-2 to ~3e-4. The anchor rung is the point — MC has
+  ninety-odd events there, so "do they agree?" is a fair question, and the answer has to be yes
+  before an IPS number in the rare regime means anything. They stay within a factor of two across
+  two decades. Below the anchor the MC estimate is built on eleven and then seven events, and at
+  1500 encounters it finds *none* and reports zero, which is a different claim from "rare". Also
+  shows `n_jobs` reaching inside a single cell, which is the shape a rare-event study has: same
+  declaration, one worker against all of them, identical field for field.
 - [`handbook/p_los_metrics.ipynb`](handbook/p_los_metrics.ipynb) — the two ways the estimator
   counts a loss of separation, and when they disagree. `p_los_run` divides the runs that have a
   loss by all the runs; `p_los_ac` divides the aircraft that lose separation by the aircraft that
