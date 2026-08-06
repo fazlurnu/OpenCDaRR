@@ -32,12 +32,14 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 import numpy as np
 
 from opencdarr import geo
-from opencdarr.measurement import Disc
-from opencdarr.scenario.base import FleetScenario, _per_aircraft_speeds
+from opencdarr.config import Config
+from opencdarr.measurement import Disc, MeasurementArea
+from opencdarr.scenario.base import FleetScenario, Scenario, _per_aircraft_speeds
 from opencdarr.state import AircraftState
 
 # The paper's two concentric areas: measure inside 1.35 NM of a 1.62 NM simulation disc.
@@ -122,3 +124,40 @@ def random_traffic(
             (far[0], far[1]),
         ))
     return out
+
+
+@dataclass(frozen=True)
+class RandomTraffic(Scenario):
+    """Traffic at a given density, with the measured disc it belongs to.
+
+    Give it ``density`` (aircraft/km^2 over the simulation disc, the paper's unit) or ``n``
+    directly. The two are alternatives: declaring both is ambiguous and is refused.
+
+    This is the scenario that motivates :meth:`~opencdarr.scenario.base.Scenario.measurement_area`.
+    The traffic fills the simulation disc and the results are read from the smaller experimental
+    one; carrying the pair here is what stops a caller filling one disc and measuring another.
+    """
+
+    density: float | None = None
+    n: int | None = None
+    radius: float = 1000.0
+    centre: tuple[float, float] = (52.0, 4.0)
+
+    def __post_init__(self) -> None:
+        if (self.density is None) == (self.n is None):
+            raise ValueError("give either density (aircraft/km^2) or n, not both and not neither")
+
+    def size(self) -> int:
+        if self.n is not None:
+            return self.n
+        assert self.density is not None  # guaranteed by __post_init__
+        return aircraft_for_density(self.density, self.radius)
+
+    def draw(self, rng: np.random.Generator, config: Config) -> FleetScenario:
+        return random_traffic(
+            rng, self.size(), radius=self.radius, speed=config.scenario.speed,
+            lat0=self.centre[0], lon0=self.centre[1],
+        )
+
+    def measurement_area(self) -> MeasurementArea:
+        return measurement_area(self.radius, self.centre)

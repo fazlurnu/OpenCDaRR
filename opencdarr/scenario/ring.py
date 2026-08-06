@@ -9,9 +9,18 @@ with separation.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
+
+import numpy as np
 
 from opencdarr import geo
-from opencdarr.scenario.base import FleetScenario, _heading_to, _per_aircraft_speeds
+from opencdarr.config import Config
+from opencdarr.scenario.base import (
+    FleetScenario,
+    Scenario,
+    _heading_to,
+    _per_aircraft_speeds,
+)
 
 
 def swap_ring(
@@ -80,3 +89,38 @@ def converging_ring(
             for k, s in enumerate(ring)]
 
 
+
+
+@dataclass(frozen=True)
+class _Ring(Scenario):
+    """Shared shape of the ring scenarios: a fixed fleet on a circle, placed not drawn."""
+
+    n: int = 8
+    radius: float = 1500.0
+
+    def size(self) -> int:
+        return self.n
+
+
+@dataclass(frozen=True)
+class SwapRing(_Ring):
+    """:func:`swap_ring` as a scenario — each aircraft to another aircraft's start."""
+
+    def draw(self, rng: np.random.Generator, config: Config) -> FleetScenario:
+        return swap_ring(self.n, speed=config.scenario.speed, radius=self.radius)
+
+
+@dataclass(frozen=True)
+class CrossingRing(_Ring):
+    """:func:`crossing_ring` as a scenario — every route a diameter, at any fleet size."""
+
+    def draw(self, rng: np.random.Generator, config: Config) -> FleetScenario:
+        return crossing_ring(self.n, speed=config.scenario.speed, radius=self.radius)
+
+
+@dataclass(frozen=True)
+class ConvergingRing(_Ring):
+    """:func:`converging_ring` as a scenario — the symmetric superconflict."""
+
+    def draw(self, rng: np.random.Generator, config: Config) -> FleetScenario:
+        return converging_ring(self.n, speed=config.scenario.speed, radius=self.radius)

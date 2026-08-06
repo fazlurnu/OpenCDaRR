@@ -17,15 +17,19 @@ Governing equations: ``vault/derivations/conflict-geometry.md``.
 
 from __future__ import annotations
 
+import dataclasses
 import math
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 import numpy as np
 
 from opencdarr import geo
+from opencdarr.config import Config
 from opencdarr.scenario.base import (
     Draw,
     FleetScenario,
+    Scenario,
     _heading_to,
     _per_aircraft_speeds,
     _resolve,
@@ -228,3 +232,43 @@ def near_parallel(
         target = geo.forward(ac.lat, ac.lon, ac.trk, reach)
         out.append((ac, (target[0], target[1])))
     return out
+
+
+@dataclass(frozen=True)
+class PairwiseEncounter(Scenario):
+    """The two-aircraft encounter distribution, as a :class:`~opencdarr.scenario.base.Scenario`.
+
+    Each geometry slot is drawn per encounter unless pinned here; the slots are exactly the ones
+    :func:`sample_pairwise` takes, so pinning one is what turns the sampled distribution into a
+    single-geometry response curve.
+
+    The aircraft have **no goal**. A pairwise encounter is the geometry — there is nowhere to
+    arrive, and giving them a destination would add a manoeuvre the experiment did not ask for.
+    """
+
+    dpsi: float | Draw | None = None
+    dcpa: float | Draw | None = None
+    side: int | Draw | None = None
+    gs_intr: float | Draw | None = None
+
+    def draw(self, rng: np.random.Generator, config: Config) -> FleetScenario:
+        own, intr = sample_pairwise(
+            rng,
+            speed=config.scenario.speed, dcpa_max=config.scenario.dcpa_max,
+            tlos=config.scenario.tlos, rpz=config.conflict.rpz,
+            pos_ci95=config.scenario.pos_ci95, vel_ci95=config.scenario.vel_ci95,
+            pos_ci95_declared=config.scenario.pos_ci95_declared,
+            vel_ci95_declared=config.scenario.vel_ci95_declared,
+            dpsi=self.dpsi, dcpa=self.dcpa, side=self.side, gs_intr=self.gs_intr,
+        )
+        return [(own, None), (intr, None)]
+
+    def size(self) -> int:
+        return 2
+
+    def with_pins(self, **pins: object) -> PairwiseEncounter:
+        """Pin geometry slots — this is what makes ``dpsi=Sweep([...])`` reach the sampler."""
+        unknown = set(pins) - {"dpsi", "dcpa", "side", "gs_intr"}
+        if unknown:
+            raise ValueError(f"not a pairwise geometry slot: {sorted(unknown)}")
+        return dataclasses.replace(self, **pins)  # type: ignore[arg-type]
