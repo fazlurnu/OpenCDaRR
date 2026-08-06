@@ -1,8 +1,0 @@
-scenario: fixed 90deg crossing, pos_ci95=10.0 vel_ci95=1.0 rpz=50.0 lookahead=60.0 margin=1.05 dt=0.2  (MVP + Past-CPA, GNSS+comms(rx=0.7, lat=0.0s))
-
-MC   n=   4000  P(LoS)=0.00003  95%CI[0.00002, 0.00004]  (not run: --mc-ref)
-IPS  10x10000p x17 shells (~1700000 seg)  P=0.000016  95%CI[0.000010, 0.000019]  collapsed=0/10  (266s)
-  schedule: lockstep, 20x10 = 200 tasks/level, 100 workers
-  survival/shell: 150:0.484  135:0.847  122:0.841  112:0.850  104:0.852  97:0.844  90:0.805  82:0.728  74:0.608  68:0.528  63:0.386  59:0.290  56:0.267  54:0.325  52:0.238  51:0.406  50:0.396
-
-verdict: CIs DISJOINT; IPS mean OUTSIDE MC CI  -> FAIL

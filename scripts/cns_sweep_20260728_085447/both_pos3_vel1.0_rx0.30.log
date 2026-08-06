@@ -1,7 +1,0 @@
-scenario: fixed 90deg crossing, pos_ci95=3.0 vel_ci95=1.0 rpz=50.0 lookahead=60.0 margin=1.05 dt=0.2  (MVP + Past-CPA, GNSS+comms(rx=0.3, lat=0.0s))
-
-MC   n=2000000  P(LoS)=0.00004  95%CI[0.00003, 0.00005]  (1641s)
-IPS  10x10000p x17 shells (~1700000 seg)  P=0.000034  95%CI[0.000007, 0.000032]  collapsed=0/10  (1066s)
-  survival/shell: 150:0.460  135:0.817  122:0.797  112:0.797  104:0.800  97:0.780  90:0.733  82:0.627  74:0.520  68:0.500  63:0.430  59:0.370  56:0.337  54:0.357  52:0.251  51:0.456  50:0.476
-
-verdict: CIs OVERLAP; IPS mean within MC CI  -> PASS

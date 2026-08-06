@@ -1,1 +1,0 @@
-scenario: fixed 90deg crossing, pos_ci95=10.0 vel_ci95=1.0 rpz=50.0 lookahead=60.0 margin=1.05 dt=0.2  (MVP + Past-CPA, GNSS+comms(rx=0.12, lat=0.0s))
