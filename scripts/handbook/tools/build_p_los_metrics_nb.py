@@ -304,6 +304,38 @@ aircraft: the aircraft loses separation, or it does not. The count of losses sta
 Run 2 also shows a limit of `p_los_ac`. All three aircraft lose separation, thus `p_los_ac` is at
 its maximum. It cannot become worse. Only `mean_k` continues to increase. Use `mean_k` when the
 fleet is dense and almost every aircraft is involved.
+
+### `K` does not tell you `A`
+
+The shape of the losses sets `A`. The examples below all have `K = 3` in a fleet of nine aircraft.
+They do not have the same `A`.
+""")
+
+code(r'''
+shapes = {
+    "chain     a-b, b-c, c-d": {("a", "b"), ("b", "c"), ("c", "d")},
+    "triangle  a-b, b-c, a-c": {("a", "b"), ("b", "c"), ("a", "c")},
+    "disjoint  a-b, c-d, e-f": {("a", "b"), ("c", "d"), ("e", "f")},
+}
+fleet_size = 9
+
+print(f"{'shape':26} {'K':>2} {'A':>3}   p_los_ac   p_los_run")
+for name, los_pairs in shapes.items():
+    k = len(los_pairs)
+    # exactly how the simulator counts A: the aircraft in at least one losing pair
+    a = len({ac for pair in los_pairs for ac in pair})
+    print(f"{name:26} {k:2d} {a:3d}   {a / fleet_size:8.3f}   {1.0:9.3f}")
+''')
+
+md(r"""
+The three rows have the same `K` and the same `p_los_run`. The value of `A` changes from 3 to 6,
+thus `p_los_ac` changes from 0.333 to 0.667.
+
+A triangle puts all the loss on three aircraft. Three separate pairs put the same number of losses
+on six aircraft. The danger to each aircraft is therefore different, but `K` cannot show it.
+
+This is why the simulator keeps the **set** of losing pairs and not only a count. You cannot
+calculate `A` from `K`. You must count the aircraft in the pairs.
 """)
 
 
