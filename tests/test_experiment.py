@@ -58,6 +58,7 @@ from opencdarr.kinematics import FixedWing, Kinematics, MotionCommand
 from opencdarr.kinematics.base import odometry_update
 from opencdarr.performance import M600, SMALL_FIXEDWING, Performance
 from opencdarr.rng import generator, root_seed_sequence
+from opencdarr.scenario import PairwiseEncounter
 from opencdarr.state import AircraftState
 from opencdarr.wind import NO_WIND, WindField
 
@@ -294,6 +295,29 @@ def test_a_contributed_resolver_reaches_both_backends() -> None:
         # also drive an IPS ladder to collapse, and ADR 0017 §2 is explicit that a collapsed run's
         # zero is not a real zero — so a bare `< 0.1` would pass for the wrong reason.
         assert read(mvp) < read(passive) / 5.0, f"{name} did not apply MVP"
+
+
+def test_a_scenario_that_cannot_split_is_refused_at_declaration() -> None:
+    """``supports_splitting``'s promise is real: IPS refuses before the run, MC still accepts.
+
+    The base method documents the failure it prevents — on an open-ended scenario the running
+    minimum stops discriminating between particles, so splitting burns its budget and reports a
+    number near 1 — and promises the combination fails at declaration time. This is the assertion
+    that the declaration is actually read.
+    """
+
+    class _Stream(PairwiseEncounter):
+        """A stand-in for an open-ended scenario: fine under MC, meaningless to split."""
+
+        def supports_splitting(self) -> bool:
+            return False
+
+    with pytest.raises(ValueError, match="supports_splitting"):
+        run_experiment(_PINNED, methods=_methods(scenario=_Stream()), backend=_SHELLS,
+                       base_config=_base(), seed=0)
+    mc = run_experiment(_PINNED, methods=_methods(scenario=_Stream()),
+                        backend=MC(n_encounters=2), base_config=_base(), seed=0).cell()
+    assert isinstance(mc, MonteCarloEstimate)
 
 
 def test_a_categorical_resolver_axis_fans_out() -> None:

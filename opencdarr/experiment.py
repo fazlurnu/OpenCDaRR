@@ -423,6 +423,32 @@ def _validate_declared_accuracy_is_read(
         )
 
 
+def _validate_splittable(
+    conditions: Sequence[Condition], methods: Methods, backend: Backend
+) -> None:
+    """Raise if the splitting backend is pointed at a scenario that cannot support it.
+
+    :meth:`~opencdarr.scenario.Scenario.supports_splitting` names the failure this prevents: on an
+    open-ended scenario the running minimum separation stops discriminating between particles, so
+    the ladder burns its whole budget and reports a number near 1. The method promises the
+    combination "can fail at declaration time rather than after the run" — this is that check.
+    Per condition, because ``scenario`` is itself sweepable: a sweep mixing a ring with a stream
+    should fail before its first cell, not at the stream.
+    """
+    if not isinstance(backend, IPS):
+        return
+    for condition in conditions:
+        scenario = _scenario_for(condition, _resolved_methods(condition, methods))
+        if scenario.supports_splitting():
+            continue
+        where = f" at {condition.label}" if condition.levels else ""
+        raise ValueError(
+            f"{type(scenario).__name__} declares supports_splitting() = False{where}, so the "
+            "IPS backend cannot use it: splitting needs the running minimum separation to "
+            "discriminate between particles. Run this scenario on the MC backend."
+        )
+
+
 def _scenario_for(condition: Condition, m: Methods) -> Scenario:
     """This cell's scenario, with any declared geometry slot pinned onto it.
 
@@ -1038,6 +1064,7 @@ def run_experiment(
     """
     conditions = expand(independent_vars)
     _validate_declared_accuracy_is_read(conditions, base_config, methods)
+    _validate_splittable(conditions, methods, backend)
     axes = tuple(
         (axis.name or key)
         for key, axis in independent_vars.items()
