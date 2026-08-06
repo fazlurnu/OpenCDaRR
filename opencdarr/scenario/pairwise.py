@@ -1,13 +1,16 @@
-"""Conflict-encounter geometry — the scenario layer's generator.
+"""Two-aircraft encounters: one ownship, one intruder, and the distribution they are drawn from.
 
-`create_conflict` places an intruder in conflict with a given ownship at a chosen crossing
-angle, miss distance, and time-to-loss-of-separation — the horizontal part of BlueSky's
-`creconfs`, re-derived in our convention (relative velocity = intr − own; no wind; 2D).
+`create_conflict` places an intruder in conflict with a given ownship at a chosen crossing angle,
+miss distance, and time-to-loss-of-separation — the horizontal part of BlueSky's `creconfs`,
+re-derived in our convention (relative velocity = intr - own; no wind; 2D).
 
 Two levels, deliberately: `create_conflict` builds **one named geometry**, while `sample_pairwise`
 turns **one seed into one encounter** — drawing whichever of the crossing angle, miss distance,
 passing side and intruder speed the caller has not pinned. Between them they cover the range from a
 single fixed crossing to a fully sampled encounter distribution without a second code path.
+
+`swap_pair` and `near_parallel` are the two-aircraft *fleet* geometries: a head-on swap and a
+shallow crossing, placed rather than drawn.
 
 Governing equations: ``vault/derivations/conflict-geometry.md``.
 """
@@ -15,11 +18,11 @@ Governing equations: ``vault/derivations/conflict-geometry.md``.
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
 
 import numpy as np
 
 from opencdarr import geo
+from opencdarr.scenario.base import Draw, FleetScenario, _heading_to, _resolve
 from opencdarr.state import AircraftState
 
 _PARALLEL_EPS = 1e-9  # |v_rel| below this = no closing geometry
@@ -92,22 +95,6 @@ def create_conflict(
         vel_ci95_declared=own.vel_ci95_declared,
     )
 
-
-Draw = Callable[[np.random.Generator], float]
-"""A per-encounter draw of one geometry parameter from that encounter's generator."""
-
-
-def _resolve(spec: float | Draw | None, rng: np.random.Generator, drawn: float) -> float:
-    """One geometry slot's value: the built-in draw, a pinned constant, or a custom distribution.
-
-    ``drawn`` has *already* been taken from ``rng`` by the caller, whether or not it is used — see
-    :func:`sample_pairwise` on why a pinned slot still consumes its draw.
-    """
-    if spec is None:
-        return drawn
-    if callable(spec):
-        return float(spec(rng))
-    return float(spec)
 
 
 def sample_pairwise(
@@ -193,20 +180,6 @@ def sample_pairwise(
     return own, intr
 
 
-# --- N-aircraft fleet scenarios (Phase 6d) --------------------------------------------------
-# Each builder returns a list of ``(AircraftState, goto_target)`` pairs — an aircraft heading at
-# its destination ``(lat, lon)``, the geometry the fleet loop needs. The caller wraps each in a
-# ``WaypointAutopilot`` mission + its airframe (an ``Agent``); the scenario stays airframe-neutral.
-
-FleetScenario = list[tuple[AircraftState, tuple[float, float]]]
-
-
-def _heading_to(lat: float, lon: float, target: tuple[float, float], speed: float,
-                ac_id: str) -> AircraftState:
-    """An aircraft at ``(lat, lon)`` flying at ``speed`` toward ``target`` (nose on the bearing)"""
-    trk, _ = geo.qdrdist(lat, lon, target[0], target[1])
-    return AircraftState(id=ac_id, lat=lat, lon=lon, trk=trk % 360.0, gs=speed)
-
 
 def swap_pair(
     *, speed: float = 10.0, span: float = 3000.0, lat0: float = 52.0, lon0: float = 4.0
@@ -221,33 +194,6 @@ def swap_pair(
         (_heading_to(b[0], b[1], (a[0], a[1]), speed, "B"), (a[0], a[1])),
     ]
 
-
-def swap_ring(
-    n: int = 8, *, speed: float = 10.0, radius: float = 1500.0,
-    lat0: float = 52.0, lon0: float = 4.0,
-) -> FleetScenario:
-    """``n`` aircraft uniformly on a ring, each flying to the **diametrically-opposite** start
-    (Phase-6 scenario 2) — ``n/2`` head-on pairs all crossing the centre.
-    """
-    starts = [geo.forward(lat0, lon0, 360.0 * k / n, radius) for k in range(n)]
-    out: FleetScenario = []
-    for k in range(n):
-        target = starts[(k + n // 2) % n]
-        out.append((_heading_to(starts[k][0], starts[k][1], target, speed, f"A{k}"), target))
-    return out
-
-
-def converging_ring(
-    n: int = 8, *, speed: float = 10.0, radius: float = 1500.0,
-    lat0: float = 52.0, lon0: float = 4.0,
-) -> FleetScenario:
-    """``n`` aircraft uniformly on a circle, all flying to the **same** waypoint — the ring centre
-    (Phase-6 scenario 3), the symmetric converging superconflict. They cannot all occupy the centre
-    (``rpz`` forbids it), so the DAA can only hold them apart as they converge.
-    """
-    centre = (lat0, lon0)
-    ring = [geo.forward(lat0, lon0, 360.0 * k / n, radius) for k in range(n)]
-    return [(_heading_to(s[0], s[1], centre, speed, f"A{k}"), centre) for k, s in enumerate(ring)]
 
 
 def near_parallel(
