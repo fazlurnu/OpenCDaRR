@@ -22,7 +22,6 @@ from opencdarr.cd import StateBased
 from opencdarr.cr import MVP
 from opencdarr.crr import PastCPA
 from opencdarr.fleet import Agent, run_fleet
-from opencdarr.loop import run_encounter
 from opencdarr.performance import M600
 from opencdarr.relative import Relative, segment_min_range
 from opencdarr.scenario import create_conflict
@@ -165,22 +164,3 @@ def test_separation_above_rpz_is_not_reported_as_a_loss() -> None:
         assert out.min_sep >= _RPZ
 
 
-# --- the two runners must measure identically ---------------------------------------------------
-
-
-def test_fleet_and_loop_agree_on_the_refined_minimum() -> None:
-    """The n=2 reduction still holds bit-for-bit — both runners share ``segment_min_range``.
-
-    ``loop`` keeps its own separation loop, so the refinement had to land in both; this is what
-    would catch it landing in only one.
-    """
-    for dpsi in (45.0, 90.0, 180.0):
-        own = AircraftState(id="OWN", lat=52.0, lon=4.0, trk=0.0, gs=_SPEED)
-        intr = create_conflict(own, intr_id="INT", dpsi=dpsi, dcpa=10.0, tlos=_TLOS, rpz=_RPZ)
-        kw = dict(rpz=_RPZ, t_lookahead=_LOOKAHEAD, dt=0.5, detector=StateBased(),
-                  resolver=MVP(margin=1.05), recovery=PastCPA())
-        fleet_out = run_fleet([Agent(own, M600), Agent(intr, M600)], **kw)  # type: ignore[arg-type]
-        loop_out = run_encounter(own, intr, perf=M600, **kw)  # type: ignore[arg-type]
-        assert fleet_out.min_sep == loop_out.min_sep
-        assert fleet_out.los == loop_out.los
-        assert fleet_out.conflict == loop_out.conflict

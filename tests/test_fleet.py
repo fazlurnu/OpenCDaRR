@@ -2,8 +2,9 @@
 
 Two properties:
 
-1. **reduction** — ``run_fleet`` with two agents reproduces ``run_encounter`` bit-for-bit
-   (noiseless and seeded-noisy), the free multi-aircraft regression (ADR 0004);
+1. **the n = 2 anchors** — ``run_fleet`` with two agents reproduces the pairwise ``min_sep``
+   anchors bit-for-bit (noiseless and seeded-noisy), carried over unchanged from the pairwise
+   runner they were first pinned on (ADR 0004: the free multi-aircraft regression);
 2. **cooperation** — a fleet where *every* aircraft resolves against all the others clears a
    superconflict that, unresolved, collides — and it is deterministic and reproducible from seed.
 """
@@ -16,20 +17,21 @@ import pytest
 
 from opencdarr import geo
 from opencdarr.cd import StateBased
-from opencdarr.cns import Comm, GnssNavigation, lognormal_latency
+from opencdarr.cns import Comm, GnssNavigation
 from opencdarr.cns.broadcast import BroadcastSchedule
 from opencdarr.cr import MVP, VO
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr import PastCPA
 from opencdarr.fleet import Agent, run_fleet
-from opencdarr.loop import run_encounter
 from opencdarr.performance import M600
 from opencdarr.rng import generator, root_seed_sequence, spawn
 from opencdarr.scenario import create_conflict
 from opencdarr.state import AircraftState
+from opencdarr.wind import NO_WIND
 
 _RPZ = 50.0
 _LOOKAHEAD = 120.0
+_DT = 1.0
 
 
 def _pair() -> tuple[AircraftState, AircraftState]:
@@ -38,165 +40,122 @@ def _pair() -> tuple[AircraftState, AircraftState]:
     return own, intr
 
 
-def _noisy_pair() -> tuple[AircraftState, AircraftState]:
-    own = AircraftState(id="OWN", lat=52.0, lon=4.0, trk=0.0, gs=10.0, pos_ci95=10.0, vel_ci95=1.0)
-    intr = create_conflict(own, intr_id="INT", dpsi=45.0, dcpa=0.0, tlos=180.0, rpz=_RPZ, side=1)
-    return own, intr
-
-
-def test_run_fleet_reduces_to_run_encounter_noiseless() -> None:
-    """Two agents, no noise: run_fleet == run_encounter for MVP and VO (conflict/los/min_sep)."""
-    for resolver in (MVP(margin=1.1), VO(margin=1.1)):
-        own, intr = _pair()
-        kw = dict(rpz=_RPZ, t_lookahead=_LOOKAHEAD, dt=1.0, detector=StateBased(),
-                  resolver=resolver, recovery=PastCPA(bouncing_guard=True))
-        enc = run_encounter(own, intr, perf=M600, **kw)
-        flt = run_fleet([Agent(own, M600), Agent(intr, M600)], **kw)
-        assert (flt.conflict, flt.los, flt.min_sep) == (enc.conflict, enc.los, enc.min_sep)
-
-
-def test_run_fleet_reduces_to_run_encounter_noisy() -> None:
-    """Two agents, seeded GNSS noise: run_fleet == run_encounter on the same substream."""
-    for resolver in (MVP(margin=1.05), VO(margin=1.05)):
-        own, intr = _noisy_pair()
-        kw = dict(rpz=_RPZ, t_lookahead=_LOOKAHEAD, dt=0.2, detector=StateBased(),
-                  resolver=resolver, recovery=PastCPA(bouncing_guard=True),
-                  navigation=GnssNavigation())
-        seq_e = list(spawn(root_seed_sequence(0), 1))[0]
-        enc = run_encounter(own, intr, perf=M600, rng=generator(seq_e), **kw)
-        seq_f = list(spawn(root_seed_sequence(0), 1))[0]
-        flt = run_fleet([Agent(own, M600), Agent(intr, M600)], rng=generator(seq_f), **kw)
-        assert flt.min_sep == enc.min_sep
-        assert (flt.conflict, flt.los) == (enc.conflict, enc.los)
-
-
-# The crossing angles the plain-MC estimator actually samples: ``sample_pairwise`` draws
-# ``dpsi ~ U(5, 355)``, so the support runs from near-parallel through head-on and back. Both
-# passing sides are drawn too. These are the ends where the closing geometry is most degenerate.
-_SWEEP_ANGLES = (5.0, 45.0, 90.0, 180.0, 270.0, 355.0)
-
-
-def _sweep_kw() -> dict:
-    """The estimator's own run parameters (the published pairwise validation values)."""
-    return dict(rpz=_RPZ, t_lookahead=_LOOKAHEAD, dt=0.5, detector=StateBased(),
-                resolver=MVP(margin=1.05), recovery=PastCPA(bouncing_guard=True),
-                t_max=250.0, done_timeout=10.0)
-
-
-def test_run_fleet_reduces_to_run_encounter_across_the_angle_sweep() -> None:
-    """The reduction holds across the whole crossing-angle support the MC estimator samples.
-
-    The reduction tests above each pin *one* geometry (90°, 45°). The estimator sweeps ``dpsi``
-    over ``(5, 355)`` and both passing sides, so this walks that support — including the
-    near-parallel and head-on ends, where a divergence between the two runners would be likeliest
-    to hide. It is the precondition for driving plain MC through ``run_fleet``.
-    """
-    for dpsi in _SWEEP_ANGLES:
-        for side in (1, -1):
-            own = AircraftState(id="OWN", lat=52.0, lon=4.0, trk=0.0, gs=10.2889)
-            intr = create_conflict(own, intr_id="INT", dpsi=dpsi, dcpa=0.0, tlos=90.0,
-                                   rpz=_RPZ, side=side)
-            kw = _sweep_kw()
-            enc = run_encounter(own, intr, perf=M600, **kw)
-            flt = run_fleet([Agent(own, M600), Agent(intr, M600)], **kw)
-            assert (flt.conflict, flt.los, flt.min_sep) == (enc.conflict, enc.los, enc.min_sep), (
-                f"reduction broke at dpsi={dpsi}, side={side}"
-            )
-
-
-def test_run_fleet_reduces_to_run_encounter_across_the_angle_sweep_noisy() -> None:
-    """The same sweep under GNSS noise, on the **estimator's own substream layout**.
-
-    Mirrors ``estimate_p_los``'s split — ``spawn(seq, 3)`` into geometry / navigation /
-    communication, always three regardless of which layers are live (ADR 0006 §6) — so this pins
-    the exact wiring the MC estimator hands its runner. The geometry substream is spawned and left
-    unread here because the geometry is pinned; that is the point of a config-invariant tree.
-    """
-    for i, dpsi in enumerate(_SWEEP_ANGLES):
-        for side in (1, -1):
-            own = AircraftState(id="OWN", lat=52.0, lon=4.0, trk=0.0, gs=10.2889,
-                                pos_ci95=10.0, vel_ci95=1.0)
-            intr = create_conflict(own, intr_id="INT", dpsi=dpsi, dcpa=0.0, tlos=90.0,
-                                   rpz=_RPZ, side=side)
-            kw = _sweep_kw() | dict(navigation=GnssNavigation())
-            agents = [Agent(own, M600), Agent(intr, M600)]
-
-            _, nav_e, _ = spawn(spawn(root_seed_sequence(11), len(_SWEEP_ANGLES))[i], 3)
-            enc = run_encounter(own, intr, perf=M600, rng=generator(nav_e), **kw)
-            _, nav_f, _ = spawn(spawn(root_seed_sequence(11), len(_SWEEP_ANGLES))[i], 3)
-            flt = run_fleet(agents, rng=generator(nav_f), **kw)
-
-            assert (flt.conflict, flt.los, flt.min_sep) == (enc.conflict, enc.los, enc.min_sep), (
-                f"noisy reduction broke at dpsi={dpsi}, side={side}"
-            )
-
-
-def _comm() -> Comm:
-    """A lossy link: 80% reception, lognormal latency — the same on every call."""
-    return Comm(reception_prob=0.8, latency=lognormal_latency(0.1, 0.25))
-
-
-def test_run_fleet_lossy_reduces_to_run_encounter() -> None:
-    """N=2 lossy gate: run_fleet == run_encounter under the *same* comm model + substream."""
+def test_unresolved_encounter_loses_separation() -> None:
+    """Baseline: no resolver -> the conflict becomes a loss of separation."""
     own, intr = _pair()
-    kw = dict(rpz=_RPZ, t_lookahead=_LOOKAHEAD, dt=1.0, detector=StateBased(),
-              resolver=MVP(margin=1.1), recovery=PastCPA(bouncing_guard=True))
-    seq_e = spawn(root_seed_sequence(0), 1)[0]
-    enc = run_encounter(own, intr, perf=M600, communication=_comm(),
-                        comm_rng=generator(seq_e), **kw)
-    seq_f = spawn(root_seed_sequence(0), 1)[0]
-    flt = run_fleet([Agent(own, M600), Agent(intr, M600)],
-                    communication=_comm(), comm_rng=generator(seq_f), **kw)
-    assert (flt.conflict, flt.los, flt.min_sep) == (enc.conflict, enc.los, enc.min_sep)
+    outcome = run_fleet(
+        [Agent(own, M600), Agent(intr, M600)],
+        rpz=_RPZ, t_lookahead=_LOOKAHEAD, dt=_DT, detector=StateBased(),
+    )
+    assert outcome.conflict is True
+    assert outcome.los is True
+    assert outcome.min_sep < _RPZ
 
 
-def test_run_fleet_lossy_reduces_to_run_encounter_noisy() -> None:
-    """N=2 lossy gate with GNSS noise too: nav and comm substreams both match run_encounter."""
-    own, intr = _noisy_pair()
-    kw = dict(rpz=_RPZ, t_lookahead=_LOOKAHEAD, dt=0.2, detector=StateBased(),
-              resolver=MVP(margin=1.05), recovery=PastCPA(bouncing_guard=True),
-              navigation=GnssNavigation())
-    nav_e, comm_e = spawn(root_seed_sequence(3), 2)
-    enc = run_encounter(own, intr, perf=M600, rng=generator(nav_e),
-                        communication=_comm(), comm_rng=generator(comm_e), **kw)
-    nav_f, comm_f = spawn(root_seed_sequence(3), 2)
-    flt = run_fleet([Agent(own, M600), Agent(intr, M600)], rng=generator(nav_f),
-                    communication=_comm(), comm_rng=generator(comm_f), **kw)
-    assert flt.min_sep == enc.min_sep
-    assert (flt.conflict, flt.los) == (enc.conflict, enc.los)
+def test_resolved_encounter_keeps_separation() -> None:
+    """With MVP + Past-CPA the same conflict is cleared with no loss of separation."""
+    own, intr = _pair()
+    outcome = run_fleet(
+        [Agent(own, M600), Agent(intr, M600)],
+        rpz=_RPZ, t_lookahead=_LOOKAHEAD, dt=_DT, detector=StateBased(),
+        resolver=MVP(margin=1.1), recovery=PastCPA(),
+    )
+    assert outcome.conflict is True
+    assert outcome.los is False
+    assert outcome.min_sep >= _RPZ
 
 
-def test_run_fleet_reduces_to_run_encounter_off_phase_and_jittered() -> None:
-    """The reduction holds at *any* schedule, not only the aligned default.
+# --- Deterministic n = 2 regression: the layered flow (CruiseAutopilot + SeparationManager) on
+# the default kinematics gives an exact, reproducible ``min_sep`` per seed — a strictly stronger
+# check than any aggregate rate. First pinned on the pairwise runner and reproduced bit-for-bit
+# when plain MC moved onto ``run_fleet``; they now guard the runner directly. Re-anchored on
+# ``Multirotor`` in Phase 4c (the new default after Dubins was deleted, ADR 0013): the noiseless
+# gentle-maneuver anchors are unchanged from the coupled-heading model (the turn-rate limit never
+# bound there), the noisy ones moved (Multirotor sidesteps cleanly where that turn-rate limit used
+# to bind). The MVP/VO anchors on the *fixed-wing* airframe live in ``test_mixed_fleet.py``.
+#
+# Re-anchored again for the segment-minimum measurement (``relative.segment_min_range``): min_sep
+# is now the minimum over each *step* rather than at its endpoints, so every anchor moved **down**,
+# by 1.8e-5 m to 0.20 m here. The direction is guaranteed, not observed — a segment minimum can
+# never exceed the minimum of its own endpoints, pinned as a property in
+# ``test_segment_min_sep.py`` so a future change cannot move one of these *up* unnoticed. The
+# trajectories themselves are untouched: nothing in the decision path reads min_sep.
+#
+# Compared with pytest.approx(rel=1e-8), not ==: trig calls compounded over many steps land on a
+# different last bit depending on the platform's libm (e.g. macOS vs glibc), even with identical
+# code and seed. The tolerance is tight enough to still catch a real modelling regression.
+_ANCHOR_NOISELESS_MVP = 109.29398339330471
+_ANCHOR_NOISELESS_VO = 109.82844921479813
+_ANCHOR_NOISY_MVP = 267.74238306504367
+_ANCHOR_NOISY_VO = 261.9739565914773
 
-    ``run_encounter`` used to advance a single global ``next_broadcast`` by a scalar interval, so
-    the two aircraft always fired together and this case could not be written at all — the pairwise
-    runner had no off-phase or jitter to compare. Both runners now thread the same
-    :class:`~opencdarr.cns.broadcast.BroadcastSchedule`, so a per-aircraft phase offset and a
-    per-transmission dither reduce like every other CNS effect. ``phase`` is deliberately not a
-    multiple of ``dt``, so the two aircraft fire on genuinely different ticks.
-    """
-    own, intr = _noisy_pair()
-    sched = BroadcastSchedule(interval=1.0, phase=[0.0, 0.37], jitter=0.2)
-    kw = dict(rpz=_RPZ, t_lookahead=_LOOKAHEAD, dt=0.1, detector=StateBased(),
-              resolver=MVP(margin=1.05), recovery=PastCPA(bouncing_guard=True),
-              navigation=GnssNavigation(), schedule=sched)
-    nav_e, bc_e = spawn(root_seed_sequence(4), 2)
-    enc = run_encounter(own, intr, perf=M600, rng=generator(nav_e),
-                        broadcast_rng=generator(bc_e), **kw)
-    nav_f, bc_f = spawn(root_seed_sequence(4), 2)
-    flt = run_fleet([Agent(own, M600), Agent(intr, M600)], rng=generator(nav_f),
-                    broadcast_rng=generator(bc_f), **kw)
-    assert flt.min_sep == enc.min_sep
-    assert (flt.conflict, flt.los) == (enc.conflict, enc.los)
+
+def test_bit_for_bit_noiseless_mvp() -> None:
+    """Deterministic (no-noise) MVP encounter reproduces the pinned min_sep exactly."""
+    own, intr = _pair()
+    out = run_fleet(
+        [Agent(own, M600), Agent(intr, M600)],
+        rpz=_RPZ, t_lookahead=_LOOKAHEAD, dt=_DT,
+        detector=StateBased(), resolver=MVP(margin=1.1), recovery=PastCPA(),
+    )
+    assert out.min_sep == pytest.approx(_ANCHOR_NOISELESS_MVP, rel=1e-8)
 
 
-def test_run_encounter_jitter_without_a_stream_is_rejected() -> None:
-    """The same guard ``run_fleet`` has: a dithered gap needs its own substream (ADR 0006 §6)."""
+def test_bit_for_bit_noiseless_vo() -> None:
+    """Deterministic (no-noise) VO encounter reproduces the pinned min_sep exactly."""
+    own, intr = _pair()
+    out = run_fleet(
+        [Agent(own, M600), Agent(intr, M600)],
+        rpz=_RPZ, t_lookahead=_LOOKAHEAD, dt=_DT,
+        detector=StateBased(), resolver=VO(margin=1.1), recovery=PastCPA(),
+    )
+    assert out.min_sep == pytest.approx(_ANCHOR_NOISELESS_VO, rel=1e-8)
+
+
+def _noisy_min_sep(resolver: MVP | VO) -> float:
+    """One seeded, GPS-noisy encounter through the full self-fix path (exercises CruiseAutopilot's
+    state-independence and the SeparationManager under noise). Seed 0, single substream."""
+    seq = list(spawn(root_seed_sequence(0), 1))[0]
+    own = AircraftState(
+        id="OWN", lat=52.0, lon=4.0, trk=0.0, gs=10.2889, pos_ci95=10.0, vel_ci95=1.0
+    )
+    intr = create_conflict(own, intr_id="INT", dpsi=45.0, dcpa=0.0, tlos=180.0, rpz=_RPZ, side=1)
+    return run_fleet(
+        [Agent(own, M600), Agent(intr, M600)],
+        rpz=_RPZ, t_lookahead=_LOOKAHEAD, dt=0.2,
+        detector=StateBased(), resolver=resolver, recovery=PastCPA(bouncing_guard=True),
+        navigation=GnssNavigation(), rng=generator(seq),
+    ).min_sep
+
+
+def test_bit_for_bit_noisy_mvp() -> None:
+    """Seeded GPS-noisy MVP encounter reproduces the pinned min_sep exactly (noisy path)."""
+    assert _noisy_min_sep(MVP(margin=1.05)) == pytest.approx(_ANCHOR_NOISY_MVP, rel=1e-8)
+
+
+def test_bit_for_bit_noisy_vo() -> None:
+    """Seeded GPS-noisy VO encounter reproduces the pinned min_sep exactly (noisy path)."""
+    assert _noisy_min_sep(VO(margin=1.05)) == pytest.approx(_ANCHOR_NOISY_VO, rel=1e-8)
+
+
+def test_run_fleet_no_wind_matches_default() -> None:
+    """Threading ``wind=NO_WIND`` through the runner reproduces the default-run outcome exactly."""
+    own, intr = _pair()
+    kw = dict(
+        rpz=_RPZ, t_lookahead=_LOOKAHEAD, dt=_DT, detector=StateBased(),
+        resolver=MVP(margin=1.1), recovery=PastCPA(),
+    )
+    agents = [Agent(own, M600), Agent(intr, M600)]
+    assert run_fleet(agents, wind=NO_WIND, **kw) == run_fleet(agents, **kw)
+
+
+def test_jitter_without_a_stream_is_rejected() -> None:
+    """A dithered gap needs its own substream (ADR 0006 §6)."""
     own, intr = _pair()
     with pytest.raises(ValueError, match="broadcast jitter requires broadcast_rng"):
-        run_encounter(own, intr, perf=M600, rpz=_RPZ, t_lookahead=_LOOKAHEAD, dt=1.0,
-                      detector=StateBased(), schedule=BroadcastSchedule(1.0, jitter=0.2))
+        run_fleet([Agent(own, M600), Agent(intr, M600)],
+                  rpz=_RPZ, t_lookahead=_LOOKAHEAD, dt=_DT,
+                  detector=StateBased(), schedule=BroadcastSchedule(1.0, jitter=0.2))
 
 
 def test_fleet_perception_gates_avoidance() -> None:

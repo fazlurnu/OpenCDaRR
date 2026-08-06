@@ -1,4 +1,4 @@
-"""Functional tests for the loop's per-directed-pair CDR memory (``PairMemory``).
+"""Functional tests for the per-directed-pair CDR memory (``FleetMemory``).
 
 Covers the reference's ``_intr_init_vel`` mechanism: the other aircraft's velocity is recorded
 when a pair becomes active, held unchanged while it stays active, cleared on resume, and used as
@@ -12,12 +12,13 @@ from opencdarr import geo
 from opencdarr.cd import StateBased
 from opencdarr.cr import MVP
 from opencdarr.crr import FTR, PastCPA
-from opencdarr.kinematics import Command
-from opencdarr.loop import _INACTIVE, _decide
+from opencdarr.kinematics import MotionCommand
+from opencdarr.separation import INACTIVE, SeparationManager
 from opencdarr.state import AircraftState, DesiredVelocity
 
 _RPZ, _LOOKAHEAD = 50.0, 120.0
-_NOM = Command.from_track_speed(0.0, 10.0)
+_NOM = MotionCommand.from_track_speed(0.0, 10.0)
+_SEPARATION = SeparationManager()  # stateless (ADR 0011 §5), so one shared instance is safe
 
 
 def _own() -> AircraftState:
@@ -34,20 +35,20 @@ def _intr(
 
 
 def _run(own, intr, memory, recovery=None):
-    return _decide(
-        own, intr, _NOM, memory, _RPZ, _LOOKAHEAD, StateBased(), MVP(1.05), recovery or FTR()
+    return _SEPARATION.step(
+        own, [intr], _NOM, memory, _RPZ, _LOOKAHEAD, StateBased(), MVP(1.05), recovery or FTR()
     )
 
 
 def test_onset_velocity_recorded_when_pair_becomes_active() -> None:
-    _, memory = _run(_own(), _intr(400.0, trk=180.0), _INACTIVE)
+    _, memory = _run(_own(), _intr(400.0, trk=180.0), INACTIVE)
     assert memory.resolving is True
     assert memory.onset_velocity == DesiredVelocity.from_track_speed(180.0, 10.0)
 
 
 def test_onset_velocity_is_not_overwritten_while_active() -> None:
     """The whole point: it must survive the other aircraft manoeuvring away afterwards."""
-    _, first = _run(_own(), _intr(400.0, trk=180.0), _INACTIVE)
+    _, first = _run(_own(), _intr(400.0, trk=180.0), INACTIVE)
     _, second = _run(_own(), _intr(400.0, trk=90.0), first)  # intruder has since turned
     assert second.resolving is True
     expected = DesiredVelocity.from_track_speed(180.0, 10.0)
@@ -55,7 +56,7 @@ def test_onset_velocity_is_not_overwritten_while_active() -> None:
 
 
 def test_memory_cleared_on_resume() -> None:
-    _, active = _run(_own(), _intr(400.0, trk=180.0), _INACTIVE)
+    _, active = _run(_own(), _intr(400.0, trk=180.0), INACTIVE)
     assert active.onset_velocity is not None
     resolved = _intr(5000.0, trk=90.0, bearing=90.0)  # far away and diverging -> resume
     _, after = _run(_own(), resolved, active)
@@ -65,8 +66,8 @@ def test_memory_cleared_on_resume() -> None:
 
 def test_inactive_pair_records_nothing() -> None:
     far = _intr(20000.0, trk=0.0, bearing=90.0)  # no conflict at all
-    _, memory = _run(_own(), far, _INACTIVE)
-    assert memory == _INACTIVE
+    _, memory = _run(_own(), far, INACTIVE)
+    assert memory == INACTIVE
     assert memory.onset_velocity is None
 
 
@@ -74,7 +75,7 @@ def test_declared_intent_is_never_overwritten_by_the_inferred_fallback() -> None
     """Shared intent wins; the onset velocity is still recorded but must not displace it."""
     declared = DesiredVelocity.from_track_speed(270.0, 7.0)
     own, intr = _own(), _intr(400.0, trk=180.0, desired=declared)
-    _, memory = _run(own, intr, _INACTIVE)
+    _, memory = _run(own, intr, INACTIVE)
     # onset is recorded regardless (cheap, and the pair may lose intent-sharing later)
     assert memory.onset_velocity == DesiredVelocity.from_track_speed(180.0, 10.0)
     # ... but the criterion saw the declared value: same geometry with the fallback substituted
@@ -90,7 +91,7 @@ def test_fallback_makes_the_second_criterion_reachable_without_intent_sharing() 
     own = _own()
     # onset: heading south (re-converges with own's northbound desired) at close range
     onset_geometry = _intr(300.0, trk=180.0, desired=None)
-    _, memory = _run(own, onset_geometry, _INACTIVE)
+    _, memory = _run(own, onset_geometry, INACTIVE)
     assert memory.onset_velocity == DesiredVelocity.from_track_speed(180.0, 10.0)
 
     # now the intruder has turned away (current velocity alone would look clear), but the
@@ -104,7 +105,7 @@ def test_fallback_makes_the_second_criterion_reachable_without_intent_sharing() 
 def test_pastcpa_is_unaffected_by_the_memory() -> None:
     """A criterion that ignores intent must behave identically with or without a recorded onset."""
     own, intr = _own(), _intr(400.0, trk=180.0)
-    cmd_a, mem_a = _run(own, intr, _INACTIVE, recovery=PastCPA())
+    cmd_a, mem_a = _run(own, intr, INACTIVE, recovery=PastCPA())
     cmd_b, mem_b = _run(own, intr, mem_a, recovery=PastCPA())
     assert cmd_a == cmd_b
     assert mem_b.resolving is mem_a.resolving

@@ -1,4 +1,4 @@
-"""Functional tests for CNS in the encounter loop / estimator — navigation (3a) and
+"""Functional tests for CNS through the estimator and the fleet runner — navigation (3a) and
 communication (3b)."""
 
 from __future__ import annotations
@@ -7,6 +7,7 @@ import pytest
 
 from opencdarr.cd import StateBased
 from opencdarr.cns import Comm, GnssNavigation, uniform_latency
+from opencdarr.cns.broadcast import BroadcastSchedule
 from opencdarr.config import (
     Config,
     ConflictConfig,
@@ -17,7 +18,7 @@ from opencdarr.config import (
 from opencdarr.cr import MVP
 from opencdarr.crr import PastCPA
 from opencdarr.estimator import estimate_p_los, pairwise
-from opencdarr.loop import run_encounter
+from opencdarr.fleet import Agent, run_fleet
 from opencdarr.performance import M600
 from opencdarr.rng import generator, root_seed_sequence, spawn
 from opencdarr.scenario import sample_pairwise
@@ -74,7 +75,7 @@ def test_reproducible_with_navigation() -> None:
     assert r1 == r2
 
 
-# --- 3b: communication (reception + latency), loop-integration tests --------------------------
+# --- 3b: communication (reception + latency), runner-integration tests -------------------------
 
 
 def _ipr_comm(communication) -> float:
@@ -117,8 +118,8 @@ def test_comm_rng_required_when_communication_set() -> None:
         generator(root_seed_sequence(0)), speed=10.2889, dcpa_max=20.0, tlos=60.0, rpz=50.0
     )
     with pytest.raises(ValueError):
-        run_encounter(
-            own, intr, perf=M600, rpz=50.0, t_lookahead=120.0, dt=1.0,
+        run_fleet(
+            [Agent(own, M600), Agent(intr, M600)], rpz=50.0, t_lookahead=120.0, dt=1.0,
             detector=StateBased(), resolver=MVP(1.05), recovery=PastCPA(),
             communication=Comm(reception_prob=0.5), comm_rng=None,
         )
@@ -143,13 +144,15 @@ def test_communication_and_navigation_are_independent_substreams() -> None:
         generator(geom_seq), speed=10.2889, dcpa_max=20.0, tlos=60.0, rpz=50.0
     )
     kwargs = dict(
-        perf=M600, rpz=50.0, t_lookahead=120.0, dt=1.0,
+        rpz=50.0, t_lookahead=120.0, dt=1.0,
         detector=StateBased(), resolver=MVP(1.05), recovery=PastCPA(),
-        navigation=GnssNavigation(), broadcast_interval=1.0,
+        navigation=GnssNavigation(), schedule=BroadcastSchedule(interval=1.0),
     )
-    without_comm = run_encounter(own, intr, rng=generator(nav_seq), **kwargs)
-    with_comm = run_encounter(
-        own, intr, rng=generator(nav_seq),
+    without_comm = run_fleet(
+        [Agent(own, M600), Agent(intr, M600)], rng=generator(nav_seq), **kwargs
+    )
+    with_comm = run_fleet(
+        [Agent(own, M600), Agent(intr, M600)], rng=generator(nav_seq),
         communication=Comm(reception_prob=0.9), comm_rng=generator(comm_seq),
         **kwargs,
     )

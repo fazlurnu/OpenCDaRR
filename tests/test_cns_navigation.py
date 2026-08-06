@@ -26,7 +26,6 @@ from opencdarr.cr import MVP
 from opencdarr.crr import PastCPA, ProbabilisticFTR
 from opencdarr.crr.base import RecoveryCriterion
 from opencdarr.fleet import Agent, run_fleet
-from opencdarr.loop import run_encounter
 from opencdarr.performance import M600
 from opencdarr.relative import velocity_enu
 from opencdarr.scenario import create_conflict, sample_pairwise
@@ -160,8 +159,8 @@ def _encounter_min_sep(recovery: RecoveryCriterion, claim: float | None) -> floa
         np.random.default_rng(5), speed=10.2889, dcpa_max=50.0, tlos=60.0, rpz=50.0,
         pos_ci95=40.0, vel_ci95=2.0, pos_ci95_declared=claim,
     )
-    outcome = run_encounter(
-        own, intr, perf=M600, rpz=50.0, t_lookahead=120.0, dt=1.0,
+    outcome = run_fleet(
+        [Agent(own, M600), Agent(intr, M600)], rpz=50.0, t_lookahead=120.0, dt=1.0,
         detector=StateBased(), resolver=MVP(1.05), recovery=recovery,
         navigation=GnssNavigation(), rng=np.random.default_rng(99),
     )
@@ -260,8 +259,8 @@ def test_reproducible_per_seed() -> None:
 # Two aircraft measuring on every tick from **one shared** generator, in agent order -- exactly
 # how `CNS.sense` drives the layer (`stack.py`: all navigation draws first, in `firing` order).
 # Read one column per measurement, interleaved A,B for ticks 0..39, so the pin covers the
-# *interleaving* as well as the values. That order is what makes `run_fleet` at n = 2 reduce
-# bit-for-bit to `run_encounter`, and is what a refactor is most likely to disturb by accident.
+# *interleaving* as well as the values. That order is what the n = 2 anchors in `test_fleet.py`
+# rest on, and is what a refactor is most likely to disturb by accident.
 #   radial -- the position error as tenths of that aircraft's own declared ci95, capped at 9.
 #             Normalised because A and B declare different accuracies (20 m and 40 m); '9' means
 #             "at or beyond the declared 95% radius", which should be about 1 column in 20.

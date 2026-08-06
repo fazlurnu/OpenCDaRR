@@ -1,11 +1,10 @@
-"""SeparationManager — the ported ``_decide`` (ADR 0011, Phase 4a).
+"""SeparationManager — the detect → resolve → recover decision layer (ADR 0011, Phase 4a).
 
 Two properties the layer split rests on:
 
-1. **byte-identical decisions** to the pre-Phase-4a ``loop._decide`` on shared inputs — the port
-   is substantive-behaviour-preserving (the loop-level bit-for-bit IPR regression lives in
-   ``test_loop.py``; here we pin the unit directly);
-2. **no state on the manager object** — the per-pair memory is threaded in/out as ``PairMemory``,
+1. **the decision is pure** — ported byte-for-byte from the pre-Phase-4a pairwise runner; the
+   runner-level bit-for-bit anchors live in ``test_fleet.py``, here we pin the unit directly;
+2. **no state on the manager object** — the per-pair memory is threaded in/out as ``FleetMemory``,
    nothing is written to ``self`` (the load-bearing no-hidden-state invariant, ADR 0011 §5).
 """
 
@@ -15,9 +14,8 @@ from opencdarr.cd import StateBased
 from opencdarr.cr import MVP
 from opencdarr.crr import PastCPA
 from opencdarr.kinematics import MotionCommand
-from opencdarr.loop import _decide  # the backward-compat shim, for the equivalence check
 from opencdarr.scenario import create_conflict
-from opencdarr.separation import INACTIVE, PairMemory, SeparationManager
+from opencdarr.separation import INACTIVE, FleetMemory, SeparationManager
 from opencdarr.state import AircraftState
 
 _RPZ = 50.0
@@ -38,25 +36,20 @@ def _step(
     mgr: SeparationManager,
     ac: AircraftState,
     other: AircraftState | None,
-    memory: PairMemory,
-) -> tuple[MotionCommand, PairMemory]:
+    memory: FleetMemory,
+) -> tuple[MotionCommand, FleetMemory]:
     return mgr.step(
         ac, [] if other is None else [other], _nominal(ac), memory,
         _RPZ, _LOOKAHEAD, StateBased(), MVP(margin=1.1), PastCPA(),
     )
 
 
-def test_matches_old_decide_on_a_live_conflict() -> None:
-    """A detected pair: manager.step == the loop._decide shim, command and memory both."""
+def test_a_live_conflict_engages_resolution() -> None:
+    """A detected pair engages resolution: the command moves off nominal and the memory arms."""
     own, intr = _pair()
-    cmd_m, mem_m = _step(SeparationManager(), own, intr, INACTIVE)
-    cmd_d, mem_d = _decide(
-        own, intr, _nominal(own), INACTIVE, _RPZ, _LOOKAHEAD, StateBased(), MVP(margin=1.1),
-        PastCPA(),
-    )
-    assert cmd_m == cmd_d
-    assert mem_m == mem_d
-    assert mem_m.resolving is True  # the scenario really does engage resolution (the test bites)
+    cmd, mem = _step(SeparationManager(), own, intr, INACTIVE)
+    assert cmd != _nominal(own)
+    assert mem.resolving is True  # the scenario really does engage resolution (the test bites)
 
 
 def test_no_resolver_or_no_traffic_flies_nominal() -> None:
@@ -92,7 +85,7 @@ def test_memory_is_threaded_not_hidden() -> None:
     own, intr = _pair()
     mgr = SeparationManager()
     _, active = _step(mgr, own, intr, INACTIVE)
-    assert isinstance(active, PairMemory) and active.resolving
+    assert isinstance(active, FleetMemory) and active.resolving
     # a *fresh* manager fed that same memory must decide identically (memory is the only carrier)
     same, _ = _step(SeparationManager(), own, intr, active)
     also, _ = _step(mgr, own, intr, active)

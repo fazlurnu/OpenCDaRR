@@ -128,9 +128,9 @@ def test_golden_ipr_at_midrange_noise() -> None:
 
     Every other test here pins a *relation* (reproducible, pooled, above baseline), all of which a
     refactor can satisfy while silently changing the numbers. This pins the numbers themselves, so
-    that moving the estimator onto a different runner — as Phase-v1 did, from ``run_encounter`` to
-    ``run_fleet`` at n=2 — has to prove it changed nothing. Update these values only alongside a
-    deliberate, recorded modelling change.
+    that moving the estimator onto a different runner — as Phase-v1 did, moving plain MC from the
+    old pairwise runner to ``run_fleet`` at n=2 — has to prove it changed nothing. Update these
+    values only alongside a deliberate, recorded modelling change.
     """
     result = estimate_p_los(
         pairwise(M600), _noisy_config(), StateBased(), MVP(1.05),
@@ -248,7 +248,7 @@ class _Ballistic(Kinematics):
 def test_kinematics_reaches_the_mc_path() -> None:
     """A contributed ``Kinematics`` must actually fly the MC encounters, not be silently dropped.
 
-    Plain MC used to call ``run_encounter`` without forwarding ``kinematics``, so a custom airframe
+    Plain MC's old pairwise runner did not forward ``kinematics``, so a custom airframe
     was ignored here while IPS (which builds its own ``FleetEnv``) honoured it — the same model
     giving different answers on the two backends, with nothing in either result to show why.
     Fitting an airframe that *cannot* manoeuvre is the cheapest way to prove the wiring.
