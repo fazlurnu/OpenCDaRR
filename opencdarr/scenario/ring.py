@@ -34,6 +34,35 @@ def swap_ring(
 
 
 
+def crossing_ring(
+    n: int = 8, *, speed: float | Sequence[float] = 10.0, radius: float = 1500.0,
+    lat0: float = 52.0, lon0: float = 4.0,
+) -> FleetScenario:
+    """``n`` aircraft uniformly on a ring, each flying to the diametrically-opposite **point**.
+
+    Every route is a full diameter, so the whole fleet meets at the centre at every ``n``. That is
+    the difference from :func:`swap_ring`, which aims each aircraft at another aircraft's *start* —
+    the one ``n // 2`` places round the ring. At even ``n`` that start **is** the antipode and the
+    two builders place the identical fleet; at odd ``n`` it is not, and ``swap_ring``'s routes miss
+    the centre by ``radius * cos(180 * (n // 2) / n)`` — 750 m at ``n = 3`` on a 1500 m ring.
+
+    Reach for this one when the **fleet size is the variable**. Sweeping ``n`` over ``swap_ring``
+    steps the geometry at every odd value as well as the size, so a trend across that sweep mixes
+    the two effects; here only the size changes.
+
+    ``speed`` is one value for the fleet, or one per aircraft in ring order.
+    """
+    speeds = _per_aircraft_speeds(speed, n)
+    out: FleetScenario = []
+    for k in range(n):
+        bearing = 360.0 * k / n
+        start = geo.forward(lat0, lon0, bearing, radius)
+        far = geo.forward(lat0, lon0, (bearing + 180.0) % 360.0, radius)
+        target = (far[0], far[1])
+        out.append((_heading_to(start[0], start[1], target, speeds[k], f"A{k}"), target))
+    return out
+
+
 def converging_ring(
     n: int = 8, *, speed: float | Sequence[float] = 10.0, radius: float = 1500.0,
     lat0: float = 52.0, lon0: float = 4.0,
