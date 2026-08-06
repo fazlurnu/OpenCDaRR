@@ -30,10 +30,10 @@ from opencdarr.scenario import (
 )
 
 
-def _config(speed: float = 10.0) -> Config:
+def _config(speed: float = 10.0, pos_ci95: float = 0.0, vel_ci95: float = 0.0) -> Config:
     return Config(
         seed=0, n_encounters=1,
-        scenario=ScenarioConfig("M600", speed, 100.0, 60.0),
+        scenario=ScenarioConfig("M600", speed, 100.0, 60.0, pos_ci95, vel_ci95),
         conflict=ConflictConfig(50.0, 120.0),
         methods=MethodsConfig("statebased", "mvp", "pastcpa", 1.05, False),
         simulation=SimulationConfig(1.0, 300.0, 10.0),
@@ -60,6 +60,20 @@ def test_every_scenario_reads_its_speed_from_the_config(scenario: Scenario) -> N
     """A sweep over ``speed`` has to reach the geometry, so it is read rather than hard-coded."""
     fleet = scenario.draw(np.random.default_rng(0), _config(speed=13.0))
     assert all(state.gs == pytest.approx(13.0) for state, _ in fleet)
+
+
+@pytest.mark.parametrize("scenario", _ALL, ids=lambda s: type(s).__name__)
+def test_every_scenario_carries_the_declared_accuracies(scenario: Scenario) -> None:
+    """A navigation model reads ``pos_ci95`` off the aircraft, so the scenario must put it there.
+
+    Left at zero the fleet flies *noiselessly* whatever CNS stack is declared: the run is
+    deterministic, ``P(LoS)`` collapses to 0 or 1, and a swept noise axis silently does nothing.
+    That is a whole campaign of meaningless rows, and nothing in the output says so — which is why
+    it is asserted for every scenario rather than for the one that happened to be written first.
+    """
+    fleet = scenario.draw(np.random.default_rng(0), _config(pos_ci95=17.0, vel_ci95=1.7))
+    assert all(state.pos_ci95 == pytest.approx(17.0) for state, _ in fleet)
+    assert all(state.vel_ci95 == pytest.approx(1.7) for state, _ in fleet)
 
 
 def test_a_placed_scenario_ignores_the_generator_and_a_drawn_one_does_not() -> None:

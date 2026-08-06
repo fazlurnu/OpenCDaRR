@@ -48,10 +48,17 @@ FleetScenario = list[tuple[AircraftState, tuple[float, float] | None]]
 
 
 def _heading_to(lat: float, lon: float, target: tuple[float, float], speed: float,
-                ac_id: str) -> AircraftState:
-    """An aircraft at ``(lat, lon)`` flying at ``speed`` toward ``target`` (nose on the bearing)"""
+                ac_id: str, pos_ci95: float = 0.0, vel_ci95: float = 0.0) -> AircraftState:
+    """An aircraft at ``(lat, lon)`` flying at ``speed`` toward ``target`` (nose on the bearing).
+
+    ``pos_ci95`` / ``vel_ci95`` are the accuracies this aircraft measures itself to. They must be
+    carried here rather than left at zero: a navigation model reads them off the state, so a fleet
+    built without them flies *noiselessly* whatever CNS stack is declared — deterministic, and with
+    a declared noise sweep that silently does nothing.
+    """
     trk, _ = geo.qdrdist(lat, lon, target[0], target[1])
-    return AircraftState(id=ac_id, lat=lat, lon=lon, trk=trk % 360.0, gs=speed)
+    return AircraftState(id=ac_id, lat=lat, lon=lon, trk=trk % 360.0, gs=speed,
+                         pos_ci95=pos_ci95, vel_ci95=vel_ci95)
 
 
 class Scenario(ABC):

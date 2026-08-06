@@ -14,18 +14,27 @@ traffic near the edge, because a chord entering at a shallow angle spends very l
 ``examples/handbook/traffic_density.ipynb`` reproduces the paper's Fig. 4 and measures the
 difference between the two rules.
 
-**Steady state, not spawning.** :func:`~opencdarr.fleet.run_fleet` flies a fixed list of aircraft
-and cannot create new ones mid-run, so rather than releasing aircraft continuously at the border
-this places the whole fleet in the steady state that process would produce: each aircraft is drawn
-in proportion to the time it would spend inside the disc (its chord length), and is then placed
-uniformly along its own chord. The result is a snapshot of established traffic rather than a
-start-of-run artefact where every aircraft sits on the boundary at once.
+Every draw is inbound by construction. The offset ``asin(x)`` is at most a quarter turn from the
+inward radial, so the track's perpendicular distance from the centre works out at exactly ``R x``
+— uniform across the diameter, which is the rule's whole claim — and the chord it flies is
+``2R sqrt(1 - x^2)``.
 
-**Two concentric areas.** The traffic fills a simulation disc, but results are measured in a
-smaller experimental disc inside it (:func:`measurement_area`). The annulus between them is
-airspace that is flown and not counted, which is what keeps an aircraft that has only just entered
-— and has no history of ever having been separated from anything — out of the numbers. The ratio
-is the paper's 1.35 NM / 1.62 NM.
+**Release on the ring.** The whole fleet starts on the boundary of the simulation disc and flies
+inward. :func:`~opencdarr.fleet.run_fleet` takes a fixed list of aircraft and cannot create new
+ones mid-run, so this is a single cohort crossing rather than the paper's continuous arrivals: the
+disc fills, is crossed, and empties. Density inside is therefore a transient rather than a
+steady state, and a study that depends on holding a density should say over what window it reads
+it.
+
+**Two concentric areas, and why the release ring matters.** The traffic fills a simulation disc but
+results are measured in a smaller experimental disc inside it (:func:`measurement_area`). The
+annulus between them is airspace that is flown and not counted, and releasing on the outer boundary
+is what makes that buffer do its job: an aircraft is not measured until it has crossed the annulus,
+by which time it has been flying for some seconds among the others and has a *history* of having
+been separated from them. Placing aircraft directly inside the measured disc would defeat it — two
+of them can land within ``rpz`` of each other at the first step, having never been separated at
+all, and no spatial gate can tell that apart from a real loss. The ratio is the paper's
+1.35 NM / 1.62 NM.
 """
 
 from __future__ import annotations
@@ -44,8 +53,6 @@ from opencdarr.state import AircraftState
 
 # The paper's two concentric areas: measure inside 1.35 NM of a 1.62 NM simulation disc.
 MEASURED_FRACTION = 1.35 / 1.62
-
-_CHORD_EPS = 1.0  # m — drop outbound and grazing draws, which contribute no time inside
 
 
 def aircraft_for_density(density: float, radius: float) -> int:
@@ -75,52 +82,40 @@ def random_traffic(
     speed: float | Sequence[float] = 10.0,
     lat0: float = 52.0,
     lon0: float = 4.0,
+    pos_ci95: float = 0.0,
+    vel_ci95: float = 0.0,
 ) -> FleetScenario:
-    """``n`` aircraft crossing a disc of ``radius`` on random headings, in steady state.
+    """``n`` aircraft released on the boundary of a disc of ``radius``, all flying inward.
 
     Unlike the placed scenarios this one is **drawn**, so it takes the encounter's own generator.
     Two draws from the same seed give the same traffic; two different seeds give independent
     traffic at the same density.
 
+    Every aircraft starts on the ring, which is what gives the annulus between the release ring and
+    the measured disc something to do: nothing is counted until an aircraft has crossed it.
+
     Each aircraft's goal is a waypoint far beyond the disc along its own heading. Traffic aircraft
     have no destination — they cross and leave — so the goal exists only to give the fleet builders
-    one shape; an aircraft exits the measured region long before reaching it.
+    one shape; an aircraft leaves the disc long before reaching it.
     """
     if n < 1:
         raise ValueError(f"a traffic sample needs at least one aircraft, got {n}")
     speeds = _per_aircraft_speeds(speed, n)
 
-    # Oversample, then keep the inbound draws and weight them by time inside. The pool is large
-    # relative to n so that the chord-weighted choice has something to choose from.
-    pool = 40 * n + 20_000
-    heading = rng.uniform(0.0, 360.0, pool)
-    offset = rng.uniform(-1.0, 1.0, pool)
+    heading = rng.uniform(0.0, 360.0, n)
+    offset = rng.uniform(-1.0, 1.0, n)
+    # the entry rule. asin(x) is at most a quarter turn off the inward radial, so every draw flies
+    # into the disc and the track's perpendicular offset from the centre comes out at exactly R*x.
     bearing = (heading + 180.0 + np.degrees(np.arcsin(offset))) % 360.0
-
-    br, hr = np.radians(bearing), np.radians(heading)
-    entry_e, entry_n = radius * np.sin(br), radius * np.cos(br)
-    unit_e, unit_n = np.sin(hr), np.cos(hr)
-    chord = -2.0 * (entry_e * unit_e + entry_n * unit_n)  # distance to the far side of the disc
-
-    keep = chord > _CHORD_EPS
-    entry_e, entry_n = entry_e[keep], entry_n[keep]
-    unit_e, unit_n = unit_e[keep], unit_n[keep]
-    chord, heading = chord[keep], heading[keep]
-
-    # an aircraft is present in proportion to the time it spends inside, i.e. to its chord
-    idx = rng.choice(chord.size, size=n, p=chord / chord.sum())
-    along = rng.uniform(0.0, 1.0, n) * chord[idx]
-    east = entry_e[idx] + unit_e[idx] * along
-    north = entry_n[idx] + unit_n[idx] * along
 
     out: FleetScenario = []
     for k in range(n):
-        qdr = math.degrees(math.atan2(east[k], north[k])) % 360.0
-        lat, lon = geo.forward(lat0, lon0, qdr, math.hypot(east[k], north[k]))
-        trk = float(heading[idx][k]) % 360.0
+        lat, lon = geo.forward(lat0, lon0, float(bearing[k]), radius)
+        trk = float(heading[k]) % 360.0
         far = geo.forward(lat, lon, trk, 3.0 * radius)  # beyond the disc; never reached
         out.append((
-            AircraftState(id=f"T{k}", lat=lat, lon=lon, trk=trk, gs=speeds[k]),
+            AircraftState(id=f"T{k}", lat=lat, lon=lon, trk=trk, gs=speeds[k],
+                          pos_ci95=pos_ci95, vel_ci95=vel_ci95),
             (far[0], far[1]),
         ))
     return out
@@ -157,6 +152,7 @@ class RandomTraffic(Scenario):
         return random_traffic(
             rng, self.size(), radius=self.radius, speed=config.scenario.speed,
             lat0=self.centre[0], lon0=self.centre[1],
+            pos_ci95=config.scenario.pos_ci95, vel_ci95=config.scenario.vel_ci95,
         )
 
     def measurement_area(self) -> MeasurementArea:
