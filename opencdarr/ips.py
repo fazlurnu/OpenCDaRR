@@ -2,7 +2,7 @@
 
 Fixed-effort multilevel splitting over the fleet estimator interface (``advance / level /
 is_terminal``, :mod:`opencdarr.fleet`). Where plain Monte Carlo (:func:`opencdarr.estimator.
-estimate_ipr`) starves in the rare regime — a single 10⁴-encounter run can read *zero* events
+estimate_p_los`) starves in the rare regime — a single 10⁴-encounter run can read *zero* events
 ([[rare-event-validation-ladder]]) — IPS concentrates effort on the trajectories heading toward the
 rare set and returns the small probability with a usable confidence interval.
 

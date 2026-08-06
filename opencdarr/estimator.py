@@ -1,11 +1,11 @@
 """Plain Monte Carlo loss-of-separation estimator.
 
 Samples ``config.n_encounters`` independent pairwise encounters and aggregates
-``P(LoS) = n_los/n_encounters`` (equivalently ``IPR = 1 - P(LoS)``; see :class:`IPRResult` on why
+``P(LoS) = n_los/n_encounters`` (see :class:`MonteCarloEstimate` on why
 the denominator is the encounter count and not the detected-conflict count). Each encounter gets
 its own RNG substream spawned from the run seed (ADR 0001), so the estimate is reproducible and
 order-independent — which is what lets a caller hand slices of the encounter fan-out to different
-processes (``seqs=``) and pool the counts with :func:`combine_ipr` for exactly the serial answer.
+processes (``seqs=``) and pool the counts with :func:`combine_p_los` for exactly the serial answer.
 Pure: no I/O.
 
 **One environment, both estimators.** Each encounter runs through :func:`opencdarr.fleet.run_fleet`
@@ -51,7 +51,7 @@ def wilson_interval(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
     "no events observed" becomes a real bound rather than the false certainty of ``(0, 0)``.
 
     Valid here because ``n`` is the *encounter count*, fixed by the experiment design, so this is a
-    genuine binomial and not a ratio with a random denominator (see :class:`IPRResult`).
+    genuine binomial and not a ratio with a random denominator (see :class:`MonteCarloEstimate`).
     """
     if n <= 0:
         return (float("nan"), float("nan"))
@@ -63,7 +63,7 @@ def wilson_interval(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
 
 
 @dataclass(frozen=True)
-class IPRResult:
+class MonteCarloEstimate:
     """Loss-of-separation counts over a set of encounters, and the rates derived from them.
 
     **The denominator is ``n_encounters``.** One encounter — one simulation run from one seed — is
@@ -99,8 +99,11 @@ class IPRResult:
     """
 
     min_seps: tuple[float, ...]  # achieved minimum separation [m], one per encounter
-    n_los: int
+    n_los: int  # runs with a loss (K >= 1) — the per-run numerator
     n_conflict: int  # diagnostic: how many were *detected* as conflicts, not the denominator
+    sum_k: int  # Σ K over runs — losing pairs summed (the E[K] numerator)
+    sum_a: int  # Σ A over runs — aircraft-involved summed (the per-aircraft numerator)
+    n_aircraft: int  # N: aircraft per run (2 for this pairwise estimator)
 
     @property
     def n_encounters(self) -> int:
@@ -108,9 +111,29 @@ class IPRResult:
         return len(self.min_seps)
 
     @property
-    def p_los(self) -> float:
-        """P(loss of separation) — the fraction of encounters in which separation was lost."""
+    def p_los_run(self) -> float:
+        """P(LoS) per run — the fraction of encounters in which any pair lost separation.
+
+        The quantity the old ``p_los`` reported, renamed: it is one of three normalisations now
+        (see :attr:`p_los_ac`, :attr:`mean_k`). At N = 2 the three coincide.
+        """
         return self.n_los / self.n_encounters if self.n_encounters else float("nan")
+
+    @property
+    def p_los_ac(self) -> float:
+        """P(LoS) per aircraft (Blom & Bakker 2015) — the headline: the aircraft that lost
+        separation over the aircraft that flew, ``Σ A / (n_encounters · N)``. Unlike
+        :attr:`p_los_run` it does not saturate as the fleet grows; at N = 2 it equals it exactly.
+        """
+        denom = self.n_encounters * self.n_aircraft
+        return self.sum_a / denom if denom else float("nan")
+
+    @property
+    def mean_k(self) -> float:
+        """E[K] — the mean losing pairs per run, ``Σ K / n_encounters``. A frequency, not a
+        probability (unbounded above by 1); at N = 2 it equals :attr:`p_los_run`.
+        """
+        return self.sum_k / self.n_encounters if self.n_encounters else float("nan")
 
     @property
     def median_min_sep(self) -> float:
@@ -130,17 +153,8 @@ class IPRResult:
         return statistics.median(self.min_seps) if self.min_seps else float("nan")
 
     @property
-    def ipr(self) -> float:
-        """The intrusion-prevention rate, ``1 - P(LoS)`` — the papers' reported metric.
-
-        Derived, not stored, so it cannot drift out of step with the counts (the same reason
-        :class:`~opencdarr.state.AircraftState` does not store velocity components).
-        """
-        return 1.0 - self.p_los
-
-    @property
     def ci95(self) -> tuple[float, float]:
-        """95% Wilson interval for :attr:`p_los`. Subtract from 1 (and swap) for one on the IPR."""
+        """95% Wilson interval for :attr:`p_los_run` (its per-run binomial)."""
         return wilson_interval(self.n_los, self.n_encounters)
 
     @property
@@ -155,28 +169,31 @@ class IPRResult:
         return self.n_conflict / self.n_encounters if self.n_encounters else float("nan")
 
 
-def combine_ipr(results: Sequence[IPRResult]) -> IPRResult:
+def combine_p_los(results: Sequence[MonteCarloEstimate]) -> MonteCarloEstimate:
     """Pool chunked runs into the result a single serial run over the same encounters would give.
 
     The rates are ratios, so they are recomputed from the pooled counts rather than averaged —
     averaging per-chunk ratios would weight a chunk of few encounters as heavily as one of many.
     Summing counts is exact here because every chunk is a disjoint slice of the same encounter
-    fan-out (see :func:`estimate_ipr`'s ``seqs``).
+    fan-out (see :func:`estimate_p_los`'s ``seqs``).
 
     The per-encounter records concatenate in argument order, which reproduces the serial run's
     order when the chunks are passed in the order their slices were taken — the ``children(root,
-    lo, hi)`` convention :func:`estimate_ipr` documents. Order does not affect
-    :attr:`~IPRResult.median_min_sep` or any other aggregate, so a caller who pools out of order
-    still gets the right numbers; it only affects which encounter is which if they index in.
+    lo, hi)`` convention :func:`estimate_p_los` documents. Order does not affect
+    :attr:`~MonteCarloEstimate.median_min_sep` or any other aggregate, so a caller who pools out
+    of order gets the right numbers; it only affects which encounter is which if they index in.
     """
-    return IPRResult(
+    return MonteCarloEstimate(
         min_seps=tuple(s for r in results for s in r.min_seps),
         n_los=sum(r.n_los for r in results),
         n_conflict=sum(r.n_conflict for r in results),
+        sum_k=sum(r.sum_k for r in results),
+        sum_a=sum(r.sum_a for r in results),
+        n_aircraft=results[0].n_aircraft if results else 0,
     )
 
 
-def estimate_ipr(
+def estimate_p_los(
     config: Config,
     perf: Performance,
     detector: ConflictDetector,
@@ -195,7 +212,7 @@ def estimate_ipr(
     side: int | Draw | None = None,
     gs_intr: float | Draw | None = None,
     seqs: Sequence[np.random.SeedSequence] | None = None,
-) -> IPRResult:
+) -> MonteCarloEstimate:
     """Run the plain-MC estimate over ``config.n_encounters`` sampled encounters.
 
     ``kinematics`` is the airframe both aircraft fly (``None`` = the fleet default
@@ -220,13 +237,16 @@ def estimate_ipr(
     ``seqs`` overrides which per-encounter substreams to run, defaulting to the whole fan-out
     ``spawn(root_seed_sequence(config.seed), config.n_encounters)``. It exists so a caller can run
     *contiguous slices* of that same fan-out in parallel — ``children(root, lo, hi)``,
-    :mod:`opencdarr.rng` — and pool them with :func:`combine_ipr` for a result bit-identical to the
-    serial run. That is the reproducible way to chunk; offsetting the seed per chunk (``seed + i``)
-    is not, because those trees can correlate and their union is not the serial run's tree at all.
+    :mod:`opencdarr.rng` — and pool them with :func:`combine_p_los` for a result bit-identical to
+    the serial run. That is the reproducible way to chunk; offsetting the seed per chunk
+    (``seed + i``) is not, because those trees can correlate and their union is not the serial
+    run's tree at all.
     """
     min_seps: list[float] = []
     n_conflict = 0
     n_los = 0
+    sum_k = 0
+    sum_a = 0
     encounters = (
         spawn(root_seed_sequence(config.seed), config.n_encounters) if seqs is None else seqs
     )
@@ -295,5 +315,10 @@ def estimate_ipr(
         min_seps.append(outcome.min_sep)
         n_conflict += int(outcome.conflict)
         n_los += int(outcome.los)
+        sum_k += outcome.n_los_pairs
+        sum_a += outcome.n_los_aircraft
 
-    return IPRResult(min_seps=tuple(min_seps), n_los=n_los, n_conflict=n_conflict)
+    return MonteCarloEstimate(
+        min_seps=tuple(min_seps), n_los=n_los, n_conflict=n_conflict,
+        sum_k=sum_k, sum_a=sum_a, n_aircraft=2,  # pairwise; the builder step sets len(agents)
+    )

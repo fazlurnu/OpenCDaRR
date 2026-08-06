@@ -19,7 +19,7 @@ from opencdarr.config import (
 )
 from opencdarr.cr import MVP
 from opencdarr.crr import PastCPA
-from opencdarr.estimator import IPRResult, combine_ipr, estimate_ipr, wilson_interval
+from opencdarr.estimator import MonteCarloEstimate, combine_p_los, estimate_p_los, wilson_interval
 from opencdarr.kinematics import Kinematics, MotionCommand
 from opencdarr.kinematics.base import odometry_update
 from opencdarr.performance import M600, Performance
@@ -53,8 +53,8 @@ def _noisy_config(seed: int = 1, n: int = 200) -> Config:
 
 def test_ipr_is_reproducible() -> None:
     cfg = _config()
-    r1 = estimate_ipr(cfg, M600, StateBased(), MVP(1.05), PastCPA())
-    r2 = estimate_ipr(cfg, M600, StateBased(), MVP(1.05), PastCPA())
+    r1 = estimate_p_los(cfg, M600, StateBased(), MVP(1.05), PastCPA())
+    r2 = estimate_p_los(cfg, M600, StateBased(), MVP(1.05), PastCPA())
     assert r1 == r2
 
 
@@ -65,11 +65,11 @@ def test_every_sampled_encounter_is_detected_in_this_config() -> None:
     ``dcpa_max <= rpz`` config check). Whether the *detector* also flags it depends on the
     lookahead: with ``tlos=60 < t_lookahead=120`` the conflict is inside the horizon from ``t =
     0``, so all of them are. Spawn outside the horizon and this legitimately drops below 1 — which
-    is exactly why ``n_conflict`` is a diagnostic and not the denominator of ``p_los``.
+    is exactly why ``n_conflict`` is a diagnostic and not the denominator of ``p_los_run``.
     """
     cfg = _config()
     assert cfg.scenario.tlos < cfg.conflict.t_lookahead  # the precondition doing the work here
-    result = estimate_ipr(cfg, M600, StateBased(), MVP(1.05), PastCPA())
+    result = estimate_p_los(cfg, M600, StateBased(), MVP(1.05), PastCPA())
     assert result.n_conflict == cfg.n_encounters
     assert result.detection_rate == 1.0
     assert result.n_encounters == cfg.n_encounters
@@ -87,33 +87,36 @@ def test_chunked_run_pools_back_to_the_serial_estimate() -> None:
     would also do if the chunks were concatenated backwards.
     """
     cfg = _config(n=120)
-    whole = estimate_ipr(cfg, M600, StateBased(), MVP(1.05), PastCPA())
+    whole = estimate_p_los(cfg, M600, StateBased(), MVP(1.05), PastCPA())
     for jobs in (1, 3, 7):  # 7 divides 120 unevenly, so the bounds are ragged
         bounds = [(120 * i // jobs, 120 * (i + 1) // jobs) for i in range(jobs)]
-        pooled = combine_ipr([
-            estimate_ipr(cfg, M600, StateBased(), MVP(1.05), PastCPA(),
+        pooled = combine_p_los([
+            estimate_p_los(cfg, M600, StateBased(), MVP(1.05), PastCPA(),
                          seqs=children(root_seed_sequence(cfg.seed), lo, hi))
             for lo, hi in bounds if hi > lo
         ])
         assert pooled == whole
 
 
-def test_combine_ipr_recomputes_the_ratio_from_pooled_counts() -> None:
+def test_combine_p_los_recomputes_the_ratio_from_pooled_counts() -> None:
     """The rates are ratios, so chunks pool by counts — not by averaging their per-chunk ratios."""
-    pooled = combine_ipr([IPRResult(min_seps=(10.0, 60.0), n_los=1, n_conflict=2),
-                          IPRResult(min_seps=(70.0,) * 98, n_los=0, n_conflict=98)])
+    a = MonteCarloEstimate(min_seps=(10.0, 60.0), n_los=1, n_conflict=2,
+                           sum_k=1, sum_a=2, n_aircraft=2)
+    b = MonteCarloEstimate(min_seps=(70.0,) * 98, n_los=0, n_conflict=98,
+                           sum_k=0, sum_a=0, n_aircraft=2)
+    pooled = combine_p_los([a, b])
     assert pooled.n_encounters == 100
     assert pooled.n_los == 1
-    assert pooled.ipr == 0.99  # not (0.5 + 1.0) / 2 = 0.75, the per-chunk average
+    assert pooled.p_los_run == 0.01  # not (0.5 + 0.0) / 2 = 0.25, the per-chunk average
 
 
-def test_resolution_raises_ipr_far_above_baseline() -> None:
+def test_resolution_cuts_p_los_far_below_baseline() -> None:
     cfg = _config()
-    resolved = estimate_ipr(cfg, M600, StateBased(), MVP(1.05), PastCPA())
-    baseline = estimate_ipr(cfg, M600, StateBased(), None, None)
-    assert resolved.ipr > 0.9  # good CDR prevents nearly all LoS
-    assert baseline.ipr < 0.2  # no resolution -> nearly all conflicts become LoS
-    assert resolved.ipr > baseline.ipr
+    resolved = estimate_p_los(cfg, M600, StateBased(), MVP(1.05), PastCPA())
+    baseline = estimate_p_los(cfg, M600, StateBased(), None, None)
+    assert resolved.p_los_run < 0.1   # good CDR prevents nearly all LoS
+    assert baseline.p_los_run > 0.8   # no resolution -> nearly all conflicts become LoS
+    assert resolved.p_los_run < baseline.p_los_run
 
 
 def test_golden_ipr_at_midrange_noise() -> None:
@@ -125,12 +128,13 @@ def test_golden_ipr_at_midrange_noise() -> None:
     ``run_fleet`` at n=2 — has to prove it changed nothing. Update these values only alongside a
     deliberate, recorded modelling change.
     """
-    result = estimate_ipr(
+    result = estimate_p_los(
         _noisy_config(), M600, StateBased(), MVP(1.05), PastCPA(bouncing_guard=False),
         GnssNavigation(),
     )
     assert (result.n_los, result.n_conflict) == (22, 200)
-    assert result.ipr == 0.89
+    assert result.p_los_run == 0.11  # 22/200 — was `ipr == 0.89` before the per-aircraft rename
+    assert result.p_los_ac == result.p_los_run == result.mean_k  # N=2: the three coincide
     # rel=1e-8, not ==: trig calls accumulated over many steps land on a different last bit
     # depending on the platform's libm (e.g. macOS vs glibc), even with identical code and seed.
     assert result.median_min_sep == pytest.approx(126.45469556207351, rel=1e-8)
@@ -139,7 +143,7 @@ def test_golden_ipr_at_midrange_noise() -> None:
 def test_min_seps_is_the_record_p_los_was_thresholded_from() -> None:
     """``n_los`` is recoverable from ``min_seps`` — the two are one measurement, not two.
 
-    ``IPRResult`` now stores both a per-encounter separation and a LoS count, which would be the
+    ``MonteCarloEstimate`` now stores a per-encounter separation and a LoS count, which would be the
     same fact written down twice if they could ever disagree. They cannot, and this is why:
     ``FleetEnv.advance`` accumulates ``min_sep`` and ``los`` from the *same* per-step segment
     minimum (``los = state.los or cur < rpz``, ``min_sep = min(state.min_sep, cur)``), so
@@ -151,7 +155,7 @@ def test_min_seps_is_the_record_p_los_was_thresholded_from() -> None:
     ``pos_ci95=0`` both sides are 0, which any broken implementation satisfies.
     """
     for cfg in (_config(), _noisy_config()):
-        result = estimate_ipr(
+        result = estimate_p_los(
             cfg, M600, StateBased(), MVP(1.05), PastCPA(bouncing_guard=False), GnssNavigation(),
         )
         assert len(result.min_seps) == cfg.n_encounters == result.n_encounters
@@ -173,11 +177,12 @@ def test_median_min_sep_separates_resolvers_p_los_cannot() -> None:
     tuned to the run rather than a property of the resolver.
     """
     cfg = _config()
-    results = [estimate_ipr(cfg, M600, StateBased(), MVP(m), PastCPA()) for m in (1.05, 1.5, 2.0)]
-    assert all(r.p_los == 0.0 for r in results)  # the premise: p_los cannot tell these apart
+    results = [estimate_p_los(cfg, M600, StateBased(), MVP(m), PastCPA())
+               for m in (1.05, 1.5, 2.0)]
+    assert all(r.p_los_run == 0.0 for r in results)  # premise: p_los_run can't tell them apart
     medians = [r.median_min_sep for r in results]
     assert medians == sorted(medians)
-    assert medians[0] > cfg.conflict.rpz  # a median inside the PZ would contradict p_los == 0
+    assert medians[0] > cfg.conflict.rpz  # a median inside the PZ would contradict p_los_run == 0
 
 
 def test_denominator_does_not_move_with_the_resolver() -> None:
@@ -199,8 +204,8 @@ def test_denominator_does_not_move_with_the_resolver() -> None:
     )
     assert cfg.scenario.tlos > cfg.conflict.t_lookahead  # spawned outside the horizon
 
-    resolved = estimate_ipr(cfg, M600, StateBased(), MVP(1.05), PastCPA(), GnssNavigation())
-    unresolved = estimate_ipr(cfg, M600, StateBased(), None, None, GnssNavigation())
+    resolved = estimate_p_los(cfg, M600, StateBased(), MVP(1.05), PastCPA(), GnssNavigation())
+    unresolved = estimate_p_los(cfg, M600, StateBased(), None, None, GnssNavigation())
 
     # the denominator is the same in both, whatever CDR did
     assert resolved.n_encounters == unresolved.n_encounters == cfg.n_encounters
@@ -208,8 +213,7 @@ def test_denominator_does_not_move_with_the_resolver() -> None:
     assert unresolved.detection_rate == 1.0
     assert resolved.detection_rate < 1.0
     # and the safety comparison is still the right way round, on a denominator neither run chose
-    assert resolved.p_los < unresolved.p_los
-    assert resolved.ipr == 1.0 - resolved.p_los
+    assert resolved.p_los_run < unresolved.p_los_run
 
 
 def test_wilson_interval_brackets_the_estimate_and_survives_zero_events() -> None:
@@ -272,12 +276,12 @@ def test_kinematics_reaches_the_mc_path() -> None:
     dropped again, the first equality is what breaks.
     """
     cfg = _config()
-    fitted = estimate_ipr(
+    fitted = estimate_p_los(
         cfg, M600, StateBased(), MVP(1.05), PastCPA(), kinematics=_Ballistic()
     )
-    unresolved = estimate_ipr(cfg, M600, StateBased(), None, None)
-    resolved = estimate_ipr(cfg, M600, StateBased(), MVP(1.05), PastCPA())
+    unresolved = estimate_p_los(cfg, M600, StateBased(), None, None)
+    resolved = estimate_p_los(cfg, M600, StateBased(), MVP(1.05), PastCPA())
 
     assert fitted == unresolved  # the airframe discarded every resolution command
     assert resolved.n_los == 0  # the same conflicts, resolved, on the default airframe
-    assert fitted.ipr < resolved.ipr
+    assert fitted.p_los_run > resolved.p_los_run

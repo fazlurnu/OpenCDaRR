@@ -29,7 +29,7 @@ sampler boundary it collapses to a pinned value; that is why sweeping needs no s
 
 **Marginalising a distribution over an axis is not here.** Estimating ``E_p[P(LoS)]`` for some
 ``p(dpsi)`` is a *reduction over* a swept response curve (weight the per-condition estimates), and
-weighting rates rather than counts is the mistake :func:`~opencdarr.estimator.combine_ipr` exists
+weighting rates rather than counts is the mistake :func:`~opencdarr.estimator.combine_p_los` exists
 to warn about. Sweep the axis, then weight the counts yourself, until that reduction earns a home.
 
 **The file-driven entry point lives here too.** :func:`run_one_experiment` takes a YAML-loaded
@@ -62,7 +62,7 @@ from opencdarr.config import Config
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr import ProbabilisticFTR
 from opencdarr.crr.base import RecoveryCriterion
-from opencdarr.estimator import IPRResult, estimate_ipr
+from opencdarr.estimator import MonteCarloEstimate, estimate_p_los
 from opencdarr.fleet import Agent, Airframe, build_env
 from opencdarr.ips import Particle, RareEventEstimate, estimate_rare_prob
 from opencdarr.kinematics import Kinematics
@@ -220,7 +220,7 @@ class Methods:
     ``wind`` is the odd one out: it is a steady environment input rather than a pluggable model, so
     it has no ABC and lives here for the same reason ``perf`` does — the run needs it and no
     scenario field carries it. It reaches **both** backends; it previously reached neither, because
-    :func:`~opencdarr.estimator.estimate_ipr` and :func:`~opencdarr.fleet.build_env` both accept a
+    :func:`~opencdarr.estimator.estimate_p_los` and :func:`~opencdarr.fleet.build_env` accept a
     ``wind`` this module never passed.
     """
 
@@ -390,12 +390,12 @@ def _validate_declared_accuracy_is_read(
 
 
 def _run_mc(condition: Condition, base: Config, methods: Methods, backend: MC,
-            seed: int) -> IPRResult:
-    """One MC cell: ``estimate_ipr`` over this condition's config, components and geometry pins."""
+            seed: int) -> MonteCarloEstimate:
+    """One MC cell: ``estimate_p_los`` over this condition's config, components and geometry."""
     cfg = _config_for(condition, base, backend.n_encounters)
     m = _resolved_methods(condition, methods)
     geometry = {k: v for k, v in dict(condition.values).items() if k in _GEOMETRY_SLOTS}
-    return estimate_ipr(
+    return estimate_p_los(
         dataclasses.replace(cfg, seed=seed),
         _base_perf(m),
         m.detector, m.resolver, m.recovery, m.navigation, m.communication, m.surveillance,
@@ -661,7 +661,7 @@ class ExperimentResult:
     backend: Backend
     seed: int
     conditions: tuple[Condition, ...]
-    results: tuple[Any, ...]  # IPRResult per condition, or RareEventEstimate per condition
+    results: tuple[Any, ...]  # MonteCarloEstimate or RareEventEstimate, one per condition
     axes: tuple[str, ...]  # the swept column names, declaration order
     card_path: Path | None = None  # the provenance card, when one was written
 
@@ -688,7 +688,7 @@ class ExperimentResult:
             ) from exc
         return pd.DataFrame(self.records())
 
-    def plot(self, metric: str = "p_los", *, ax: Any = None, log: bool | None = None) -> Any:
+    def plot(self, metric: str = "p_los_run", *, ax: Any = None, log: bool | None = None) -> Any:
         """The response curve: the first swept axis on x, the rest as one line each, CI as a band.
 
         Layout comes from the axis roles, so nothing has to be restated: the first :class:`Sweep`
@@ -794,13 +794,14 @@ def _metrics(result: Any) -> dict[str, Any]:
     near-LoS, silently mislabelled. (Conditional-on-the-rare-set quantities *are* available from
     IPS; item 8 of the build order is where they belong.)
     """
-    if isinstance(result, IPRResult):
+    if isinstance(result, MonteCarloEstimate):
         lo, hi = result.ci95
         return {
-            "p_los": result.p_los,
-            "p_los_lo": lo,
-            "p_los_hi": hi,
-            "ipr": result.ipr,
+            "p_los_ac": result.p_los_ac,
+            "p_los_run": result.p_los_run,
+            "mean_k": result.mean_k,
+            "p_los_run_lo": lo,
+            "p_los_run_hi": hi,
             "median_min_sep": result.median_min_sep,
             "n_los": result.n_los,
             "n_encounters": result.n_encounters,
@@ -808,9 +809,10 @@ def _metrics(result: Any) -> dict[str, Any]:
         }
     lo, hi = result.ci
     return {
-        "p_los": result.prob,
-        "p_los_lo": lo,
-        "p_los_hi": hi,
+        # IPS reports the per-run probability natively; per-aircraft waits on the tail leg
+        "p_los_run": result.prob,
+        "p_los_run_lo": lo,
+        "p_los_run_hi": hi,
         "n_collapsed": result.n_collapsed,
         "reps": len(result.reps),
     }
@@ -991,8 +993,8 @@ def run_one_experiment(
 
     The all-:class:`Fixed`, one-condition case of :func:`run_experiment`, with the components named
     as strings and resolved through :mod:`opencdarr.registry`. Nothing is declared as an axis, so
-    the result has one row; ``res.cell()`` reaches the :class:`~opencdarr.estimator.IPRResult`
-    behind it.
+    the result has one row; ``res.cell()`` reaches the
+    :class:`~opencdarr.estimator.MonteCarloEstimate` behind it.
 
     Kept as its own entry point because a config file is *committable and diffable* in a way a
     Python call is not — ``config + seed + code-hash -> result`` without writing code. It is a thin

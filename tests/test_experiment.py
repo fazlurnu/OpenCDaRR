@@ -36,7 +36,7 @@ from opencdarr.config import (
 from opencdarr.cr import MVP, VO
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr import PastCPA, ProbabilisticFTR
-from opencdarr.estimator import IPRResult
+from opencdarr.estimator import MonteCarloEstimate
 from opencdarr.experiment import (
     IPS,
     MC,
@@ -162,8 +162,9 @@ def test_columns_adapt_to_the_backend() -> None:
                     backend=IPS(shells=[70.0, 60.0, 50.0], n_particles=20, reps=2),
                     base_config=_base(), seed=0).records()[0]
 
-    assert {"p_los", "p_los_lo", "p_los_hi"} <= set(mc) & set(ips)  # the shared core
-    assert {"n_encounters", "n_los", "ipr", "detection_rate", "median_min_sep"} <= set(mc)
+    assert {"p_los_run", "p_los_run_lo", "p_los_run_hi"} <= set(mc) & set(ips)  # the shared core
+    assert {"n_encounters", "n_los", "p_los_ac", "mean_k", "detection_rate",
+            "median_min_sep"} <= set(mc)
     assert "n_collapsed" not in mc
     assert {"n_collapsed", "reps"} <= set(ips)
     assert not {"n_encounters", "median_min_sep"} & set(ips)
@@ -174,7 +175,7 @@ def test_cell_returns_the_raw_estimator_result() -> None:
     res = run_experiment({**_PINNED, "dpsi": Sweep([45.0, 90.0])}, methods=_methods(),
                     backend=MC(n_encounters=20), base_config=_base(), seed=0)
     got = res.cell(dpsi=90.0)
-    assert isinstance(got, IPRResult)
+    assert isinstance(got, MonteCarloEstimate)
     assert got.n_encounters == 20
 
     with pytest.raises(KeyError, match="matches 0 conditions"):
@@ -258,8 +259,8 @@ def test_a_contributed_airframe_reaches_both_backends() -> None:
 
     mc = run_experiment(_SAFE, methods=fitted, backend=MC(n_encounters=30),
                    base_config=_base(), seed=0).cell()
-    assert isinstance(mc, IPRResult)
-    assert mc.p_los > 0.9, "MC ignored the contributed airframe"
+    assert isinstance(mc, MonteCarloEstimate)
+    assert mc.p_los_run > 0.9, "MC ignored the contributed airframe"
 
     ips = run_experiment(_SAFE, methods=fitted, backend=_SHELLS,
                     base_config=_base(), seed=0).cell()
@@ -276,7 +277,8 @@ def test_a_contributed_resolver_reaches_both_backends() -> None:
     identical geometry and seed, which prevents nearly all of them. Runs on ``_QUIET`` — see the
     note there on why a noisy self-fix would hand the passive resolver accidental avoidance.
     """
-    for backend, read in ((MC(n_encounters=20), lambda r: r.p_los), (_SHELLS, lambda r: r.prob)):
+    reads = ((MC(n_encounters=20), lambda r: r.p_los_run), (_SHELLS, lambda r: r.prob))
+    for backend, read in reads:
         name = type(backend).__name__
         passive = run_experiment(_QUIET, methods=_methods(resolver=_Passive()), backend=backend,
                             base_config=_base(), seed=0).cell()
@@ -415,7 +417,7 @@ def test_a_swept_component_reaches_the_cache_key(tmp_path: Path) -> None:
     kw = dict(methods=_methods(), backend=MC(n_encounters=40), base_config=_base(), seed=0)
 
     uncached = run_experiment(declared, **kw).records()
-    assert uncached[0]["p_los"] != uncached[1]["p_los"], "the two levels must be distinguishable"
+    assert uncached[0]["p_los_run"] != uncached[1]["p_los_run"], "levels must differ"
     assert run_experiment(declared, cache=cc, **kw).records() == uncached  # cold: writes
     assert run_experiment(declared, cache=cc, **kw).records() == uncached  # warm: reads back
     assert len(list((tmp_path / "cache").glob("*.pkl"))) == 2
@@ -454,10 +456,10 @@ def test_plot_lays_itself_out_from_the_axis_roles() -> None:
     matplotlib.use("Agg")
     res = run_experiment({**_PINNED, "dpsi": Sweep([45.0, 90.0]), "pos_ci95": Sweep([10.0, 30.0])},
                     methods=_methods(), backend=MC(n_encounters=20), base_config=_base(), seed=0)
-    fig = res.plot("p_los")
+    fig = res.plot("p_los_run")
     ax = fig.axes[0]
     assert len(ax.lines) == 2  # one per pos_ci95 level
-    assert (ax.get_xlabel(), ax.get_ylabel()) == ("dpsi", "p_los")
+    assert (ax.get_xlabel(), ax.get_ylabel()) == ("dpsi", "p_los_run")
     assert ax.collections  # the CI bands
     assert not fig._suptitle  # house convention: detail belongs in the caption
     assert ax.get_yscale() == "linear"  # log is the IPS default, not MC's
@@ -624,7 +626,7 @@ def test_wind_reaches_both_backends(monkeypatch: pytest.MonkeyPatch) -> None:
     """**The third instance of one defect.** A run setting the estimators accept, and this module
     silently dropped.
 
-    ``estimate_ipr`` and ``build_env`` have both taken a ``wind`` since Phase 5, and
+    ``estimate_p_los`` and ``build_env`` have both taken a ``wind`` since Phase 5, and
     ``experiment.py`` passed it to neither — so a declared wind was ignored under MC *and* under
     IPS, and a wind sweep would have returned identical cells. Same shape as ``kinematics``
     reaching IPS but not MC (build-order item 2) and ``schedule`` reaching MC but not IPS (item

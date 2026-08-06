@@ -153,7 +153,7 @@ def sample_pairwise(
     distribution draws only afterwards. So pinning the crossing angle cannot shift the miss
     distance or the passing side, and the all-default call is bit-identical to the pre-override
     one. This is the same config-invariant-stream discipline the per-encounter substream fan-out
-    follows one level up (ADR 0006 §6, ``estimator.estimate_ipr``): draw the same things in the
+    follows one level up (ADR 0006 §6, ``estimator.estimate_p_los``): draw the same things in the
     same order regardless of which are used, so the tree never moves. The cost is a couple of
     discarded ``uniform`` calls.
 

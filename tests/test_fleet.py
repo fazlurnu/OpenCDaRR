@@ -107,7 +107,7 @@ def test_run_fleet_reduces_to_run_encounter_across_the_angle_sweep() -> None:
 def test_run_fleet_reduces_to_run_encounter_across_the_angle_sweep_noisy() -> None:
     """The same sweep under GNSS noise, on the **estimator's own substream layout**.
 
-    Mirrors ``estimate_ipr``'s per-encounter split — ``spawn(seq, 3)`` into geometry / navigation /
+    Mirrors ``estimate_p_los``'s split — ``spawn(seq, 3)`` into geometry / navigation /
     communication, always three regardless of which layers are live (ADR 0006 §6) — so this pins
     the exact wiring the MC estimator hands its runner. The geometry substream is spawned and left
     unread here because the geometry is pinned; that is the point of a config-invariant tree.

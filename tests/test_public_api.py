@@ -53,7 +53,7 @@ def test_the_contributor_path_imports() -> None:
         ProbabilisticFTR,
         RecoveryCriterion,
         StateBased,
-        estimate_ipr,
+        estimate_p_los,
         estimate_rare_prob,
         load_config,
         run_encounter,

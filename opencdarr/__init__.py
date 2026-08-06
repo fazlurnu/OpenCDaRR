@@ -14,7 +14,7 @@ level exports what a contributor needs to *write* one and *run* it against the b
 - **reference implementations** to compare against — ``StateBased``, ``MVP``, ``VO``,
   ``PastCPA``, ``FTR``, ``ProbabilisticFTR``, ``Multirotor``, ``FixedWing``,
   ``GnssNavigation``, ``Comm``, ``TransceiverComm``, ``LastKnown``;
-- **runners and estimators** — ``run_encounter``, ``run_fleet``, ``estimate_ipr``,
+- **runners and estimators** — ``run_encounter``, ``run_fleet``, ``estimate_p_los``,
   ``estimate_rare_prob``, ``run_one_experiment``;
 - **the values you construct** — ``AircraftState``, ``MotionCommand``, ``Performance``, ``Agent``,
   ``Config``, plus the scenario builders and the seeded-RNG helpers.
@@ -25,7 +25,7 @@ short path for the common case rather than a mirror of the whole tree.
 
     from opencdarr import ConflictResolver, MotionCommand   # write your own ...
     from opencdarr import MVP, StateBased, PastCPA, M600    # ... against these
-    from opencdarr import estimate_ipr, load_config         # ... and measure it
+    from opencdarr import estimate_p_los, load_config         # ... and measure it
 
 Both optional extras stay optional: ``matplotlib`` (via :mod:`opencdarr.viz`) and ``joblib`` (via
 :mod:`opencdarr.parallel`) are imported lazily inside the functions that need them, so
@@ -59,7 +59,7 @@ from opencdarr.crr.base import RecoveryCriterion
 from opencdarr.crr.ftr import FTR
 from opencdarr.crr.pastcpa import PastCPA
 from opencdarr.crr.probabilistic_ftr import ProbabilisticFTR
-from opencdarr.estimator import IPRResult, combine_ipr, estimate_ipr, wilson_interval
+from opencdarr.estimator import MonteCarloEstimate, combine_p_los, estimate_p_los, wilson_interval
 from opencdarr.experiment import (
     IPS,
     MC,
@@ -106,7 +106,7 @@ __all__ = [
     "Fixed",
     "FixedWing",
     "GnssNavigation",
-    "IPRResult",
+    "MonteCarloEstimate",
     "LastKnown",
     "M600",
     "Methods",
@@ -127,10 +127,10 @@ __all__ = [
     "TransceiverComm",
     "WindField",
     "__version__",
-    "combine_ipr",
+    "combine_p_los",
     "create_aircraft",
     "create_conflict",
-    "estimate_ipr",
+    "estimate_p_los",
     "estimate_rare_prob",
     "extract_tracks",
     "generator",
