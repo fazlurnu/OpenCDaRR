@@ -24,6 +24,9 @@ from __future__ import annotations
 
 import math
 
+LatLon = tuple[float, float]
+"""A ``(lat_deg, lon_deg)`` pair — the order every function here takes them in."""
+
 _WGS84_A = 6378137.0  # semi-major axis [m]
 _WGS84_B = 6356752.314245  # semi-minor axis [m]
 
@@ -86,3 +89,16 @@ def qdrdist(
     x = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dlon)
     qdr = math.degrees(math.atan2(y, x)) % 360.0
     return qdr, dist
+
+
+def enu(
+    origin_lat_deg: float, origin_lon_deg: float, lat_deg: float, lon_deg: float
+) -> tuple[float, float]:
+    """``(lat, lon)`` as (east, north) metres from the origin — the local tangent plane.
+
+    :func:`qdrdist` resolved into components: the bearing/distance pair as a flat east/north
+    offset, the frame measurement areas are tested in and recorded tracks are drawn in.
+    """
+    qdr, dist = qdrdist(origin_lat_deg, origin_lon_deg, lat_deg, lon_deg)
+    bearing = math.radians(qdr)
+    return dist * math.sin(bearing), dist * math.cos(bearing)

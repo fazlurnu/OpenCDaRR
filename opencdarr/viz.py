@@ -16,7 +16,6 @@ Two steps, kept apart so the numbers are reusable without a figure:
 
 from __future__ import annotations
 
-import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -31,8 +30,6 @@ from opencdarr.relative import pairwise_min_sep
 if TYPE_CHECKING:  # matplotlib is an optional (``examples``) dependency, imported lazily below.
     from matplotlib.axes import Axes
     from matplotlib.figure import Figure
-
-LatLon = tuple[float, float]
 
 Run = FleetOutcome | StatesLog | Sequence[FleetState]
 
@@ -49,13 +46,6 @@ def _frames(run: Run) -> tuple[FleetState, ...]:
     return frames
 
 
-def _enu(origin: LatLon, lat: float, lon: float) -> tuple[float, float]:
-    """(lat, lon) as (east, north) metres from ``origin`` — the frame the tracks are drawn in."""
-    qdr, dist = geo.qdrdist(origin[0], origin[1], lat, lon)
-    r = math.radians(qdr)
-    return dist * math.sin(r), dist * math.cos(r)
-
-
 @dataclass(frozen=True)
 class Tracks:
     """A recorded run reduced to plottable arrays, in one local east/north frame."""
@@ -65,7 +55,7 @@ class Tracks:
     tracks: tuple[NDArray[np.float64], ...]  # per aircraft, (T, 2) east/north [m] from ``origin``
     separation: NDArray[np.float64]  # (T,) instantaneous min pairwise separation [m]
     resolving: NDArray[np.bool_]  # (T,) bool — was any aircraft avoiding this tick?
-    origin: LatLon  # the (lat, lon) the east/north frame is centred on
+    origin: geo.LatLon  # the (lat, lon) the east/north frame is centred on
 
 
 def extract_tracks(run: Run) -> Tracks:
@@ -78,10 +68,10 @@ def extract_tracks(run: Run) -> Tracks:
     frames = _frames(run)
     n = len(frames[0].states)
     ids = tuple(ac.id for ac in frames[0].states)
-    origin: LatLon = (frames[0].states[0].lat, frames[0].states[0].lon)
+    origin: geo.LatLon = (frames[0].states[0].lat, frames[0].states[0].lon)
 
     tracks = tuple(
-        np.array([_enu(origin, f.states[k].lat, f.states[k].lon) for f in frames], dtype=float)
+        np.array([geo.enu(*origin, f.states[k].lat, f.states[k].lon) for f in frames], dtype=float)
         for k in range(n)
     )
     times = np.array([f.t for f in frames], dtype=float)

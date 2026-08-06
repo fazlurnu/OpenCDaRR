@@ -81,9 +81,7 @@ def _guidance_course(
 
 def _enu_from(lat: float, lon: float, point: tuple[float, float]) -> tuple[float, float]:
     """``point`` (lat, lon) as ENU ``(east, north)`` metres relative to ``(lat, lon)``."""
-    qdr, dist = geo.qdrdist(lat, lon, point[0], point[1])
-    r = math.radians(qdr)
-    return dist * math.sin(r), dist * math.cos(r)
+    return geo.enu(lat, lon, point[0], point[1])
 
 
 def _loiter_course(lat: float, lon: float, center: tuple[float, float], radius: float) -> float:

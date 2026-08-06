@@ -26,15 +26,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from opencdarr import geo
-
-LatLon = tuple[float, float]
-
-
-def _enu(origin: LatLon, point: LatLon) -> tuple[float, float]:
-    """``point`` as (east, north) metres from ``origin`` — the local tangent plane."""
-    qdr, dist = geo.qdrdist(origin[0], origin[1], point[0], point[1])
-    bearing = math.radians(qdr)
-    return dist * math.sin(bearing), dist * math.cos(bearing)
+from opencdarr.geo import LatLon
 
 
 class MeasurementArea(ABC):
@@ -102,7 +94,7 @@ class Rectangle(MeasurementArea):
         return cls(centre=centre, width=side, height=side)
 
     def contains(self, lat: float, lon: float) -> bool:
-        east, north = _enu(self.centre, (lat, lon))
+        east, north = geo.enu(*self.centre, lat, lon)
         return abs(east) <= self.width / 2 and abs(north) <= self.height / 2
 
     def area(self) -> float:
@@ -127,10 +119,10 @@ class Polygon(MeasurementArea):
 
     def _plane(self) -> list[tuple[float, float]]:
         origin = self.vertices[0]
-        return [_enu(origin, v) for v in self.vertices]
+        return [geo.enu(*origin, *v) for v in self.vertices]
 
     def contains(self, lat: float, lon: float) -> bool:
-        x, y = _enu(self.vertices[0], (lat, lon))
+        x, y = geo.enu(*self.vertices[0], lat, lon)
         ring = self._plane()
         inside = False
         for (x1, y1), (x2, y2) in zip(ring, ring[1:] + ring[:1], strict=True):

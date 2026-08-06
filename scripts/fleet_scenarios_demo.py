@@ -22,7 +22,6 @@ Writes ``vault/observations/img/fleet-scenarios.png``.
 
 from __future__ import annotations
 
-import math
 from dataclasses import replace
 from pathlib import Path
 
@@ -65,9 +64,7 @@ class _Sim:
 
 
 def _enu(lat: float, lon: float) -> tuple[float, float]:
-    qdr, dist = geo.qdrdist(LAT0, LON0, lat, lon)
-    r = math.radians(qdr)
-    return dist * math.sin(r), dist * math.cos(r)
+    return geo.enu(LAT0, LON0, lat, lon)
 
 
 def _all_clear(states: list[AircraftState], mems: list[FleetMemory]) -> bool:

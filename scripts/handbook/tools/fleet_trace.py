@@ -7,12 +7,11 @@ run ``run_fleet`` scores — any handbook figure that plots a fleet encounter ca
 it (``python scripts/handbook/tools/fleet_trace.py``) asserts the min-sep it records equals
 ``run_fleet``'s, on both a clean and a noisy run, so the two cannot drift apart unnoticed.
 
-    from scripts.handbook.tools.fleet_trace import run_fleet_traced, enu
+    from scripts.handbook.tools.fleet_trace import run_fleet_traced
 """
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field, replace
 
 import numpy as np
@@ -26,21 +25,14 @@ from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr.base import RecoveryCriterion
 from opencdarr.fleet import Agent, _all_clear, _setpoint_adapter
 from opencdarr.kinematics import Kinematics, Multirotor
-from opencdarr.relative import pairwise_min_sep
+from opencdarr.relative import pairwise_min_sep, pairwise_relative, segment_min_sep
 from opencdarr.separation import INACTIVE, FleetMemory, SeparationManager
 from opencdarr.state import AircraftState, DesiredVelocity
 
 _DEFAULT_KINEMATICS = Multirotor()
 
-LatLon = tuple[float, float]
+LatLon = geo.LatLon
 Point = tuple[float, float]
-
-
-def enu(origin: LatLon, lat: float, lon: float) -> Point:
-    """(lat, lon) as (east, north) metres from ``origin`` — the frame the tracks are plotted in."""
-    qdr, dist = geo.qdrdist(origin[0], origin[1], lat, lon)
-    r = math.radians(qdr)
-    return dist * math.sin(r), dist * math.cos(r)
 
 
 @dataclass
@@ -51,11 +43,14 @@ class FleetTrace:
     tracks: list[list[Point]] = field(default_factory=list)  # per aircraft, ENU from the origin
     min_sep: list[float] = field(default_factory=list)  # min pairwise separation each tick [m]
     resolving: list[bool] = field(default_factory=list)  # was any aircraft avoiding this tick?
+    worst: float = float("inf")  # min over whole steps (segment minima), not sampled ticks
 
     @property
     def worst_sep(self) -> float:
-        """The run's minimum separation — equal to ``run_fleet(...).min_sep``."""
-        return min(self.min_sep)
+        """The run's minimum separation, measured over whole steps like ``run_fleet`` — equal to
+        ``run_fleet(...).min_sep``. The per-tick ``min_sep`` history samples instants and can only
+        read *more* separation than this (the endpoint-sampling bias the segment minimum fixes)."""
+        return self.worst
 
     def first_resolving(self) -> float | None:
         """The time the first avoidance began (when the conflict was acted on), or ``None``."""
@@ -107,7 +102,7 @@ def run_fleet_traced(
     while t < t_max:
         tr.t.append(t)
         for i in range(n):
-            tr.tracks[i].append(enu(origin, states[i].lat, states[i].lon))
+            tr.tracks[i].append(geo.enu(*origin, states[i].lat, states[i].lon))
         tr.min_sep.append(pairwise_min_sep(states))
         tr.resolving.append(any(m.resolving for m in mems))
 
@@ -120,7 +115,9 @@ def run_fleet_traced(
                                             detector, resolver, recovery, adapters[i])
             next_bcast += broadcast_interval
 
+        rel_pre = pairwise_relative(states)
         states = [kinematics[i].step(states[i], cmds[i], perfs[i], dt) for i in range(n)]
+        tr.worst = min(tr.worst, segment_min_sep(rel_pre, pairwise_relative(states)))
         t += dt
         done_timer = done_timer + dt if _all_clear(states, mems, rpz) else 0.0
         if done_timer >= done_timeout:
