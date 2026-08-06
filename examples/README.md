@@ -86,6 +86,15 @@ above — one module per notebook — and several of them generate the figures t
   at every density — `FTR` resumes as soon as reverting is clear, so the fleet rides the boundary
   and traffic density barely registers. Uncertainty of this size mostly *adds* margin through
   over-avoidance, and only turns over at the top of the range.
+- [`handbook/ips_ladder.ipynb`](handbook/ips_ladder.ipynb) — where to put the shells a rare-event
+  run splits on, and what a good ladder is worth. A short pilot per geometry shows the quantity that
+  decides a ladder: not the probability but the distance from where encounters usually end down to
+  `rpz`, which runs from 127 m for a crossing pair to 1.3 m for a converging ring whose usual result
+  is already inside the protected zone. Builds a ladder from that pilot, then walks into the trap —
+  fixing the *number* of shells leaves a final step to `rpz` larger than every step before it, and
+  the notebook flies both ladders to show the cloud dying on exactly that step. Closes on what
+  calibration is and is not worth: the same answer from two shells instead of seven, but no more
+  reliable than a ladder picked by hand. Text in ASD-STE100 Simplified Technical English.
 - [`handbook/rare_event_mc_vs_ips.ipynb`](handbook/rare_event_mc_vs_ips.ipynb) — the rare-event
   gate: plain Monte Carlo and interacting particle splitting on the *same* declaration, walked down
   one knob (GNSS self-noise) from P(LoS) ~ 3e-2 to ~3e-4. The anchor rung is the point — MC has
