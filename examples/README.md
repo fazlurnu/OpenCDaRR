@@ -86,6 +86,18 @@ above — one module per notebook — and several of them generate the figures t
   at every density — `FTR` resumes as soon as reverting is clear, so the fleet rides the boundary
   and traffic density barely registers. Uncertainty of this size mostly *adds* margin through
   over-avoidance, and only turns over at the top of the range.
+- [`handbook/p_los_metrics.ipynb`](handbook/p_los_metrics.ipynb) — the two ways the estimator
+  counts a loss of separation, and when they disagree. `p_los_run` divides the runs that have a
+  loss by all the runs; `p_los_ac` divides the aircraft that lose separation by the aircraft that
+  fly (Blom & Bakker 2015). At two aircraft they are one number, which is why every pairwise result
+  is unchanged. At three they are not: two aircraft cross while a third stays clear, and only the
+  per-aircraft value gives that third aircraft any credit. A second three-aircraft run puts the
+  losses in a chain (A-B and B-C, with A-C clear) to show how `K` counts pairs while `A` counts
+  aircraft — the middle aircraft is in two losing pairs but is counted once. Both runs report
+  `p_los_run = 1`, so that metric cannot tell them apart at all. A sweep over independent pairs then
+  shows the per-run value climbing to 1 while the per-aircraft one stays flat — the saturation that
+  makes a per-run rate useless for comparing resolvers in dense traffic. Text in ASD-STE100
+  Simplified Technical English.
 - [`handbook/mixed_fleet.ipynb`](handbook/mixed_fleet.ipynb) — a multirotor against a small
   fixed-wing in one encounter: `Airframe` bundles each aircraft's envelope with its integrator, and
   `Methods(airframes=[...])` declares one per aircraft. Runs the same declaration under `MC` and
