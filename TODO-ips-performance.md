@@ -71,12 +71,29 @@ computed that step. `dataclasses.replace` churn is another ~15 %.
       symmetry to share. (And `qdrdist` uses `earth_radius(lat1)`, so even the true-state pair
       is not bit-symmetric — the halving would have been boundary-equivalent, not identical.)
       That cost belongs to the vectorisation below or a separation-layer redesign.
-- [ ] Flat-ENU fast path for the O(n²) inner loop: one tangent-plane projection per aircraft per
-      step, pair math in metres — needs the error argument at the ~1 km scale these scenarios
-      span (it will be far below the 40 m noise floor, but write it down).
-- [ ] Vectorise the pairwise geometry: one numpy matrix operation over all pairs instead of the
-      Python loop — condensed upper-triangle form (pdist-shaped), since the matrix is symmetric.
-      This is a rewrite of the hottest path; profile before/after on the same ring probe.
+- [ ] **Flat-ENU fast path — benchmarked 2026-08-07, gain confirmed, adoption deferred (user:
+      "maybe later").** Tangent plane at ownship (`ry = dlat·R`, `rx = dlon·R·cos(lat_own)`,
+      same WGS84 radius), reaching `relative_enu` everywhere the CDR stack reads it — detect,
+      MVP, PastCPA, the pairwise sweep — which is the pool vectorisation could not touch. The
+      error argument, measured: quadratic `d²/2R` — 0.1 mm at rpz range, 3.5 mm at 300 m,
+      0.9 m at 3 km spawn range; four orders under the noise floor at every decisive radius.
+      End-to-end (monkeypatched, campaign stack): **−17 % per step at n=8, −24 % at 13
+      aircraft** on top of the phase-1 reuse — ≈ −30 %/−38 % combined vs the original.
+      Blocked on a *methods* decision, not code: the CDR layer would measure separation on a
+      local tangent plane while aircraft still fly the sphere — a deliberate departure from the
+      BlueSky-mirroring geodesy of ADR 0003, deserving its own ADR + observation + the
+      re-baseline protocol (suite, serial≡parallel, MC/IPS statistical shift checks, one
+      re-anchored campaign cell). Prototype: `brouillon/bench_flat_enu.py`.
+- [x] **Vectorise the pairwise geometry — prototyped 2026-08-07, measured, and parked.** A
+      condensed-upper-triangle numpy `pairwise_relative` (formula-for-formula `qdrdist`,
+      `np.triu_indices` in `pair_ids` order, floats within 4e-16 of scalar) benchmarked against
+      the post-phase-1 scalar path: **0.05× at n=2, 0.98× at n=8, 1.59× at n=13, 2.24× at
+      n=28** — numpy's ~30 µs fixed overhead swamps arrays this small, and the crossover sits
+      near n=13 where the sweep is only ~a fifth of the step, so the whole-step gain is −7 %
+      at n=13 and ~−12 % at n=28. Not worth a re-baseline while campaign fleets stay ≤ 13
+      aircraft. Revisit if n ≥ 20 cells become routine — and then batch the *whole* measurement
+      block (post sweep + `pair_min_ranges` + the LoS mask) rather than the sweep alone, which
+      is where the remaining Python-object churn lives.
 - [ ] Open question, not an action yet: does separation need *measuring* every `dt`? The
       segment-interpolation argument in `relative.py` says thinning the measurement grid
       re-opens the one-sided bias `segment_min_sep` exists to close, and the splitting radii are
