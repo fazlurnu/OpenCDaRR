@@ -106,7 +106,7 @@ def _captured_ips_schedule(
 
     cfg = load_config(_EXAMPLE)
     cfg = dataclasses.replace(cfg, simulation=dataclasses.replace(cfg.simulation, **simulation))
-    monkeypatch.setattr(experiment, "estimate_rare_prob", spy)
+    monkeypatch.setattr("opencdarr.experiment.cell.estimate_rare_prob", spy)
     run_experiment(
         {"dpsi": Fixed(90.0)},
         methods=Methods(detector=StateBased(), resolver=MVP(margin=1.05),

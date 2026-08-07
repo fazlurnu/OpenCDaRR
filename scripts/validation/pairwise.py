@@ -18,7 +18,7 @@ ANGLES = [45.0, 90.0, 135.0, 180.0]
 def main() -> None:
     args = parser("pairwise").parse_args()
     cells = over_rungs([Cell(label={"dpsi": a}, scenario=PairwiseEncounter(dpsi=a, dcpa=0.0))
-             for a in ANGLES])
+             for a in ANGLES], args.rungs)
     print(f"pairwise — {len(cells)} crossing angles")
     print(f"wrote {run_part('pairwise', cells, args)}")
 

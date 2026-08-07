@@ -20,7 +20,7 @@ from typing import Any
 
 import pytest
 
-from opencdarr import experiment, geo
+from opencdarr import geo
 from opencdarr.cache import code_fingerprint
 from opencdarr.cd import StateBased
 from opencdarr.cns import Comm, GnssNavigation
@@ -674,7 +674,7 @@ def test_wind_reaches_both_backends(monkeypatch: pytest.MonkeyPatch) -> None:
         captured["wind"] = build_initial(root_seed_sequence(0)).env.wind
         return estimate_rare_prob(build_initial, shells, **kwargs)
 
-    monkeypatch.setattr(experiment, "estimate_rare_prob", spy)
+    monkeypatch.setattr("opencdarr.experiment.cell.estimate_rare_prob", spy)
     run_experiment(
         _PINNED, methods=_methods(wind=WindField(12.0, 0.0)),
         backend=IPS(shells=[60.0, 50.0], n_particles=8, reps=1),
@@ -722,7 +722,7 @@ def test_a_mixed_fleet_reaches_both_backends(monkeypatch: pytest.MonkeyPatch) ->
         captured["adapted"] = [a is not None for a in env.adapters]
         return estimate_rare_prob(build_initial, shells, **kwargs)
 
-    monkeypatch.setattr(experiment, "estimate_rare_prob", spy)
+    monkeypatch.setattr("opencdarr.experiment.cell.estimate_rare_prob", spy)
     run_experiment({**pinned, "airframes": Fixed(mixed)}, methods=stack,
                    backend=IPS(shells=[150.0, 100.0, 50.0], n_particles=8, reps=1),
                    base_config=_base(), seed=0)

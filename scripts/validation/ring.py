@@ -19,7 +19,8 @@ RADIUS = 900.0
 def main() -> None:
     args = parser("ring").parse_args()
     cells = over_rungs(
-        [Cell(label={"n": n}, scenario=CrossingRing(n=n, radius=RADIUS)) for n in SIZES]
+        [Cell(label={"n": n}, scenario=CrossingRing(n=n, radius=RADIUS)) for n in SIZES],
+        args.rungs,
     )
     print(f"ring — {len(cells)} fleet sizes on a {RADIUS:.0f} m ring")
     print(f"wrote {run_part('ring', cells, args)}")

@@ -20,7 +20,8 @@ def main() -> None:
     args = parser("random_traffic").parse_args()
     cells = over_rungs(
         [Cell(label={"density": d}, scenario=RandomTraffic(density=d, radius=RADIUS))
-         for d in DENSITIES]
+         for d in DENSITIES],
+        args.rungs,
     )
     print(f"random_traffic — {len(cells)} densities over a {RADIUS:.0f} m disc")
     print(f"wrote {run_part('random_traffic', cells, args)}")
