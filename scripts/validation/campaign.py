@@ -9,12 +9,26 @@ number that belongs to no cell in particular. Running the two backends on one co
 the other, makes the seconds attributable to it — which is what makes the ``gain`` column mean
 anything.
 
-**The Monte-Carlo anchor sizes itself.** An anchor built on two events is not an anchor, and how
-many encounters it takes to get fifty of them varies by three orders of magnitude across these
-conditions. So IPS runs first and its estimate buys the MC sample: ``n = target_events / p``,
-floored, and capped by ``--mc-max``. Sizing a run from a prior estimate is a design decision and
-not an inference: the MC estimate is unbiased at whatever ``n`` it is given, so it stays an
-independent check on the number that sized it.
+**The Monte-Carlo anchor sizes itself, then grows to its target.** An anchor built on two events
+is not an anchor, and how many encounters it takes to get fifty of them varies by three orders of
+magnitude across these conditions. So IPS runs first and its estimate buys the MC sample:
+``n = target_events / p``, floored, and capped by ``--mc-max``. Sizing a run from a prior
+estimate is a design decision and not an inference: the MC estimate is unbiased at whatever ``n``
+it is given, so it stays an independent check on the number that sized it.
+
+But that first size falls short precisely when the two estimators disagree — an IPS reading high
+buys too few encounters, and the anchor is thinnest at the one row where it must not be. After a
+shortfall the batch is re-sized from the rate it just measured (with headroom) and re-run, until
+the target is met or the cap is spent. Growth re-runs the same seed tree at the larger ``n`` — a
+strict superset, identical to having asked for it first — so it re-pays the discarded batch;
+accepted, because shortfalls happen on cheap mid-size cells and never at the cap. The grown ``n``
+is data-dependent, which makes the anchor a stopped design rather than a fixed one; at fifty
+events the stopping bias is a couple of percent, far inside the factor-two agreement rule.
+
+**The ratio is printed against its own noise.** A Wilson interval on the anchor and the spread of
+the splitting replications give each printed ratio a 95 % noise band: a 1.25 read on forty events
+sits inside its band, the same 1.25 on four hundred would not. The band gauges the *comparison*;
+no interval is claimed for the IPS estimate itself (ADR 0022).
 
 Where even the cap cannot reach fifty events the row says so (``mc_anchored: false``) instead of
 reporting a ratio resting on one or two. That is the honest reading of the rare regime: MC has
@@ -189,11 +203,11 @@ def _ladder_for(cell: Cell, args: argparse.Namespace) -> tuple[list[float], floa
 
 
 def _mc_sample_size(p_hat: float, args: argparse.Namespace) -> tuple[int, str]:
-    """How many encounters to buy so the anchor rests on ``--events`` losses, and why that many.
+    """The anchor's *first* size: enough encounters for ``--events`` losses at the IPS rate.
 
     ``p_hat`` comes from the splitting estimator, which has already run. A probability of zero or a
     collapsed ladder leaves nothing to size from, so the budget cap is spent and the row will show
-    whether that was enough.
+    whether that was enough. When the first batch falls short, :func:`_grown_size` takes over.
     """
     if not (p_hat > 0.0):
         return args.mc_max, "cap (no usable estimate)"
@@ -201,6 +215,61 @@ def _mc_sample_size(p_hat: float, args: argparse.Namespace) -> tuple[int, str]:
     if wanted > args.mc_max:
         return args.mc_max, "cap"
     return max(args.mc_min, wanted), "ips estimate"
+
+
+def _grown_size(n_now: int, events_seen: int, args: argparse.Namespace) -> int:
+    """The next anchor size after a shortfall — from the rate just measured, with headroom.
+
+    The 1.3 headroom makes a second growth unusual (the measured rate on ~40 events carries a
+    ~16 % standard error); the 1.25 floor guarantees geometric progress even when the shortfall
+    is one event. Zero events seen means the rate is unmeasured, so grow hard. Always capped —
+    the cap, not this function, is where a row is allowed to end up not anchored.
+    """
+    if events_seen == 0:
+        wanted = 10 * n_now
+    else:
+        wanted = math.ceil(args.events * n_now / events_seen * 1.3)
+    return min(args.mc_max, max(wanted, math.ceil(1.25 * n_now)))
+
+
+def _wilson95(k: int, n: int) -> tuple[float, float]:
+    """Wilson score interval for a binomial rate — honest at the small counts an anchor lives on
+    (a 40-of-2088 read spans it rather than sitting on a symmetric ±), never outside [0, 1]."""
+    if n == 0:
+        return (0.0, 1.0)
+    z = 1.959963984540054
+    p = k / n
+    denom = 1.0 + z * z / n
+    centre = (p + z * z / (2 * n)) / denom
+    half = z * math.sqrt(p * (1.0 - p) / n + z * z / (4.0 * n * n)) / denom
+    return (max(0.0, centre - half), min(1.0, centre + half))
+
+
+def _rep_rel_se(ips: Any) -> float | None:
+    """The IPS side's noise: relative standard error of the mean across replications.
+
+    The spread of independent replications is the one dispersion ADR 0017 §5 endorses reading;
+    it gauges the ratio below, and is *not* a confidence interval on the estimate (ADR 0022).
+    ``None`` when it cannot be formed (fewer than two replications, or a zero mean).
+    """
+    probs = [r.prob for r in ips.reps]
+    if len(probs) < 2 or ips.p_los_run <= 0.0:
+        return None
+    return statistics.stdev(probs) / math.sqrt(len(probs)) / ips.p_los_run
+
+
+def _ratio_noise95(mc_events: int, mc_n: int, ips: Any) -> float | None:
+    """How large a ratio pure noise explains at 95 % — the band a printed ratio is judged against.
+
+    Log-normal delta method over both sides: the anchor's relative SE (``sqrt((1-p)/k)``) and the
+    replication spread combine in quadrature. A ratio inside ``exp(1.96·σ)`` is what agreement
+    *looks like* at these counts; only a ratio beyond it says the estimators moved apart.
+    """
+    rel_ips = _rep_rel_se(ips)
+    if mc_events == 0 or rel_ips is None:
+        return None
+    rel_mc = math.sqrt((1.0 - mc_events / mc_n) / mc_events)
+    return math.exp(1.959963984540054 * math.hypot(rel_mc, rel_ips))
 
 
 def _row(cell: Cell, args: argparse.Namespace) -> dict[str, Any]:
@@ -222,11 +291,21 @@ def _row(cell: Cell, args: argparse.Namespace) -> dict[str, Any]:
                          n_jobs=args.jobs, cache=cache).cell()
     ips_seconds = time.perf_counter() - t0
 
+    # The anchor: sized from the IPS estimate, then grown on its own measured rate until it
+    # rests on --events losses or the cap is spent. Each round re-runs the same seed tree at the
+    # larger n (a strict superset — identical to having asked for it first); the timing keeps
+    # every round, because that is what the anchor actually cost.
     n_mc, sized_by = _mc_sample_size(ips.p_los_run, args)
+    batches: list[int] = []
     t0 = time.perf_counter()
-    mc = run_experiment(declaration, methods=methods, backend=MC(n_encounters=n_mc),
-                        base_config=base_config(n_mc, cell.pos_ci95), seed=args.seed,
-                        n_jobs=args.jobs, cache=cache).cell()
+    while True:
+        batches.append(n_mc)
+        mc = run_experiment(declaration, methods=methods, backend=MC(n_encounters=n_mc),
+                            base_config=base_config(n_mc, cell.pos_ci95), seed=args.seed,
+                            n_jobs=args.jobs, cache=cache).cell()
+        if mc.n_los >= args.events or n_mc >= args.mc_max:
+            break
+        n_mc = _grown_size(n_mc, mc.n_los, args)
     mc_seconds = time.perf_counter() - t0
 
     return {
@@ -235,13 +314,17 @@ def _row(cell: Cell, args: argparse.Namespace) -> dict[str, Any]:
         "mc_p_los_run": mc.p_los_run, "mc_p_los_ac": mc.p_los_ac, "mc_mean_k": mc.mean_k,
         "mc_events": mc.n_los, "mc_encounters": mc.n_encounters,
         "mc_sized_by": sized_by,
+        "mc_batches": batches,
+        "mc_wilson95": list(_wilson95(mc.n_los, mc.n_encounters)),
         "mc_anchored": mc.n_los >= args.events,
         "ips_p_los_run": ips.p_los_run, "ips_p_los_ac": ips.p_los_ac, "ips_mean_k": ips.mean_k,
         "ips_collapsed": ips.n_collapsed, "ips_lineages": ips.n_lineages,
         "shells": shells, "pilot_median_min_sep": round(pilot_median, 1),
         "pilot_seconds": round(pilot_seconds, 2),
         "survival": [round(s, 3) for s in ips.reps[0].survival],
+        "ips_rel_se": _rep_rel_se(ips),
         "ratio_run": _ratio(mc.p_los_run, ips.p_los_run),
+        "ratio_noise95": _ratio_noise95(mc.n_los, mc.n_encounters, ips),
         "ratio_ac": _ratio(mc.p_los_ac, ips.p_los_ac),
         "mc_seconds": round(mc_seconds, 2), "ips_seconds": round(ips_seconds, 2),
         "gain": round(mc_seconds / ips_seconds, 2) if ips_seconds > 0 else None,
@@ -298,11 +381,19 @@ def run_part(part: str, cells: list[Cell], args: argparse.Namespace) -> pathlib.
         row["_label"] = cell.label
         rows.append(row)
         anchored = "anchored" if row["mc_anchored"] else "NOT anchored"
-        print(f"    MC  {row['mc_p_los_run']:.3e}  {row['mc_events']:>4} events /"
-              f" {row['mc_encounters']:,} runs  ({row['mc_seconds']}s)  {anchored}")
+        grown = f"  grew x{len(row['mc_batches']) - 1}" if len(row["mc_batches"]) > 1 else ""
+        w_lo, w_hi = row["mc_wilson95"]
+        print(f"    MC  {row['mc_p_los_run']:.3e} (95% {w_lo:.2e}..{w_hi:.2e})"
+              f"  {row['mc_events']:>4} events / {row['mc_encounters']:,} runs"
+              f"  ({row['mc_seconds']}s)  {anchored}{grown}")
         print(f"    ladder {row['shells']}  survival {row['survival']}")
-        print(f"    IPS {row['ips_p_los_run']:.3e}  collapsed {row['ips_collapsed']}"
-              f"  ({row['ips_seconds']}s)   ratio {row['ratio_run']}   gain {row['gain']}")
+        se = row["ips_rel_se"]
+        noise = row["ratio_noise95"]
+        se_txt = f" (rep se {se:.0%})" if se is not None else ""
+        noise_txt = f" (noise95 {round(noise, 3)})" if noise is not None else ""
+        print(f"    IPS {row['ips_p_los_run']:.3e}{se_txt}  collapsed {row['ips_collapsed']}"
+              f"  ({row['ips_seconds']}s)   ratio {row['ratio_run']}{noise_txt}"
+              f"   gain {row['gain']}")
         # write after every condition, so a crash keeps the cells already paid for
         _write(out_path, part, rows, args, started)
 
