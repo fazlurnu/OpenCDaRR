@@ -63,3 +63,22 @@ computed that step. `dataclasses.replace` churn is another ~15 %.
       re-opens the one-sided bias `segment_min_sep` exists to close, and the splitting radii are
       exactly where it bites (`(v_rel·dt)² / (24 d²)`). Any thinning proposal needs that bound
       re-derived for the coarser grid before it touches the estimator.
+
+## 4. P(mission completed) — parked until the scenarios can carry it
+
+`SimulationConfig.stop_within` now threads to both backends (locked by
+`tests/test_stop_within.py`), so the mission-completion *stop* is declarable. The *metric* is
+not a quick add, because today it would read zero by construction: random-traffic goals sit
+`3 × radius` beyond entry ("beyond the disc; never reached" — the goal is a direction, not a
+destination), and a 1500 m ring's goals are a 291 s flight against `t_max = 250` before any
+resolution detour. Before the number can exist:
+
+- [ ] Scenarios whose goals are reachable inside the encounter (ring radius / `t_max` chosen
+      together; a random-traffic variant with real destinations), with `stop_within` sized to
+      the airframe (a fixed-wing orbits at its loiter radius — `autopilot/waypoint.py`).
+- [ ] The estimand, decided before the code: per-run "all arrived" vs per-aircraft arrival
+      fraction, and unconditional (MC) vs conditional-on-LoS (the only thing the IPS tail can
+      measure). Denominators fixed by design, per `MonteCarloEstimate`'s own rule.
+- [ ] The plumbing: arrival read off the terminal state into `FleetOutcome` / the results
+      schema, and `_tail_slice`'s return widened past `(K, A)` if the conditional version is
+      wanted.

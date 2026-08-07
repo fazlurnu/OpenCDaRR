@@ -52,6 +52,10 @@ class SimulationConfig:
     broadcast_interval: float = 1.0  # CDR/measurement cadence [s] (ADS-L rate); held between ticks
     broadcast_jitter: float = 0.0  # per-transmission slot dither U(-j, +j) [s]; 0 = fixed gaps
     broadcast_random_phase: bool = False  # draw each aircraft's start offset in [0, interval)
+    # mission-completion stop: if set, an encounter also ends once every goal-carrying aircraft is
+    # within this many metres of its final waypoint (FleetEnv.stop_within). None — the default and
+    # the state every published number was produced in — keeps the conflict-clearing stop alone.
+    stop_within: float | None = None
 
 
 @dataclass(frozen=True)

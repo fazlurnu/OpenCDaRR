@@ -262,6 +262,7 @@ def _run_ips(condition: Condition, base: Config, methods: Methods, backend: IPS,
             dt=cfg.simulation.dt, detector=m.detector, resolver=m.resolver, recovery=m.recovery,
             navigation=m.navigation, communication=m.communication, surveillance=m.surveillance,
             t_max=cfg.simulation.t_max, done_timeout=cfg.simulation.done_timeout,
+            stop_within=cfg.simulation.stop_within,
             wind=m.wind, area=_scenario_for(condition, m).measurement_area(),
             # the transmit timing, which this call omitted entirely: build_env then fell back to
             # the 1 s default, so a declared broadcast_interval reached MC and was silently

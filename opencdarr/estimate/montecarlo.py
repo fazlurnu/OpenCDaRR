@@ -248,6 +248,7 @@ def estimate_p_los(
             comm_rng=generator(comm_seq),
             t_max=config.simulation.t_max,
             done_timeout=config.simulation.done_timeout,
+            stop_within=config.simulation.stop_within,
             schedule=schedule,
             broadcast_rng=generator(bc_seq),
             wind=wind,

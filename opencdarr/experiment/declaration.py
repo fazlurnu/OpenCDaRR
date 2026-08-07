@@ -17,7 +17,7 @@ _SCENARIO_FIELDS = frozenset(
 _CONFLICT_FIELDS = frozenset({"rpz", "t_lookahead"})
 _SIMULATION_FIELDS = frozenset(
     {"dt", "t_max", "done_timeout", "broadcast_interval", "broadcast_jitter",
-     "broadcast_random_phase"}
+     "broadcast_random_phase", "stop_within"}
 )
 _GEOMETRY_SLOTS = frozenset({"dpsi", "dcpa", "side", "gs_intr"})
 
