@@ -10,6 +10,10 @@ The cases are chosen to hit both modes and the awkward edges between them — wh
 sharded lockstep, one replication over several workers, ragged shard bounds, and a ladder that
 collapses so the drop-out branch runs under workers too. Particle counts stay tiny (a few dozen)
 and ``min_shard`` is forced low, so sharding really fires without the suite getting slow.
+
+The fleet cases at the bottom lock the *tail* fields (K, A) on sampled multi-aircraft
+geometries — a ring and random traffic — because those are the fields whose value depends on
+flying a whole fleet past its first breach, wherever the scheduler put that flight.
 """
 
 from __future__ import annotations
@@ -18,8 +22,20 @@ import importlib.util
 
 import pytest
 
+from opencdarr.autopilot import WaypointAutopilot
+from opencdarr.cd import StateBased
+from opencdarr.cns import GnssNavigation
+from opencdarr.config import (
+    Config,
+    ConflictConfig,
+    MethodsConfig,
+    ScenarioConfig,
+    SimulationConfig,
+)
+from opencdarr.cr import MVP
+from opencdarr.crr import PastCPA
+from opencdarr.estimate.ips import Particle, combine_replications, ips_once, replication_seeds
 from opencdarr.estimate.ips import estimate_rare_prob as estimate_rare_prob_serial
-from opencdarr.estimate.ips import ips_once, replication_seeds
 from opencdarr.estimate.parallel import (
     _shard_bounds,
     _shard_count,
@@ -28,6 +44,11 @@ from opencdarr.estimate.parallel import (
     ips_replications,
     resolve_jobs,
 )
+from opencdarr.fleet import Agent, build_env
+from opencdarr.mission import Mission
+from opencdarr.performance import M600
+from opencdarr.rng import generator
+from opencdarr.scenario import CrossingRing, RandomTraffic
 from tests.test_ips import _build_initial, _make_build
 
 pytestmark = pytest.mark.skipif(
@@ -159,3 +180,72 @@ def test_shard_count_oversubscribes_but_respects_min_shard() -> None:
     # a small cloud is capped by min_shard, not by the worker count
     assert _shard_count(1, 96, 100, oversubscribe=2, min_shard=64) == 1
     assert _shard_count(96, 96, 10_000, oversubscribe=2, min_shard=64) == 2
+
+
+def _fleet_build(scenario):
+    """A fleet-scenario particle factory (ring / random traffic), sized to stay fast.
+
+    Unlike ``_build_initial``'s pinned pair, the geometry here is *sampled* per particle — the
+    campaign's shape — and a fleet is what gives the tail leg something to measure: K and A move
+    past (1, 2) only when a third aircraft can join a loss that has already happened. High noise
+    (as in ``_build_initial``) keeps the shells reachable past a working resolver; a short
+    ``t_max`` keeps every continuation cheap.
+    """
+    cfg = Config(
+        seed=0, n_encounters=8,
+        scenario=ScenarioConfig("M600", 10.2889, 50.0, 40.0, 80.0, 8.0),
+        conflict=ConflictConfig(50.0, 60.0),
+        methods=MethodsConfig("statebased", "mvp", "pastcpa", 1.05, False),
+        simulation=SimulationConfig(0.5, 80.0, 5.0),
+    )
+
+    def build(seq) -> Particle:
+        rng = generator(seq)
+        agents = []
+        for state, goal in scenario.draw(rng, cfg):
+            autopilot = (
+                None if goal is None
+                else WaypointAutopilot(Mission(goto=goal), cruise_airspeed=state.gs)
+            )
+            agents.append(Agent(state, M600, autopilot=autopilot))
+        env = build_env(
+            agents, rpz=50.0, t_lookahead=60.0, dt=0.5, detector=StateBased(),
+            resolver=MVP(margin=1.05), recovery=PastCPA(bouncing_guard=True),
+            navigation=GnssNavigation(), t_max=80.0, done_timeout=5.0,
+            area=scenario.measurement_area(),
+        )
+        return Particle(env=env, state=env.initial_state(agents))
+
+    return build
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [CrossingRing(n=3, radius=400.0), RandomTraffic(n=4, radius=300.0)],
+    ids=["ring3", "random4"],
+)
+def test_fleet_tail_fields_match_serial(scenario) -> None:
+    """The sharded tail reproduces the serial K/A fields exactly, on fleets where they matter.
+
+    A pair already in loss stays in the simulation, so a third aircraft can join during the
+    continuation — ``tail_k``/``tail_a`` (and the ``p_los_ac``/``mean_k`` built from them) depend
+    on the *whole* fleet flying to termination in whichever process the slice landed.
+    ``reps=3`` on 2 workers forces the lockstep path, the one that shards.
+    """
+    build = _fleet_build(scenario)
+    levels = [70.0, 55.0, 50.0]
+    serial = [ips_once(build, levels, 32, s) for s in replication_seeds(9, 3)]
+    got = ips_replications(build, levels, 32, replication_seeds(9, 3), n_jobs=2, min_shard=8)
+    # the fixture must actually reach the tail somewhere, or the K/A locks below are vacuous
+    assert any(r.tail_k is not None for r in serial)
+    assert [r.prob for r in got] == [r.prob for r in serial]
+    assert [r.survival for r in got] == [r.survival for r in serial]
+    assert [r.collapsed_at for r in got] == [r.collapsed_at for r in serial]
+    assert [r.tail_k for r in got] == [r.tail_k for r in serial]
+    assert [r.tail_a for r in got] == [r.tail_a for r in serial]
+    assert [r.n_lineages for r in got] == [r.n_lineages for r in serial]
+    agg_serial = combine_replications(serial)
+    agg_got = combine_replications(got)
+    assert agg_got.p_los_run == agg_serial.p_los_run
+    assert agg_got.p_los_ac == agg_serial.p_los_ac
+    assert agg_got.mean_k == agg_serial.mean_k

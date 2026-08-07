@@ -23,7 +23,9 @@ and it should not also decide how much of the machine gets used. This module dec
   level's particles are split into contiguous shards spread across all workers. Bit-identity comes
   from the seed tree already being index-addressed (:func:`opencdarr.rng.children`): particle *i*
   gets stream *i* whatever shard it lands in, and joblib returns results in submission order, so
-  re-concatenating the shards reproduces the serial list exactly.
+  re-concatenating the shards reproduces the serial list exactly. The tail leg (the K/A
+  continuation past the last shell) is sharded the same way over the same pool — on a fleet
+  condition every continuation flies to ``t_max``, which makes it most of the work.
 
 **Determinism caveat.** Identical on the same machine and numpy build — the same promise the serial
 path already makes. Nothing here reorders a floating-point reduction.
@@ -163,6 +165,27 @@ def _evolve_slice(
     return [p.state for p in evolve_shard(particles, target, children(level_seq, lo, hi))]
 
 
+def _tail_slice(
+    particles: Sequence[Particle],
+    tail_seq: np.random.SeedSequence,
+    lo: int,
+    hi: int,
+) -> list[tuple[int, int]]:
+    """One worker's slice of one replication's tail: particles ``lo..hi`` flown to termination.
+
+    Rebuilds streams ``lo..hi`` from the replication's tail sequence by index, exactly as
+    :func:`_evolve_slice` does for a shell, so any partition of the range recomposes to the
+    serial flight list. Returns per particle the two integers the tail exists to measure — K and
+    A, read off the terminal state — rather than the state itself: the caller needs nothing
+    else, and the states are the only heavy thing here.
+    """
+    ends = [
+        _evolve_to_terminal(p, _streams(s))
+        for p, s in zip(particles, children(tail_seq, lo, hi), strict=True)
+    ]
+    return [(e.n_los_pairs, e.n_los_aircraft) for e in ends]
+
+
 def _lockstep(
     build_initial: BuildInitial,
     levels: Sequence[float],
@@ -175,7 +198,8 @@ def _lockstep(
     verbose: int,
     tail: bool = True,
 ) -> list[IPSResult]:
-    """Advance every replication shell-by-shell together, sharding each level across all workers.
+    """Advance every replication shell-by-shell together, sharding each level across all workers;
+    the tail leg is sharded over the same pool once the ladder is done.
 
     The seed tree is built exactly as :func:`~opencdarr.estimate.ips.ips_once` builds it, and
     this function never calls ``.spawn()`` on a level's sequence — it addresses that sequence's
@@ -207,8 +231,9 @@ def _lockstep(
     live = list(range(reps))
     n_aircraft = len(clouds[0][0].state.states) if clouds and clouds[0] else 0
 
-    # One pool for the whole ladder: re-creating it per level would re-spawn every worker process
-    # and re-import opencdarr in each, 17 times over for a production ladder.
+    finals: dict[int, tuple[float, float]] = {}
+    # One pool for the whole ladder and the tail: re-creating it per level would re-spawn every
+    # worker process and re-import opencdarr in each, 17 times over for a production ladder.
     with parallel_cls(
         n_jobs=workers, batch_size=1, pre_dispatch=str(workers), verbose=verbose
     ) as run:
@@ -252,20 +277,27 @@ def _lockstep(
             if not live:
                 break
 
-    # The tail leg, on the same per-replication seed subtree ips_once uses, so a tail field is the
-    # serial one exactly. Run here rather than sharded: it is one pass over the final cloud, with
-    # no barrier to wait on, and the pool above has already closed.
-    finals: dict[int, tuple[float, float]] = {}
-    if tail:
-        for r in range(reps):
-            if r in collapsed:
-                continue
-            ends = [
-                _evolve_to_terminal(p, _streams(s))
-                for p, s in zip(clouds[r], children(tail_seqs[r], 0, n_particles), strict=True)
-            ]
-            finals[r] = (float(np.mean([e.n_los_pairs for e in ends])),
-                         float(np.mean([e.n_los_aircraft for e in ends])))
+        # The tail leg, on the same per-replication seed subtree ips_once uses, so a tail field
+        # is the serial one exactly — and sharded like a shell, because it is priced like one.
+        # On a fleet condition every continuation flies to ``t_max``, so reps × n_particles of
+        # them in this process measured as ~90 % of a campaign cell's IPS wall clock while every
+        # worker sat idle. The map is per-particle and index-addressed, so a partition moves
+        # each flight to a worker without changing it; results regroup in plan order, which is
+        # particle order.
+        if tail and live:
+            shards = _shard_count(len(live), workers, n_particles, oversubscribe, min_shard)
+            bounds = _shard_bounds(n_particles, shards)
+            plan = [(r, lo, hi) for r in live for lo, hi in bounds]
+            done = run(
+                delayed(_tail_slice)(clouds[r][lo:hi], tail_seqs[r], lo, hi)
+                for r, lo, hi in plan
+            )
+            counts: dict[int, list[tuple[int, int]]] = {r: [] for r in live}
+            for (r, _, _), part in zip(plan, done, strict=True):
+                counts[r].extend(part)
+            for r in live:
+                finals[r] = (float(np.mean([k for k, _ in counts[r]])),
+                             float(np.mean([a for _, a in counts[r]])))
 
     return [
         collapsed[r]
