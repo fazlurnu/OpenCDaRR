@@ -36,7 +36,8 @@ from opencdarr.config import (
 from opencdarr.cr import MVP, VO
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr import PastCPA, ProbabilisticFTR
-from opencdarr.estimator import MonteCarloEstimate
+from opencdarr.estimate.ips import RareEventEstimate, estimate_rare_prob
+from opencdarr.estimate.montecarlo import MonteCarloEstimate
 from opencdarr.experiment import (
     IPS,
     MC,
@@ -53,7 +54,6 @@ from opencdarr.experiment import (
     run_one_experiment,
 )
 from opencdarr.fleet import Agent, Airframe
-from opencdarr.ips import RareEventEstimate, estimate_rare_prob
 from opencdarr.kinematics import FixedWing, Kinematics, MotionCommand
 from opencdarr.kinematics.base import odometry_update
 from opencdarr.performance import M600, SMALL_FIXEDWING, Performance

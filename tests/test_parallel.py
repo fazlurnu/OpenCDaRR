@@ -1,7 +1,8 @@
 """Bit-identity locks for the parallel scheduler (``opencdarr/parallel.py``).
 
 Unlike ``tests/test_ips.py``, these **actually start worker processes** — the whole claim of
-:mod:`opencdarr.parallel` is that scheduling changes nothing, and that can only be shown by
+:mod:`opencdarr.estimate.parallel` is that scheduling changes nothing, and that can only be
+shown by
 crossing a real process boundary. Comparisons are exact (``==``), never ``approx``: a scheduler
 that perturbs the last bit of a probability has a bug, not a rounding difference.
 
@@ -17,9 +18,9 @@ import importlib.util
 
 import pytest
 
-from opencdarr.ips import estimate_rare_prob as estimate_rare_prob_serial
-from opencdarr.ips import ips_once, replication_seeds
-from opencdarr.parallel import (
+from opencdarr.estimate.ips import estimate_rare_prob as estimate_rare_prob_serial
+from opencdarr.estimate.ips import ips_once, replication_seeds
+from opencdarr.estimate.parallel import (
     _shard_bounds,
     _shard_count,
     _whole_replications,
@@ -95,7 +96,8 @@ def test_collapsed_replication_drops_out_and_still_matches() -> None:
 
 
 def test_estimate_rare_prob_matches_the_serial_estimator() -> None:
-    """The public entry point agrees with ``opencdarr.ips.estimate_rare_prob`` — point and CI."""
+    """The public entry point agrees with ``opencdarr.estimate.ips.estimate_rare_prob`` — point
+    and CI."""
     ref = estimate_rare_prob_serial(_build_initial, LEVELS, n_particles=N, reps=3, seed=3)
     got = estimate_rare_prob(
         _build_initial, LEVELS, n_particles=N, reps=3, seed=3, n_jobs=2, min_shard=4

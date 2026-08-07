@@ -19,7 +19,6 @@ from typing import Any
 import pytest
 
 from opencdarr.experiment import IPS, MC, Fixed, Sweep, run_experiment
-
 from tests.test_experiment import _base, _methods
 
 # a pinned, noisy crossing: small enough to run fast, noisy enough that a loss is reachable

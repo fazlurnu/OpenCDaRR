@@ -1,7 +1,7 @@
 """Visualise the IPS splitting tree for one encounter geometry, with a loss-of-separation lineage.
 
 A diagnostic / handbook figure for the rare-event estimator (ADR 0017). It re-runs the fixed-effort
-multilevel splitting of :func:`opencdarr.ips.ips_once` for a single geometry — mirroring its seed
+multilevel splitting of :func:`opencdarr.estimate.ips.ips_once` for a single geometry — mirroring its seed
 spawning exactly, so this *is* the real IPS run — but records each particle's separation-vs-time
 path, the two aircraft ground tracks, and the resample parentage (which the estimator itself does
 not keep). Then it traces one particle that reached ``rpz`` (a genuine LoS) back through its
@@ -57,7 +57,7 @@ def enu(lat: float, lon: float) -> tuple[float, float]:
 
 
 def _streams(seq: np.random.SeedSequence) -> FleetStreams:
-    """Mirror of :func:`opencdarr.ips._streams` — three substreams (nav, comm, broadcast)."""
+    """Mirror of :func:`opencdarr.estimate.ips._streams` — three substreams (nav, comm, broadcast)."""
     nav, comm, bc = seq.spawn(3)
     return FleetStreams(cns=CnsStreams(nav=generator(nav), comm=generator(comm)),
                         broadcast=generator(bc))

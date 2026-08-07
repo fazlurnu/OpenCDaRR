@@ -62,6 +62,7 @@ from opencdarr.config import (  # noqa: E402
 )
 from opencdarr.cr import MVP  # noqa: E402
 from opencdarr.crr import PastCPA  # noqa: E402
+from opencdarr.estimate.parallel import resolve_jobs  # noqa: E402
 from opencdarr.experiment import (  # noqa: E402
     IPS,
     MC,
@@ -70,7 +71,6 @@ from opencdarr.experiment import (  # noqa: E402
     Methods,
     run_experiment,
 )
-from opencdarr.parallel import resolve_jobs  # noqa: E402
 from opencdarr.performance import M600  # noqa: E402
 from opencdarr.scenario import Scenario  # noqa: E402
 

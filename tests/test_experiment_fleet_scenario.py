@@ -2,7 +2,8 @@
 
 The encounter model is a declared component (``Methods.scenario``), so the fleet size is a property
 of the scenario rather than of the estimator. Both backends build their encounter from that one
-object: MC hands it to :func:`~opencdarr.estimator.estimate_p_los`, IPS wraps its agents in the
+object: MC hands it to :func:`~opencdarr.estimate.montecarlo.estimate_p_los`, IPS wraps its
+agents in the
 initial particle. Before this, ``_run_ips`` opened ``sample_pairwise`` itself, so an IPS fleet
 study was unreachable from here and the campaign could not compare the two backends on anything
 but a pair.
@@ -19,9 +20,9 @@ import numpy as np
 import pytest
 
 from opencdarr.config import Config
-from opencdarr.estimator import MonteCarloEstimate
+from opencdarr.estimate.ips import RareEventEstimate
+from opencdarr.estimate.montecarlo import MonteCarloEstimate
 from opencdarr.experiment import IPS, MC, Fixed, Sweep, run_experiment
-from opencdarr.ips import RareEventEstimate
 from opencdarr.measurement import Disc, MeasurementArea
 from opencdarr.scenario import ConvergingRing, CrossingRing, RandomTraffic, Scenario
 from opencdarr.scenario.base import FleetScenario

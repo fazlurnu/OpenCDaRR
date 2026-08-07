@@ -8,7 +8,6 @@ import pytest
 
 from opencdarr import geo
 from opencdarr.crr import FTR
-from opencdarr.scenario import create_conflict
 from opencdarr.state import AircraftState, DesiredVelocity
 
 _RPZ = 50.0

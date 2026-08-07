@@ -29,9 +29,10 @@ short path for the common case rather than a mirror of the whole tree.
     from opencdarr import estimate_p_los, pairwise, load_config   # ... and measure it
 
 Both optional extras stay optional: ``matplotlib`` (via :mod:`opencdarr.viz`) and ``joblib`` (via
-:mod:`opencdarr.parallel`) are imported lazily inside the functions that need them, so
-``import opencdarr`` remains numpy + pyyaml only. :mod:`opencdarr.parallel` is deliberately *not*
-re-exported — it is a scheduling concern with its own install extra, reached explicitly.
+:mod:`opencdarr.estimate.parallel`) are imported lazily inside the functions that need them, so
+``import opencdarr`` remains numpy + pyyaml only. :mod:`opencdarr.estimate.parallel` is
+deliberately *not* re-exported — it is a scheduling concern with its own install extra, reached
+explicitly.
 
 The import block below is sorted (ruff ``I001``) rather than grouped by role; the grouping above is
 the map.
@@ -60,7 +61,8 @@ from opencdarr.crr.base import RecoveryCriterion
 from opencdarr.crr.ftr import FTR
 from opencdarr.crr.pastcpa import PastCPA
 from opencdarr.crr.probabilistic_ftr import ProbabilisticFTR
-from opencdarr.estimator import (
+from opencdarr.estimate.ips import estimate_rare_prob
+from opencdarr.estimate.montecarlo import (
     MonteCarloEstimate,
     combine_p_los,
     estimate_p_los,
@@ -76,7 +78,6 @@ from opencdarr.experiment import (
     run_one_experiment,
 )
 from opencdarr.fleet import Agent, Airframe, EncounterBuilder, run_fleet
-from opencdarr.ips import estimate_rare_prob
 from opencdarr.kinematics.base import Kinematics, MotionCommand
 from opencdarr.kinematics.fixedwing import FixedWing
 from opencdarr.kinematics.multirotor import Multirotor

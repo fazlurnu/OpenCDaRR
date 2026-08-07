@@ -31,7 +31,8 @@ handing out children from ``n_children_spawned``, so fanning out twice from one 
 continues the numbering instead of repeating it. A routine that spawns from its seed
 argument therefore quietly returns a different answer the second time it is called on
 that object. Routines meant to be reproducible from their arguments alone (the
-estimators in :mod:`opencdarr.ips` and :mod:`opencdarr.parallel`) address by index for
+estimators in :mod:`opencdarr.estimate.ips` and :mod:`opencdarr.estimate.parallel`) address by
+index for
 exactly that reason, and are pure functions of the sequence they are handed.
 
 Every function that needs randomness should take a ``numpy.random.Generator`` as an

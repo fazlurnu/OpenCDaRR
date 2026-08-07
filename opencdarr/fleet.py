@@ -22,8 +22,9 @@ rare-event estimator needs, so Monte Carlo *and* the future IPS see only these:
 - :class:`FleetStreams` — the **per-particle RNG** (nav + comm + broadcast), re-spawned on clone,
   never copied (ADR 0001).
 
-:meth:`FleetEnv.advance` is one ``dt`` step ``state → state``; :func:`~opencdarr.ips.level` is the
-importance function (minimum pairwise separation — ADR 0004's starting point, a Phase-8 ADR may
+:meth:`FleetEnv.advance` is one ``dt`` step ``state → state``;
+:func:`~opencdarr.estimate.ips.level` is the importance function (minimum pairwise separation —
+ADR 0004's starting point, a Phase-8 ADR may
 refine it); :meth:`FleetEnv.is_terminal` is the stop test. :func:`run_fleet` is the
 plain-Monte-Carlo driver over exactly these — the loop that IPS replaces with resample-and-split.
 
@@ -233,7 +234,8 @@ class FleetState:
         """A — how many distinct aircraft appear in at least one losing pair.
 
         Read off the state rather than recomputed downstream, so the plain runner
-        (:func:`run_fleet`) and the rare-event one (:mod:`opencdarr.ips`, whose tail leg reads K
+        (:func:`run_fleet`) and the rare-event one (:mod:`opencdarr.estimate.ips`, whose tail
+        leg reads K
         and A straight off a survivor's state) cannot count the same encounter differently.
         """
         return len({a for pair in self.los_pairs for a in pair})
@@ -298,7 +300,7 @@ class FleetEnv:
     *not* the particle (ADR 0004). Immutable and shared unchanged across every IPS clone; only the
     state and the streams differ between particles. Built by :func:`run_fleet` from its arguments
     and the fleet's :class:`Agent` bundles; exposes the estimator interface :meth:`advance` /
-    :meth:`is_terminal` (with the free function :func:`~opencdarr.ips.level`).
+    :meth:`is_terminal` (with the free function :func:`~opencdarr.estimate.ips.level`).
     """
 
     kinematics: tuple[Kinematics, ...]
@@ -580,8 +582,8 @@ def run_fleet(
     The plain-Monte-Carlo driver over the estimator interface: build the :class:`FleetEnv` (the
     fixed rules) and the initial :class:`FleetState` (the particle), then step ``advance`` until
     ``is_terminal``. IPS (Phase 8) replaces this loop with resample-and-split over the *same*
-    ``advance`` / :func:`~opencdarr.ips.level` / ``is_terminal`` — this function is the reference
-    it is validated against.
+    ``advance`` / :func:`~opencdarr.estimate.ips.level` / ``is_terminal`` — this function is
+    the reference it is validated against.
 
     Each aircraft decides on the broadcast cadence from its (optionally noisy) self-fix against its
     perceived traffic. Without ``communication`` this is every *other* aircraft's current broadcast

@@ -1,8 +1,8 @@
 """Parallel execution of the rare-event estimator — scheduling only, no new statistics.
 
-:mod:`opencdarr.ips` stays the serial reference: readable, numpy-only, and the thing this module
-is validated against. What lives here is the *scheduling* half of ``docs/roadmap.md``'s "batching
-across particles, then joblib across CPUs" — how the same work is spread over cores, never what
+:mod:`opencdarr.estimate.ips` stays the serial reference: readable, numpy-only, and the thing
+this module is validated against. What lives here is the *scheduling* half of
+``docs/roadmap.md``'s "batching across particles, then joblib across CPUs" — how the same work is spread over cores, never what
 the work is. Every function here returns results **bit-identical** to its serial twin
 (``tests/test_parallel.py``), so switching to it is a performance decision and nothing else.
 
@@ -29,10 +29,10 @@ path already makes. Nothing here reorders a floating-point reduction.
 
 **Using it.** Same arguments as the serial estimator plus ``n_jobs`` — ``-1`` means every core::
 
-    from opencdarr.parallel import estimate_rare_prob
+    from opencdarr.estimate.parallel import estimate_rare_prob
 
     est = estimate_rare_prob(
-        build_initial,          # (SeedSequence) -> Particle; see opencdarr.ips.BuildInitial
+        build_initial,          # (SeedSequence) -> Particle; see estimate.ips.BuildInitial
         levels=[150, 120, 100, 85, 75, 68, 62, 58, 55, 52, 50],   # decreasing, ends at rpz
         n_particles=10_000,     # per shell
         reps=10,                # independent replications
@@ -59,8 +59,7 @@ from typing import Any
 
 import numpy as np
 
-from opencdarr.fleet import FleetState
-from opencdarr.ips import (
+from opencdarr.estimate.ips import (
     BuildInitial,
     IPSResult,
     Particle,
@@ -73,6 +72,7 @@ from opencdarr.ips import (
     replication_seeds,
     resample_level,
 )
+from opencdarr.fleet import FleetState
 from opencdarr.rng import child, children
 
 
@@ -176,8 +176,9 @@ def _lockstep(
 ) -> list[IPSResult]:
     """Advance every replication shell-by-shell together, sharding each level across all workers.
 
-    The seed tree is built exactly as :func:`~opencdarr.ips.ips_once` builds it, and this function
-    never calls ``.spawn()`` on a level's sequence — it addresses that sequence's children by index
+    The seed tree is built exactly as :func:`~opencdarr.estimate.ips.ips_once` builds it, and
+    this function never calls ``.spawn()`` on a level's sequence — it addresses that sequence's
+    children by index
     instead — so each level's per-particle streams are the ones the serial run would have used.
     """
     parallel_cls, delayed = _joblib()
@@ -295,11 +296,12 @@ def ips_replications(
     verbose: int = 0,
     tail: bool = True,
 ) -> list[IPSResult]:
-    """Run one :func:`~opencdarr.ips.ips_once` per seed in ``seqs``, over ``n_jobs`` workers.
+    """Run one :func:`~opencdarr.estimate.ips.ips_once` per seed in ``seqs``, over ``n_jobs``
+    workers.
 
     Identical, value for value, to ``[ips_once(build_initial, levels, n_particles, s) for s in
     seqs]`` — only the wall time differs. Takes seeds rather than a seed integer so it composes
-    with :func:`~opencdarr.ips.replication_seeds` the same way the serial path does.
+    with :func:`~opencdarr.estimate.ips.replication_seeds` the same way the serial path does.
     """
     workers = resolve_jobs(n_jobs)
     if workers <= 1 or not seqs:
@@ -340,7 +342,8 @@ def estimate_rare_prob(
     verbose: int = 0,
     tail: bool = True,
 ) -> RareEventEstimate:
-    """The parallel twin of :func:`opencdarr.ips.estimate_rare_prob` — same result, more cores.
+    """The parallel twin of :func:`opencdarr.estimate.ips.estimate_rare_prob` — same result,
+    more cores.
 
     Unlike the serial version, the worker count is independent of ``reps``: pick ``reps`` for the
     stability you want (ADR 0017 §5) and ``n_jobs`` for the machine you have.

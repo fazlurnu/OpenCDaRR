@@ -23,8 +23,8 @@ from opencdarr.cns.broadcast import schedule_for
 from opencdarr.config import load_config
 from opencdarr.cr import MVP
 from opencdarr.crr import PastCPA
+from opencdarr.estimate.ips import estimate_rare_prob
 from opencdarr.experiment import IPS, Fixed, Methods, run_experiment
-from opencdarr.ips import estimate_rare_prob
 from opencdarr.performance import M600
 from opencdarr.rng import generator, root_seed_sequence
 

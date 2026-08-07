@@ -56,7 +56,7 @@ REGIMES: tuple[Regime, ...] = ("nav", "comms", "both")
 
 
 def _streams(seq: np.random.SeedSequence) -> FleetStreams:
-    """Mirror of :func:`opencdarr.ips._streams`: three substreams (nav, comm, broadcast)."""
+    """Mirror of :func:`opencdarr.estimate.ips._streams`: three substreams (nav, comm, broadcast)."""
     nav, comm, bc = seq.spawn(3)
     return FleetStreams(cns=CnsStreams(nav=generator(nav), comm=generator(comm)),
                         broadcast=generator(bc))

@@ -292,7 +292,7 @@ def pairwise(
     The standard :data:`~opencdarr.fleet.EncounterBuilder` — :func:`sample_pairwise` drawn from
     the encounter's own stream, wrapped as a pair of agents. Everything specific to a *pairwise*
     encounter lives here, beside the sampler it wraps, which is what leaves
-    :func:`~opencdarr.estimator.estimate_p_los` with nothing to say about N.
+    :func:`~opencdarr.estimate.montecarlo.estimate_p_los` with nothing to say about N.
 
     ``kinematics`` is the airframe both aircraft fly (``None`` = the fleet default
     :class:`~opencdarr.kinematics.Multirotor`, ADR 0007).

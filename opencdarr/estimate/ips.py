@@ -1,8 +1,9 @@
 """Rare-event estimator — interacting particle system (IPS), Blom et al. 2007. Phase 8 / ADR 0017.
 
 Fixed-effort multilevel splitting over the fleet estimator interface (``advance / level /
-is_terminal``, :mod:`opencdarr.fleet`). Where plain Monte Carlo (:func:`opencdarr.estimator.
-estimate_p_los`) starves in the rare regime — a single 10⁴-encounter run can read *zero* events
+is_terminal``, :mod:`opencdarr.fleet`). Where plain Monte Carlo
+(:func:`opencdarr.estimate.montecarlo.estimate_p_los`) starves in the rare regime — a single
+10⁴-encounter run can read *zero* events
 ([[rare-event-validation-ladder]]) — IPS concentrates effort on the trajectories heading toward the
 rare set and returns the small probability at a usable cost.
 
@@ -149,7 +150,7 @@ def evolve_shard(
     """Evolve each particle to ``target`` on its own freshly spawned stream — one level's *map*.
 
     Factored out of :func:`ips_once` so a parallel driver can run **contiguous slices** of the same
-    map in worker processes (:mod:`opencdarr.parallel`). Particle ``i`` reads only its own
+    map in worker processes (:mod:`opencdarr.estimate.parallel`). Particle ``i`` reads only its own
     ``particles[i]`` and ``seeds[i]``, so any partition of the range recomposes to the identical
     list — which is what makes the parallel estimate bit-identical rather than merely equivalent.
     """

@@ -18,8 +18,7 @@ from opencdarr.cd import StateBased
 from opencdarr.cns import GnssNavigation
 from opencdarr.cr import MVP
 from opencdarr.crr import PastCPA
-from opencdarr.fleet import Agent, build_env
-from opencdarr.ips import (
+from opencdarr.estimate.ips import (
     IPSResult,
     Particle,
     combine_replications,
@@ -27,6 +26,7 @@ from opencdarr.ips import (
     ips_once,
     replication_seeds,
 )
+from opencdarr.fleet import Agent, build_env
 from opencdarr.performance import M600
 from opencdarr.rng import generator, root_seed_sequence
 from opencdarr.scenario import create_conflict

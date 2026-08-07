@@ -18,7 +18,7 @@ run unchanged whichever backend estimates the probability::
 
 Swap ``backend=MC(...)`` for ``backend=IPS(shells=[...], n_particles=2_000, reps=8)`` and nothing
 else changes — that equivalence is the whole reason the plain-MC estimator was moved onto the fleet
-environment the rare-event estimator already drove (:mod:`opencdarr.estimator`).
+environment the rare-event estimator already drove (:mod:`opencdarr.estimate.montecarlo`).
 
 **Two roles, not three.** A parameter is :class:`Fixed` (held) or :class:`Sweep` (an output axis,
 one condition per level). There is deliberately no "draw it from a distribution" role here: that
@@ -29,8 +29,9 @@ sampler boundary it collapses to a pinned value; that is why sweeping needs no s
 
 **Marginalising a distribution over an axis is not here.** Estimating ``E_p[P(LoS)]`` for some
 ``p(dpsi)`` is a *reduction over* a swept response curve (weight the per-condition estimates), and
-weighting rates rather than counts is the mistake :func:`~opencdarr.estimator.combine_p_los` exists
-to warn about. Sweep the axis, then weight the counts yourself, until that reduction earns a home.
+weighting rates rather than counts is the mistake
+:func:`~opencdarr.estimate.montecarlo.combine_p_los` exists to warn about. Sweep the axis, then
+weight the counts yourself, until that reduction earns a home.
 
 **The file-driven entry point lives here too.** :func:`run_one_experiment` takes a YAML-loaded
 :class:`~opencdarr.config.Config` and is exactly the all-:class:`Fixed`, single-condition case of
@@ -65,17 +66,17 @@ from opencdarr.config import Config
 from opencdarr.cr.base import ConflictResolver
 from opencdarr.crr import ProbabilisticFTR
 from opencdarr.crr.base import RecoveryCriterion
-from opencdarr.estimator import (
+from opencdarr.estimate.ips import Particle, RareEventEstimate, estimate_rare_prob
+from opencdarr.estimate.montecarlo import (
     MonteCarloEstimate,
     combine_p_los,
     estimate_p_los,
 )
+from opencdarr.estimate.parallel import _joblib, resolve_jobs
+from opencdarr.estimate.parallel import estimate_rare_prob as estimate_rare_prob_parallel
 from opencdarr.fleet import Agent, Airframe, EncounterBuilder, build_env
-from opencdarr.ips import Particle, RareEventEstimate, estimate_rare_prob
 from opencdarr.kinematics import Kinematics
 from opencdarr.mission import Mission
-from opencdarr.parallel import _joblib, resolve_jobs
-from opencdarr.parallel import estimate_rare_prob as estimate_rare_prob_parallel
 from opencdarr.performance import Performance
 from opencdarr.rng import children, generator, root_seed_sequence
 from opencdarr.scenario import PairwiseEncounter, Scenario
@@ -251,9 +252,9 @@ class Methods:
 
     ``wind`` is the odd one out: it is a steady environment input rather than a pluggable model, so
     it has no ABC and lives here for the same reason ``perf`` does — the run needs it and no
-    scenario field carries it. It reaches **both** backends; it previously reached neither, because
-    :func:`~opencdarr.estimator.estimate_p_los` and :func:`~opencdarr.fleet.build_env` accept a
-    ``wind`` this module never passed.
+    scenario field carries it. It reaches **both** backends; it previously reached neither,
+    because :func:`~opencdarr.estimate.montecarlo.estimate_p_los` and
+    :func:`~opencdarr.fleet.build_env` accept a ``wind`` this module never passed.
     """
 
     detector: ConflictDetector
@@ -503,8 +504,9 @@ def _run_mc(condition: Condition, base: Config, methods: Methods, backend: MC,
     """One MC cell: ``estimate_p_los`` over this condition's config, components and scenario.
 
     ``jobs`` above 1 splits the encounter fan-out into contiguous seed slices and pools the counts
-    (:func:`~opencdarr.estimator.combine_p_los`). Each slice is ``children(root, lo, hi)`` of the
-    *same* tree the serial run walks, and the parts are combined in submission order, so the pooled
+    (:func:`~opencdarr.estimate.montecarlo.combine_p_los`). Each slice is
+    ``children(root, lo, hi)`` of the *same* tree the serial run walks, and the parts are
+    combined in submission order, so the pooled
     result is the serial one exactly — not merely an equivalent sample.
     """
     cfg = dataclasses.replace(_config_for(condition, base, backend.n_encounters), seed=seed)
@@ -537,7 +539,7 @@ def _run_ips(condition: Condition, base: Config, methods: Methods, backend: IPS,
     encounter distribution MC integrates over (ADR 0017 §4), which is what keeps the two backends
     comparable, and sharing the builder is what keeps that true for a fleet as well as for a pair.
     The forward CNS streams are spawned per particle per level inside
-    :func:`~opencdarr.ips.ips_once`, not here.
+    :func:`~opencdarr.estimate.ips.ips_once`, not here.
     """
     cfg = _config_for(condition, base, backend.n_particles)
     m = _resolved_methods(condition, methods)
@@ -783,7 +785,8 @@ class ExperimentResult:
         """:meth:`records` as a ``pandas.DataFrame``.
 
         ``pandas`` is imported here rather than at module scope: it is an optional extra (like
-        ``matplotlib`` for :mod:`opencdarr.viz` and ``joblib`` for :mod:`opencdarr.parallel`), so a
+        ``matplotlib`` for :mod:`opencdarr.viz` and ``joblib`` for
+        :mod:`opencdarr.estimate.parallel`), so a
         plain install stays numpy + pyyaml and :meth:`records` works without it.
         """
         try:
@@ -1113,7 +1116,7 @@ def run_one_experiment(
     The all-:class:`Fixed`, one-condition case of :func:`run_experiment`, with the components named
     as strings and resolved through :mod:`opencdarr.registry`. Nothing is declared as an axis, so
     the result has one row; ``res.cell()`` reaches the
-    :class:`~opencdarr.estimator.MonteCarloEstimate` behind it.
+    :class:`~opencdarr.estimate.montecarlo.MonteCarloEstimate` behind it.
 
     Kept as its own entry point because a config file is *committable and diffable* in a way a
     Python call is not — ``config + seed + code-hash -> result`` without writing code. It is a thin

@@ -29,7 +29,7 @@ import pairwise  # noqa: E402
 import random_traffic  # noqa: E402
 import ring  # noqa: E402
 
-from opencdarr.parallel import resolve_jobs  # noqa: E402
+from opencdarr.estimate.parallel import resolve_jobs  # noqa: E402
 
 PARTS = {
     "pairwise": (pairwise.ANGLES, lambda: [

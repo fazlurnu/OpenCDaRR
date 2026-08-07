@@ -18,7 +18,7 @@ from opencdarr.config import (
 )
 from opencdarr.cr import MVP
 from opencdarr.crr import PastCPA
-from opencdarr.estimator import (
+from opencdarr.estimate.montecarlo import (
     MonteCarloEstimate,
     combine_p_los,
     estimate_p_los,

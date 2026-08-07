@@ -21,7 +21,7 @@ from opencdarr.config import (
     ScenarioConfig,
     SimulationConfig,
 )
-from opencdarr.estimator import MonteCarloEstimate, combine_p_los, estimate_p_los
+from opencdarr.estimate.montecarlo import MonteCarloEstimate, combine_p_los, estimate_p_los
 from opencdarr.fleet import Agent
 from opencdarr.performance import M600
 from opencdarr.scenario import pairwise, sample_pairwise

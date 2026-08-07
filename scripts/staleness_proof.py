@@ -4,7 +4,7 @@ Validates the rare-event *estimator machinery* against a closed form, isolated f
 physics. The rare event is a **communication blackout**: a single directed link drops every one of
 ``W`` broadcasts in a row. Its probability is exactly ``P = (1 - rx)^W`` — no simulation needed to
 know the answer — so it is the perfect check that our fixed-effort multilevel splitting (the logic
-of ``opencdarr.ips.ips_once``) returns the right number with real variance reduction.
+of ``opencdarr.estimate.ips.ips_once``) returns the right number with real variance reduction.
 
 Why this and not P(LoS): at perfect nav a one-link blackout does *not* reliably cause loss of
 separation (a blind aircraft extrapolating a constant-velocity intruder is accurate), so P(LoS) has

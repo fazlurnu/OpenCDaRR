@@ -11,8 +11,9 @@ Pure: no I/O.
 
 **One environment, both estimators.** Each encounter runs through :func:`opencdarr.fleet.run_fleet`
 at ``n = 2`` — the same ``build_env`` / ``advance`` / ``is_terminal`` interface the rare-event
-estimator drives (:mod:`opencdarr.ips`) — rather than through a dedicated pairwise loop. The move
-changed no number: the reduction was pinned bit-for-bit across the whole sampled crossing-angle
+estimator drives (:mod:`opencdarr.estimate.ips`) — rather than through a dedicated pairwise
+loop. The move changed no number: the reduction was pinned bit-for-bit across the whole sampled
+crossing-angle
 support before the pairwise runner was deleted, and the n = 2 anchors in ``tests/test_fleet.py``
 carry it now. What it buys is that a
 model handed to *this* estimator is the same model IPS would run. Before it, ``kinematics`` never
@@ -49,7 +50,7 @@ class MonteCarloEstimate:
     the unit of the experiment: its count is *chosen* by the caller rather than discovered by the
     run, draws are independent by seed construction (ADR 0001), and it is the same unit the
     rare-event estimator samples (one particle = one initial condition), which is what makes
-    :mod:`opencdarr.ips` and this module estimate *literally* the same quantity.
+    :mod:`opencdarr.estimate.ips` and this module estimate *literally* the same quantity.
 
     This replaces an earlier ``1 - n_los/n_conflict``, which divided by "encounters where the
     detector fired on the true states". That was contaminated by the very thing under test:

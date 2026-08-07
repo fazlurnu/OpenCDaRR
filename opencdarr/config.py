@@ -92,7 +92,7 @@ def _validate(cfg: Config) -> None:
         # encounter count) needs no filtering: create_conflict only breaches the protected zone
         # when the miss distance is inside it, so dcpa drawn from U(0, dcpa_max) must stay within
         # rpz. Above it, a fraction of encounters would silently be non-conflicts and P(LoS) would
-        # be reported over a mixed population (opencdarr.estimator.MonteCarloEstimate).
+        # be reported over a mixed population (opencdarr.estimate.montecarlo.MonteCarloEstimate).
         "scenario.dcpa_max <= conflict.rpz": cfg.scenario.dcpa_max <= cfg.conflict.rpz,
         "scenario.tlos > 0": cfg.scenario.tlos > 0,
         "scenario.pos_ci95 >= 0": cfg.scenario.pos_ci95 >= 0,

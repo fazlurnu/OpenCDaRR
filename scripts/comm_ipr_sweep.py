@@ -35,7 +35,7 @@ from opencdarr.config import (  # noqa: E402
 )
 from opencdarr.cr import MVP  # noqa: E402
 from opencdarr.crr import PastCPA  # noqa: E402
-from opencdarr.estimator import estimate_p_los  # noqa: E402
+from opencdarr.estimate.montecarlo import estimate_p_los  # noqa: E402
 from opencdarr.performance import M600  # noqa: E402
 from opencdarr.scenario import pairwise  # noqa: E402
 

@@ -17,7 +17,7 @@ from opencdarr.config import (
 )
 from opencdarr.cr import MVP
 from opencdarr.crr import PastCPA
-from opencdarr.estimator import estimate_p_los
+from opencdarr.estimate.montecarlo import estimate_p_los
 from opencdarr.fleet import Agent, run_fleet
 from opencdarr.performance import M600
 from opencdarr.rng import generator, root_seed_sequence, spawn

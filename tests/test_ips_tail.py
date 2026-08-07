@@ -21,8 +21,8 @@ import pytest
 
 from opencdarr.cd import StateBased
 from opencdarr.cns.broadcast import schedule_for
+from opencdarr.estimate.ips import Particle, estimate_rare_prob, ips_once, replication_seeds
 from opencdarr.fleet import Agent, build_env
-from opencdarr.ips import Particle, estimate_rare_prob, ips_once, replication_seeds
 from opencdarr.performance import M600
 from opencdarr.rng import generator
 from opencdarr.scenario import sample_pairwise
@@ -116,7 +116,7 @@ def test_the_sharded_parallel_path_reproduces_every_tail_field() -> None:
     exactly the trip that broke an identity-counted ``n_lineages``.
     """
     pytest.importorskip("joblib")
-    from opencdarr import parallel as par
+    from opencdarr.estimate import parallel as par
 
     seqs = replication_seeds(5, 3)
     serial = [ips_once(_build_initial(2), _SHELLS, 60, s, tail=True) for s in seqs]

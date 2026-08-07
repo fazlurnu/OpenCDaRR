@@ -1,6 +1,6 @@
 """Handbook figure: what multi-level splitting does to the sample.
 
-One picture for the "Rare-event simulation" page, from a real :mod:`opencdarr.ips` run on the
+One picture for the "Rare-event simulation" page, from a real :mod:`opencdarr.estimate.ips` run on the
 handbook's 90 deg crossing encounter:
 
   1. *left* — the population shell by shell. Each dot is one particle's running-minimum separation
@@ -10,7 +10,7 @@ handbook's 90 deg crossing encounter:
   2. *right* — the same run as a product. Survival fractions that are individually unremarkable
      multiply down to the rare probability, which is the entire trick.
 
-The loop below mirrors :func:`opencdarr.ips.ips_once` step for step using only public functions
+The loop below mirrors :func:`opencdarr.estimate.ips.ips_once` step for step using only public functions
 (``evolve_shard`` + ``resample_level``), so it can record each particle's achieved running-minimum;
 the estimate is asserted equal to ``ips_once`` on the same seed before anything is drawn.
 
@@ -33,8 +33,8 @@ from opencdarr.cd import StateBased  # noqa: E402
 from opencdarr.cns.navigation import GnssNavigation  # noqa: E402
 from opencdarr.cr import MVP  # noqa: E402
 from opencdarr.crr import PastCPA  # noqa: E402
+from opencdarr.estimate.ips import Particle, evolve_shard, ips_once, resample_level  # noqa: E402
 from opencdarr.fleet import Agent, build_env  # noqa: E402
-from opencdarr.ips import Particle, evolve_shard, ips_once, resample_level  # noqa: E402
 from opencdarr.performance import M600  # noqa: E402
 from opencdarr.rng import children, root_seed_sequence  # noqa: E402
 from opencdarr.scenario import create_conflict  # noqa: E402
