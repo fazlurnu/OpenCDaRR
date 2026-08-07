@@ -165,6 +165,21 @@ def _evolve_slice(
     return [p.state for p in evolve_shard(particles, target, children(level_seq, lo, hi))]
 
 
+def _init_slice(
+    build_initial: BuildInitial,
+    init_seq: np.random.SeedSequence,
+    lo: int,
+    hi: int,
+) -> list[Particle]:
+    """One worker's slice of one replication's initial cloud: particles ``lo..hi`` sampled.
+
+    ``build_initial`` is a pure function of its seed and the geometry seeds are children of
+    ``init_seq`` by index, so building a slice in a worker returns the very particles the parent
+    would have built — any partition of the range recomposes to the serial cloud.
+    """
+    return [build_initial(s) for s in children(init_seq, lo, hi)]
+
+
 def _tail_slice(
     particles: Sequence[Particle],
     tail_seq: np.random.SeedSequence,
@@ -199,7 +214,7 @@ def _lockstep(
     tail: bool = True,
 ) -> list[IPSResult]:
     """Advance every replication shell-by-shell together, sharding each level across all workers;
-    the tail leg is sharded over the same pool once the ladder is done.
+    the initial clouds and the tail leg are sharded over the same pool the same way.
 
     The seed tree is built exactly as :func:`~opencdarr.estimate.ips.ips_once` builds it, and
     this function never calls ``.spawn()`` on a level's sequence — it addresses that sequence's
@@ -209,7 +224,7 @@ def _lockstep(
     parallel_cls, delayed = _joblib()
     reps = len(seqs)
 
-    clouds: list[list[Particle]] = []
+    init_seqs: list[np.random.SeedSequence] = []
     level_seqs: list[list[np.random.SeedSequence]] = []
     tail_seqs: list[np.random.SeedSequence] = []
     for seq in seqs:
@@ -218,25 +233,40 @@ def _lockstep(
         # three children, exactly as ips_once asks for them — the third is the tail's, and a
         # SeedSequence child depends only on its index, so the first two are unmoved by it
         init_seq, evolve_seq, tail_seq = children(seq, 0, 3)
+        init_seqs.append(init_seq)
         tail_seqs.append(tail_seq)
-        # Built in the parent on purpose: building in workers would give each one its own `env`
-        # objects, and pickle only collapses repeated references it can see are *the same object*.
-        # Distinct-but-equal envs cost ~2x the bytes and ~4x the serialisation time per level.
-        clouds.append([build_initial(s) for s in children(init_seq, 0, n_particles)])
         level_seqs.append(children(evolve_seq, 0, len(levels)))
 
     survival: list[list[float]] = [[] for _ in range(reps)]
     collapsed: dict[int, IPSResult] = {}
     lineages: list[int] = [0] * reps
     live = list(range(reps))
-    n_aircraft = len(clouds[0][0].state.states) if clouds and clouds[0] else 0
 
     finals: dict[int, tuple[float, float]] = {}
-    # One pool for the whole ladder and the tail: re-creating it per level would re-spawn every
-    # worker process and re-import opencdarr in each, 17 times over for a production ladder.
+    # One pool for the initial clouds, the whole ladder and the tail: re-creating it per level
+    # would re-spawn every worker process and re-import opencdarr in each, 17 times over for a
+    # production ladder.
     with parallel_cls(
         n_jobs=workers, batch_size=1, pre_dispatch=str(workers), verbose=verbose
     ) as run:
+        # The initial clouds, sharded like everything else: sampling reps × n_particles
+        # geometries serially here measured as 84 s of a random-traffic campaign cell. The cost
+        # traded in — envs built in different slices no longer share their component objects, so
+        # a later level payload collapses less under pickle — measures at +1.6 % of the payload
+        # bytes on a campaign-shaped cloud, because a *sampled* geometry already gives every
+        # particle its own env and the shared components are the small stateless ones. (A
+        # pinned-geometry caller shares one particle cloud-wide; that shape now ships one copy
+        # per init slice instead of one, still nothing next to the evolved states.)
+        shards = _shard_count(reps, workers, n_particles, oversubscribe, min_shard)
+        bounds = _shard_bounds(n_particles, shards)
+        plan = [(r, lo, hi) for r in range(reps) for lo, hi in bounds]
+        done = run(
+            delayed(_init_slice)(build_initial, init_seqs[r], lo, hi) for r, lo, hi in plan
+        )
+        clouds: list[list[Particle]] = [[] for _ in range(reps)]
+        for (r, _, _), part in zip(plan, done, strict=True):
+            clouds[r].extend(part)
+        n_aircraft = len(clouds[0][0].state.states) if clouds and clouds[0] else 0
         for k, target in enumerate(levels):
             shards = _shard_count(len(live), workers, n_particles, oversubscribe, min_shard)
             bounds = _shard_bounds(n_particles, shards)
