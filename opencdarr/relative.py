@@ -161,12 +161,22 @@ def pairwise_relative(
     The vector form of :func:`pairwise_min_sep` — same one ``geo.qdrdist`` per pair, so it costs
     essentially the same, but it returns the geometry rather than only its magnitude. That is what
     :func:`segment_min_sep` needs to close the gap *between* two sampled instants.
+
+    Each aircraft's velocity vector is computed once and shared across its pairs rather than
+    re-derived per pair as :func:`relative_enu` would — the same :func:`velocity_enu` floats
+    either way, ``n`` trig evaluations instead of ``n·(n-1)``.
     """
-    return tuple(
-        relative_enu(states[i], states[j])
-        for i in range(len(states))
-        for j in range(i + 1, len(states))
-    )
+    vels = [velocity_enu(s) for s in states]
+    pairs: list[Relative] = []
+    for i in range(len(states)):
+        vox, voy = vels[i]
+        for j in range(i + 1, len(states)):
+            qdr, dist = geo.qdrdist(states[i].lat, states[i].lon, states[j].lat, states[j].lon)
+            q = math.radians(qdr)
+            vix, viy = vels[j]
+            pairs.append(Relative(rx=dist * math.sin(q), ry=dist * math.cos(q),
+                                  vx=vix - vox, vy=viy - voy))
+    return tuple(pairs)
 
 
 def pair_ids(n: int) -> tuple[tuple[int, int], ...]:

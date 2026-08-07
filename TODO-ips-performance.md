@@ -31,12 +31,23 @@ number (`experiment/backends.py`).
       exists to check agreement on `p_los`, and MC is anchored there anyway — flying 20 000
       continuations to re-measure K/A that MC already measures may be pure cost. Target rungs
       keep the tail; it is the only K/A source where MC starves.
-- [ ] **Early stop:** K and A can only change while some pair can still breach. Candidate
-      absorbing test: all pairs diverging and separated (the `_all_clear` predicate without the
-      done-timeout wait). **Check before trusting it:** under noisy CDR a resolver reaction can
-      re-converge a diverging pair, so measure how often K/A would still have grown after the
-      first all-diverging instant. If the test holds, a never-clearing ring stops flying the
-      ~100 s of encounter it currently burns per continuation (breach at t ≈ 148, `t_max` 250).
+- [x] **Early stop — measured 2026-08-07, and declined** (`scripts/early_stop_probe.py`; rings
+      n=6/8 on the 1500 m ring plus a random-traffic density sweep n = 5/8/10/15 on the 900 m
+      disc; 30 m rung; thresholds 0.5/2/5 s of sustained clear; ~1 600 encounters). K and A
+      never moved after a single clear step anywhere — but the sweep shows *why*, and it is not
+      that dense traffic is benign: the predicate is **global**, and its firing rate collapses
+      with density (69 % of encounters at n=5 → 14 % → 4 % → **0 % at n=15**, where every
+      encounter dies at `t_max`). An aircraft clearing one encounter and meeting another — the
+      real sequential-conflict mechanism in dense traffic — keeps some pair converging, so the
+      fleet-level clear never arrives; where it can arrive, it means the wave has dispersed and
+      nobody is left to meet. So the stop is *vacuously* safe where it fires and unavailable on
+      the expensive fleets (ring n=8: 28/300; savings elsewhere 13–34 s of sim, a few percent
+      of wall post-sharding). The running minimum is **not** absorbing regardless — a 24 m
+      `min_sep` dip arrived after five seconds of sustained clear (n=5) — so the level legs are
+      disqualified outright. Not implemented. **Scope caveat:** all of this is a property of
+      the encounter-based design (one wave through a disc, no arrivals). In continuous traffic
+      a global clear would be followed by fresh conflicts from new entrants; if that scenario
+      class is ever added, this measurement must be redone there.
 
 ## 3. Geodesy / per-step cost — ideas parked, not committed
 
@@ -45,13 +56,21 @@ The deep cut, kept as a list until measured designs exist. Profile (ring n = 8):
 `advance`, i.e. ~3.6 per pair per step, roughly half of them recomputing geometry already
 computed that step. `dataclasses.replace` churn is another ~15 %.
 
-- [ ] Reuse the post-step `pairwise_relative` as the next step's `rel_pre` — it is recomputed
-      identically today. Needs the geometry carried alongside the state without breaking the
-      immutable-particle contract (ADR 0004); pure caching, no number may change.
-- [ ] Let `_all_clear` read that same post-step geometry instead of its own `relative_enu` pass
-      (the third recomputation per step).
-- [ ] The detection sweep runs **ordered** pairs; `detect(i, j) == detect(j, i)` by CPA symmetry,
-      so half those calls are free to drop.
+- [x] **Done 2026-08-07 (with the `_all_clear` reuse and a third, unplanned one — per-aircraft
+      velocities computed once inside `pairwise_relative`).** The post-step geometry rides
+      `FleetState` as a derived cache: `compare=False`, dropped on pickle, `None` recomputes —
+      so the value semantics, the wire format and ADR 0004 are untouched. Verified bit-identical
+      on the MC record (540 encounters, every `min_sep`), on every IPS field serial *and*
+      lockstep (the pickle boundary included), and on step counts; full suite green. Measured
+      per step: **−3–5 % at n=2, −17–19 % at n=8, −22 % at 13 aircraft** — every backend pays
+      this path, so MC anchors gain the same.
+- [x] **Detection-sweep halving — declined on inspection.** The true-state sweep is guarded by
+      the *sticky* `conflict` flag, so it already runs ~once per encounter; the ~28 `detect`
+      calls/step in the profile come from `separation.step` — each observer's own *perceived*
+      picture, where `i`'s view of `j` and `j`'s view of `i` are different noisy states with no
+      symmetry to share. (And `qdrdist` uses `earth_radius(lat1)`, so even the true-state pair
+      is not bit-symmetric — the halving would have been boundary-equivalent, not identical.)
+      That cost belongs to the vectorisation below or a separation-layer redesign.
 - [ ] Flat-ENU fast path for the O(n²) inner loop: one tangent-plane projection per aircraft per
       step, pair math in metres — needs the error argument at the ~1 km scale these scenarios
       span (it will be far below the 40 m noise floor, but write it down).

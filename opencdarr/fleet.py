@@ -41,7 +41,7 @@ multi-aircraft regression (ADR 0004). Pure given its inputs; no globals.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
@@ -62,10 +62,10 @@ from opencdarr.kinematics import FixedWing, Kinematics, MotionCommand, Multiroto
 from opencdarr.measurement import MeasurementArea
 from opencdarr.performance import Performance
 from opencdarr.relative import (
+    Relative,
     pair_ids,
     pair_min_ranges,
     pairwise_relative,
-    relative_enu,
 )
 from opencdarr.separation import (
     INACTIVE,
@@ -223,6 +223,20 @@ class FleetState:
     los: bool
     min_sep: float
     los_pairs: frozenset[tuple[int, int]] = frozenset()  # pairs (i<j) that have crossed rpz so far
+    # Derived cache, not state: the pair geometry of ``states`` as ``advance`` last measured it
+    # (its post-step ``pairwise_relative``), which is bit-for-bit the next step's pre-step
+    # geometry — nothing between the two touches a kinematic field. Excluded from equality and
+    # dropped on pickle (a clone or a worker recomputes on first use), so the value semantics
+    # and the wire format are those of the cache-less state.
+    pair_rel: tuple[Relative, ...] | None = field(default=None, compare=False, repr=False)
+
+    def __getstate__(self) -> dict:
+        state = dict(self.__dict__)
+        state["pair_rel"] = None  # derivable — never worth shipping
+        return state
+
+    def __setstate__(self, state: dict) -> None:
+        self.__dict__.update(state)
 
     @property
     def n_los_pairs(self) -> int:
@@ -281,16 +295,19 @@ class FleetStreams:
 
 
 
-def _all_clear(states: list[AircraftState], mems: tuple[FleetMemory, ...], rpz: float) -> bool:
-    """Is the whole fleet done — every pair past CPA and separated, and nobody still resolving?"""
+def _all_clear(pair_rel: tuple[Relative, ...], mems: tuple[FleetMemory, ...],
+               rpz: float) -> bool:
+    """Is the whole fleet done — every pair past CPA and separated, and nobody still resolving?
+
+    Takes the step's already-measured pair geometry (``advance``'s post-step
+    ``pairwise_relative``) rather than recomputing it: same pairs, same order, same floats.
+    """
     if any(m.resolving for m in mems):
         return False
-    for i in range(len(states)):
-        for j in range(i + 1, len(states)):
-            rel = relative_enu(states[i], states[j])
-            diverging = rel.rx * rel.vx + rel.ry * rel.vy > 0.0
-            if not (diverging and rel.dist >= rpz):
-                return False
+    for rel in pair_rel:
+        diverging = rel.rx * rel.vx + rel.ry * rel.vy > 0.0
+        if not (diverging and rel.dist >= rpz):
+            return False
     return True
 
 
@@ -403,8 +420,11 @@ class FleetEnv:
 
         # detect on the true states, before any decision or step (top of the old loop). The
         # separation measurement needs both ends of the step, so it is taken *after* integrating;
-        # only the pre-step geometry is captured here.
-        rel_pre = pairwise_relative(states)
+        # only the pre-step geometry is captured here — and it is the previous step's post-step
+        # geometry when the state carries it: nothing between the two measurements moves an
+        # aircraft (the broadcast block below only stamps ``desired``, which geometry never
+        # reads), so the cached tuple is the recomputation, float for float.
+        rel_pre = state.pair_rel if state.pair_rel is not None else pairwise_relative(states)
         conflict = state.conflict or any(
             i != j and self.detector.detect(states[i], states[j], self.rpz, self.t_lookahead)
             for i in range(n)
@@ -444,7 +464,8 @@ class FleetEnv:
         # from t=0 (the first segment's left end) rather than at a comb of sampled instants. The
         # per-pair vector (not just its min) also names which pairs crossed rpz, so K and A
         # accumulate here at no extra geometry (ADR 0022).
-        per_pair = pair_min_ranges(rel_pre, pairwise_relative(states))
+        post = pairwise_relative(states)
+        per_pair = pair_min_ranges(rel_pre, post)
         if self.area is not None:
             # Flown, but not measured. A pair counts only where **both** aircraft are inside the
             # study region: one of them still on its way in is the release artefact the area exists
@@ -463,7 +484,7 @@ class FleetEnv:
             ids for ids, d in zip(pair_ids(n), per_pair, strict=True) if d < self.rpz
         )
 
-        clear = _all_clear(states, tuple(mems), self.rpz)
+        clear = _all_clear(post, tuple(mems), self.rpz)
         done_timer = state.done_timer + self.dt if clear else 0.0
 
         return FleetState(
@@ -479,6 +500,7 @@ class FleetEnv:
             los=los,
             min_sep=min_sep,
             los_pairs=los_pairs,
+            pair_rel=post,
         )
 
 
