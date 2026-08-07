@@ -29,7 +29,11 @@ encounter + one CDR method + plain Monte Carlo.
 *Done:* an end-to-end run from `config + seed` reproduces a known anchor within MC error.
 *(how-to Steps 0–2.)*
 *Gate green:* `run_encounter` in `opencdarr/loop.py`, `run_one_experiment` in `experiment.py`
-(`config + seed + code-hash → result`), and `estimate_ipr` in `estimator.py`. The kinematics are
+(`config + seed + code-hash → result`), and `estimate_ipr` in `estimator.py`. All three v0.1 names
+have since been superseded: the pairwise runner was deleted once `run_fleet`
+(`opencdarr/fleet.py`) reproduced it bit for bit, `experiment.py` grew into the
+`opencdarr/experiment/` package, and the estimator reports `p_los_run` / `p_los_ac` through
+`estimate_p_los` (`opencdarr/estimate/`, ADR 0022). The kinematics are
 validated analytically (ADR 0002) and, for the multirotor, against a recorded
 [BlueSky](https://github.com/TUDelft-CNS-ATM/bluesky) trajectory (ADR 0005). `step_dynamics` itself
 became the `Kinematics` interface — see the note under *Pluggable kinematics* below.
@@ -47,14 +51,16 @@ up as an ADR: cooperative / priority / sequential).
 *Done:* reduces to the v0.1 pairwise result at N=2. *(how-to Step 4; reviewer item #1.)*
 *Gate green:* `run_fleet` / `FleetEnv` in `opencdarr/fleet.py`, with the layered-directed
 coordination model in ADR 0004. The N=2 reduction is asserted bit-for-bit — `tests/test_fleet.py`,
-and the `--verify-n2` check that `scripts/ipr_fleet_sweep.py` runs by default.
+and the `--verify-n2` check that `scripts/ipr_fleet_sweep.py` ran by default. That flag retired
+with the pairwise runner; the n = 2 anchors in `tests/test_fleet.py` are that check now.
 
 **v0.4 — Rare events.** The `advance` / `level` / `is_terminal` interface + Blom–Bakker
 interacting particle system (IPS).
 *Done:* IPS agrees with brute-force MC in a *not-too-rare* regime; collision probability is
 reported **with a confidence interval**. *(how-to Steps 5–6.)*
 *Gate green:* `opencdarr/ips.py` (levels and splitting, ADR 0017) and `opencdarr/parallel.py`
-(scheduling across particles and replications, ADR 0018). The agreement gate is written up in
+(scheduling across particles and replications, ADR 0018); both have since gathered into the
+`opencdarr/estimate/` subpackage. The agreement gate is written up in
 `vault/observations/ips-gate1-correctness.md`; the efficiency gate is
 `ips-gate2-efficiency.md`. The interval that gate reported has since been dropped (ADR 0022):
 the estimators are compared on the ratio of their estimates instead, and the script that ran
@@ -108,7 +114,7 @@ against Past-CPA / FTR / Probabilistic-FTR.
   math already vectorizes (`geo.forward` uses numpy ufuncs; the turn-rate limiter was
   vectorized in the BlueSky source we extracted from). For rare-event work the highest-value
   axis is batching across **particles** (each a small clonable world), then joblib across
-  CPUs — the joblib half of that already shipped as `opencdarr/parallel.py` (ADR 0018), which
+  CPUs — the joblib half of that already shipped as `opencdarr/estimate/parallel.py` (ADR 0018), which
   spreads an IPS run over particles *and* replications; the vectorized step below has not. Do it
   on a *measured* profile, not on spec (`design-philosophy.md`: purity wins until a measured
   bottleneck), in three steps:

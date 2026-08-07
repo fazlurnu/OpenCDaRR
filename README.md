@@ -39,11 +39,12 @@ point of this platform.
 The same crossing, a multirotor heading north and a fixed-wing spawned straight into conflict, run
 four times, each panel adding a layer. **Perfect information:** one deterministic run, `MVP`
 resolves and `PastCPA` recovers, closest point of approach (CPA) 89 m. **GNSS and datalink noise:**
-200 noise realisations, intrusion prevention rate (IPR) 0.99 at a median CPA of 96 m. **Waypoint:**
-the multirotor re-intercepts its mission after avoiding, closing the spread at the same IPR.
-**Wind:** a steady 10 m/s (arrows point downwind) crabs both tracks and drops the IPR to 0.96, with
-the median CPA down to 73 m. All four panels share one set of axis limits, so the spread between
-them is the spread the model produces.
+200 noise realisations, a probability of loss of separation (LoS) of 0.01 per run, at a median
+minimum separation of 96 m. **Waypoint:** the multirotor re-intercepts its mission after avoiding,
+closing the spread at the same P(LoS). **Wind:** a steady 10 m/s (arrows point downwind) crabs
+both tracks and lifts P(LoS) to 0.03 per run, with the median minimum separation down to 73 m. All
+four panels share one set of axis limits, so the spread between them is the spread the model
+produces.
 
 Both figures come out of the shipped models. Regenerate the second with:
 
@@ -75,7 +76,7 @@ pip install -e ".[dev]"
 ## Test
 
 ```bash
-pytest        # run the test suite — 426 tests, green
+pytest        # run the test suite — 571 tests, green
 mypy          # type-check (strict; type hints everywhere)
 ruff check    # lint
 ```

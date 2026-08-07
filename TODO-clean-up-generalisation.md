@@ -19,7 +19,7 @@ they are why "run a fleet study" is still not the same motion as "run a pairwise
 | 2 | `experiment.py:89` | `_GEOMETRY_SLOTS = {dpsi, dcpa, side, gs_intr}` — the declarable geometry vocabulary is a hardcoded pairwise allowlist. **Softened, not solved:** a scenario binds its own size at construction and is swept via the `scenario` axis, so this no longer blocks fleet work; it still means pairwise pins are privileged names. |
 | 3 | `config.py:17-29` (`ScenarioConfig`) | `dcpa_max` and `tlos` are **pairwise** encounter geometry, but live in the global `Config` every scenario must carry. |
 | 4 | `experiment.py` (`Methods.airframes`) | one `Airframe` per aircraft, "ownship first" — a 2-element convention. |
-| 5 | `estimator.py` (`pairwise`) | the two-aircraft builder lives *inside the estimator module* rather than beside the other scenarios. |
+| ~~5~~ | ~~`estimator.py` (`pairwise`)~~ | ✅ **DONE** (2026-08-07, cleanup) — `pairwise` lives in `scenario/pairwise.py` beside the `sample_pairwise` it wraps, and the estimator imports no scenario module at all. `EncounterBuilder` moved to `fleet.py` beside `Agent`. |
 
 ### ~~The sharp one: #1~~ — fixed, 2026-08-06
 
@@ -50,8 +50,16 @@ plan rather than here — see "Sequencing".
 
 ## Breaking up `experiment.py`
 
-**1018 lines** today. It already carries its own seams as `# ---` banners, and they map almost 1:1
-onto modules — the split is close to mechanical:
+✅ **DONE** (2026-08-07, cleanup) — split as sketched below, one module per banner:
+`declaration` (62 lines) / `backends` (47) / `methods` (63) / `conditions` (41) / `cell` (262,
+carries the one behavioural addition: `supports_splitting` is now validated at declaration) /
+`identity` (139) / `results` (146) / `card` (74) / `__init__` (the entry points, re-exporting
+everything so no import moved). `registry.py` moved in beside its only consumer. `identity.py` and
+`opencdarr/cache.py` are named per the note below: what a key is made of, versus the store. The
+only test edits the split needed were three monkeypatch retargets onto `experiment.cell`.
+
+**1018 lines** at the time of writing. It already carries its own seams as `# ---` banners, and
+they map almost 1:1 onto modules — the split is close to mechanical:
 
 | Lines | Banner | → module | ~size |
 |---|---|---|---|
@@ -81,7 +89,7 @@ Notes:
 
 ## `pairwise()` and `run_encounter` — half agreed
 
-### `pairwise()`: keep it, but move it
+### `pairwise()`: keep it, but move it — ✅ moved (2026-08-07)
 
 Not redundant — a two-aircraft encounter is a real research object, and it is the *only* geometry the
 published pairwise pages use. What is wrong is **where it lives**: `estimator.py`, as though the
@@ -95,7 +103,12 @@ belongs there beside `ring` and `traffic`, and `sample_pairwise` with it. Then:
 ...and the estimator imports none of them. That is the version where N genuinely stops being special:
 the estimator has no pairwise import at all, rather than one it happens not to default to.
 
-### `run_encounter`: probably delete — but it costs an oracle
+### `run_encounter`: probably delete — but it costs an oracle. ✅ Deleted (2026-08-07)
+
+Decided and done: **deleted**, the first branch below. Every `min_sep` anchor moved onto
+`run_fleet` bit-for-bit *before* the deletion — that green run was the equivalence proof executed
+one last time — and the goldens in `tests/test_estimator.py` guard the n = 2 reduction now.
+The original trade, for the record:
 
 `loop.py` is 331 lines and `run_fleet` at n = 2 reproduces it **bit-for-bit** (asserted in
 `tests/test_fleet.py`). As a runtime path it is dead weight: `estimate_p_los` and IPS both go through
@@ -134,13 +147,17 @@ Decide explicitly; do not let it rot into "kept because nobody dared".
 
 ## Sequencing
 
-- **Now (current plan):** finish the metric rewrite + reachable IPS parallelism.
-- **Pull forward?** #1 (IPS takes a builder) is a prerequisite for a fleet-capable item 4 campaign,
-  and it is small now that `EncounterBuilder` exists. Strong candidate to fold into the current plan
-  rather than defer.
-- **With item 3 (`scenario/` package):** relocate `pairwise` + `sample_pairwise`.
-- **After the plan lands:** the `experiment/` split (mechanical, tests unchanged), then
-  `Config`/`ScenarioConfig` separation, then the `run_encounter` decision.
+- ~~**Now (current plan):** finish the metric rewrite + reachable IPS parallelism.~~ ✅
+- ~~**Pull forward?** #1 (IPS takes a builder)~~ ✅ folded into the metric plan.
+- ~~**With item 3 (`scenario/` package):** relocate `pairwise` + `sample_pairwise`.~~ ✅
+- ~~**After the plan lands:** the `experiment/` split (mechanical, tests unchanged),~~ ✅ ~~then~~
+  `Config`/`ScenarioConfig` separation **still open**, ~~then the `run_encounter` decision~~ ✅
+  (deleted).
+
+What remains of this file after the 2026-08 cleanup: rows #2–#4 of the N = 2 table
+(`_GEOMETRY_SLOTS` as an allowlist, `dcpa_max`/`tlos` in the global `Config`, the "ownship first"
+airframe convention) and the `Config`/`ScenarioConfig` separation — the generalisation half, all
+behavioural, none of it file moves.
 
 Do the behavioural fixes first and the file moves last, so every move commit can prove itself by
 leaving the tests untouched.

@@ -138,7 +138,7 @@ def draw(panels: list[tuple[str, list[FleetOutcome]]], out: Path) -> None:
     for ax, (title, runs) in zip(axes, panels, strict=True):
         plot_pairwise_montecarlo(runs, ax=ax, title=title,
                                  alpha=1.0 if len(runs) == 1 else None)
-        if len(runs) == 1:  # a sweep's P(LoS)/IPR header says nothing about a single run
+        if len(runs) == 1:  # a sweep's P(LoS)/median-min-sep header says nothing about a single run
             ax.set_title(f"{title}\nCPA = {runs[0].min_sep:.0f} m")
         ax.set_xlabel("east [m]")  # the helper warns of an exaggerated axis; ours is true to scale
         ax.set_aspect("equal", adjustable="box")
