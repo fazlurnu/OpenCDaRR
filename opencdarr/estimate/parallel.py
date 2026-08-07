@@ -2,9 +2,10 @@
 
 :mod:`opencdarr.estimate.ips` stays the serial reference: readable, numpy-only, and the thing
 this module is validated against. What lives here is the *scheduling* half of
-``docs/roadmap.md``'s "batching across particles, then joblib across CPUs" — how the same work is spread over cores, never what
-the work is. Every function here returns results **bit-identical** to its serial twin
-(``tests/test_parallel.py``), so switching to it is a performance decision and nothing else.
+``docs/roadmap.md``'s "batching across particles, then joblib across CPUs" — how the same work is
+spread over cores, never what the work is. Every function here returns results **bit-identical**
+to its serial twin (``tests/test_parallel.py``), so switching to it is a performance decision and
+nothing else.
 
 **Why it exists.** Callers used to parallelise by handing one whole replication to each worker
 (``Parallel(delayed(ips_once)) for s in replication_seeds(...)``), which caps usable cores at

@@ -10,10 +10,10 @@ from __future__ import annotations
 
 import pytest
 
-from opencdarr import registry
 from opencdarr.cd import StateBased
 from opencdarr.cr import MVP, VO
 from opencdarr.crr import FTR, PastCPA
+from opencdarr.experiment import registry
 from opencdarr.performance import M600
 
 
