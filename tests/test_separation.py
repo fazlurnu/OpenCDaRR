@@ -69,6 +69,20 @@ def test_no_resolver_or_no_traffic_flies_nominal() -> None:
     assert cmd2 == nominal and mem2 == INACTIVE
 
 
+def test_no_detector_flies_nominal() -> None:
+    """Detection disabled -> no pair can arm, so a live conflict is flown straight through.
+
+    The same exit as ``resolver=None``, one layer earlier: without a detector there is nothing to
+    resolve *or* recover from, so the resolver and the recovery criterion passed here are inert.
+    """
+    own, intr = _pair()
+    nominal = _nominal(own)
+    cmd, mem = SeparationManager().step(
+        own, [intr], nominal, INACTIVE, _RPZ, _LOOKAHEAD, None, MVP(margin=1.1), PastCPA()
+    )
+    assert cmd == nominal and mem == INACTIVE
+
+
 def test_manager_is_stateless() -> None:
     """Stepping writes nothing to the instance; a shared manager is reuse-safe (ADR 0011 §5)."""
     own, intr = _pair()

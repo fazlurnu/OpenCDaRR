@@ -132,7 +132,7 @@ class SeparationManager:
         memory: FleetMemory,
         rpz: float,
         t_lookahead: float,
-        detector: ConflictDetector,
+        detector: ConflictDetector | None,
         resolver: ConflictResolver | None,
         recovery: RecoveryCriterion | None,
         adapter: SetpointAdapter | None = None,
@@ -164,15 +164,19 @@ class SeparationManager:
         declared intent, when present, is never overwritten.
 
         ``perceived_traffic`` empty ⇒ nothing received (before first contact on a lossy link, or no
-        traffic) ⇒ fly nominal (ADR 0006 §5). ``adapter`` (default ``None`` = identity) projects
+        traffic) ⇒ fly nominal (ADR 0006 §5). ``detector=None`` ⇒ **detection is off**: no pair can
+        ever become active, so there is nothing to resolve or recover from and the aircraft flies
+        its nominal for the whole encounter (the same exit ``resolver=None`` takes). ``adapter``
+        (default ``None`` = identity) projects
         each exit's command onto the aircraft's airframe channels (Phase 4e /
         :func:`project_to_fixedwing`); a multirotor passes ``None`` (byte-identical path).
         """
         def emit(command: MotionCommand, mem: FleetMemory) -> tuple[MotionCommand, FleetMemory]:
             return (command if adapter is None else adapter(command)), mem
 
-        if resolver is None or not perceived_traffic:
-            return emit(nominal, INACTIVE)  # resolution disabled, or nothing received: fly nominal
+        # detection off, resolution off, or nothing received: fly nominal
+        if detector is None or resolver is None or not perceived_traffic:
+            return emit(nominal, INACTIVE)
 
         new_resopairs: list[tuple[str, DesiredVelocity]] = []
         conflicting: list[AircraftState] = []  # detected pairs still active -> the resolution set

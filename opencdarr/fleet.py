@@ -325,7 +325,7 @@ class FleetEnv:
     adapters: tuple[SetpointAdapter | None, ...]
     aps: tuple[Autopilot, ...]
     separation: SeparationManager
-    detector: ConflictDetector
+    detector: ConflictDetector | None  # None -> detection off (see build_env)
     resolver: ConflictResolver | None
     recovery: RecoveryCriterion | None
     cns: CNS
@@ -425,11 +425,14 @@ class FleetEnv:
         # aircraft (the broadcast block below only stamps ``desired``, which geometry never
         # reads), so the cached tuple is the recomputation, float for float.
         rel_pre = state.pair_rel if state.pair_rel is not None else pairwise_relative(states)
-        conflict = state.conflict or any(
-            i != j and self.detector.detect(states[i], states[j], self.rpz, self.t_lookahead)
+        # With detection off there is no prediction to make, so the flag stays False for the whole
+        # run — the encounter is still flown and still measured, it is simply never *predicted*.
+        detector = self.detector
+        conflict = state.conflict or (detector is not None and any(
+            i != j and detector.detect(states[i], states[j], self.rpz, self.t_lookahead)
             for i in range(n)
             for j in range(n)
-        )
+        ))
 
         # aircraft whose own broadcast clock is due this tick: all of them together in the aligned
         # default, a per-aircraft subset once phases are offset
@@ -510,7 +513,7 @@ def build_env(
     rpz: float,
     t_lookahead: float,
     dt: float,
-    detector: ConflictDetector,
+    detector: ConflictDetector | None,
     resolver: ConflictResolver | None = None,
     recovery: RecoveryCriterion | None = None,
     wind: WindField = NO_WIND,
@@ -532,6 +535,12 @@ def build_env(
     :class:`~opencdarr.kinematics.Multirotor`, a velocity→course adapter only for a fixed-wing, and
     a frozen :class:`CruiseAutopilot` at each aircraft's initial cruise unless it carries its own
     mission autopilot.
+
+    ``detector=None`` switches **conflict detection off**, the CDR layer's outermost off-switch:
+    nothing is ever predicted, so ``conflict`` stays ``False`` and — detection being what feeds
+    resolution — a ``resolver`` passed alongside can never fire. The fleet flies its nominal
+    missions through each other, and the encounter is measured on the true states exactly as
+    always (``los`` / ``min_sep`` / the losing pairs are geometry, not detection).
     """
     n = len(agents)
     kinematics = tuple(a.kinematics or _DEFAULT_KINEMATICS for a in agents)
@@ -581,7 +590,7 @@ def run_fleet(
     rpz: float,
     t_lookahead: float,
     dt: float,
-    detector: ConflictDetector,
+    detector: ConflictDetector | None,
     resolver: ConflictResolver | None = None,
     recovery: RecoveryCriterion | None = None,
     wind: WindField = NO_WIND,
@@ -616,6 +625,13 @@ def run_fleet(
     (conflict / LoS / min-sep) is measured on the **true** states every step. Terminates once every
     pair is diverging and separated and no aircraft is resolving for ``done_timeout``, or at
     ``t_max``.
+
+    The CDR layer switches off from the outside in: ``recovery=None`` never releases back to the
+    nominal, ``resolver=None`` never manoeuvres, and ``detector=None`` never even *predicts* —
+    nothing is detected, so nothing downstream of it can fire (a ``resolver`` passed alongside is
+    unreachable) and ``conflict`` stays ``False``. That last one is the do-nothing baseline: the
+    fleet flies its nominal missions through each other, still measured on the true states, which
+    is what the ``los`` / ``min_sep`` of an equipped fleet is a comparison *against*.
 
     ``schedule`` (a :class:`~opencdarr.cns.broadcast.BroadcastSchedule`) owns the transmit timing —
     the interval, an optional per-aircraft phase offset, and optional per-transmission jitter. The

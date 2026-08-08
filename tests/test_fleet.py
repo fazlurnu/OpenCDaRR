@@ -12,6 +12,7 @@ Two properties:
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 
 import pytest
 
@@ -63,6 +64,46 @@ def test_resolved_encounter_keeps_separation() -> None:
     assert outcome.conflict is True
     assert outcome.los is False
     assert outcome.min_sep >= _RPZ
+
+
+def test_detection_off_flies_the_same_encounter_and_never_flags_it() -> None:
+    """``detector=None`` removes the prediction, not the encounter.
+
+    The comparison run keeps its detector but carries no resolver, so neither fleet ever
+    manoeuvres — which makes the two the *same* trajectory and leaves the flag as the only
+    difference between the outcomes. Everything measured on the true states is untouched.
+    """
+    own, intr = _pair()
+    fleet = [Agent(own, M600), Agent(intr, M600)]
+    off = run_fleet(fleet, rpz=_RPZ, t_lookahead=_LOOKAHEAD, dt=_DT, detector=None)
+    on = run_fleet(fleet, rpz=_RPZ, t_lookahead=_LOOKAHEAD, dt=_DT, detector=StateBased())
+
+    assert on.conflict is True and off.conflict is False  # it was a conflict; nobody looked
+    assert off == replace(on, conflict=False)             # field for field, the same run
+    assert off.los is True and off.min_sep < _RPZ         # still flown, still measured
+
+
+def test_detection_off_leaves_the_resolver_unreachable() -> None:
+    """Detection is the outermost switch: nothing detected, so nothing downstream of it fires.
+
+    The same MVP + Past-CPA stack that clears this conflict when it can see is inert without a
+    detector — the fleet flies the encounter it would have flown carrying no CDR at all.
+    """
+    own, intr = _pair()
+    fleet = [Agent(own, M600), Agent(intr, M600)]
+    equipped = run_fleet(
+        fleet, rpz=_RPZ, t_lookahead=_LOOKAHEAD, dt=_DT, detector=StateBased(),
+        resolver=MVP(margin=1.1), recovery=PastCPA(),
+    )
+    blind = run_fleet(
+        fleet, rpz=_RPZ, t_lookahead=_LOOKAHEAD, dt=_DT, detector=None,
+        resolver=MVP(margin=1.1), recovery=PastCPA(),
+    )
+    no_cdr = run_fleet(fleet, rpz=_RPZ, t_lookahead=_LOOKAHEAD, dt=_DT, detector=None)
+
+    assert equipped.los is False  # the stack does clear it when it is given something to see
+    assert blind.los is True      # ... and cannot act at all when nothing is ever detected
+    assert blind == no_cdr
 
 
 # --- Deterministic n = 2 regression: the layered flow (CruiseAutopilot + SeparationManager) on
