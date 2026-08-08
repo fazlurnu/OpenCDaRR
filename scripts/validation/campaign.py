@@ -37,7 +37,10 @@ no answer there at any budget anyone will pay, which is the reason splitting exi
 **A cached condition is skipped, not re-timed.** Reading a stored row takes milliseconds. Writing
 that down as the cost of a 50 000-encounter batch would be a wrong number rather than a fast one,
 so a cached row keeps its original seconds and stays out of the totals. ``--no-cache`` re-runs and
-re-times conditions that are already stored.
+re-times conditions that are already stored. Rows are matched by label, and a label does not name
+its geometry — so every row also records its scenario's repr, and a stored row whose geometry no
+longer matches the requested one is re-run rather than served (a 900 m-ring row once answered a
+1500 m request without a word; this is what stops the next one).
 
 **Two noise rungs, and why.** Every condition is run at two GNSS self-noise levels, and the pair is
 the point. At 40 m the loss is common enough that MC sees hundreds of events, so asking whether
@@ -310,6 +313,7 @@ def _row(cell: Cell, args: argparse.Namespace) -> dict[str, Any]:
 
     return {
         **cell.label,
+        "_scenario": repr(cell.scenario),
         "n_aircraft": cell.scenario.size(),
         "mc_p_los_run": mc.p_los_run, "mc_p_los_ac": mc.p_los_ac, "mc_mean_k": mc.mean_k,
         "mc_events": mc.n_los, "mc_encounters": mc.n_encounters,
@@ -372,6 +376,15 @@ def run_part(part: str, cells: list[Cell], args: argparse.Namespace) -> pathlib.
     rows: list[dict[str, Any]] = []
     for cell in cells:
         previous = stored.get(cell.key)
+        # A row is matched by its label, and the label does not carry the geometry — a stored
+        # 900 m-ring row answers a 1500 m request without a word. The row's scenario repr is the
+        # guard: a mismatch re-runs instead of serving the stale geometry. Rows written before
+        # the repr was recorded cannot be checked and are served as before.
+        if previous is not None and "_scenario" in previous \
+                and previous["_scenario"] != repr(cell.scenario):
+            print(f"  {cell.label}  stored row is {previous['_scenario']}, "
+                  f"not {repr(cell.scenario)} — re-running")
+            previous = None
         if previous is not None:
             print(f"  {cell.label}  cached")
             rows.append({**previous, "cached": True})

@@ -42,7 +42,7 @@ _EPS = 1e-9  # covariance regularisation: keeps Sigma invertible at zero declare
 # erf is the inner loop here: _phi runs three times per _p_offset_gt, over the whole angle grid.
 # SciPy's is a true ufunc where the fallback is a Python-level loop, worth ~1.5x on _p_offset_gt
 # as a whole, so use it when it is installed (`pip install opencdarr[fast]`) and fall back
-# otherwise -- the core install stays numpy-only (docs/design-philosophy.md #10). The two agree to
+# otherwise -- the core install stays free of SciPy (docs/design-philosophy.md #10). The two agree to
 # 2e-16, far below the quadrature error, so which one runs never changes a resume decision.
 try:
     from scipy.special import erf as _erf  # type: ignore[import-untyped]

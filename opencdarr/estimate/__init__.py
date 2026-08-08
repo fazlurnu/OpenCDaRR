@@ -3,9 +3,11 @@
 One family, one import surface (mirroring ``cd``/``cr``/``crr``): ``montecarlo`` is
 :func:`estimate_p_los` over :func:`~opencdarr.fleet.run_fleet`; ``ips`` is the fixed-effort
 multilevel splitting estimator (ADR 0017); ``parallel`` schedules the same IPS statistics over
-joblib workers (ADR 0018). ``parallel`` is deliberately **not** re-exported here: it needs the
-optional joblib extra, and its ``estimate_rare_prob`` shares the serial twin's name — importing it
-as :mod:`opencdarr.estimate.parallel` keeps which one you asked for spelled out.
+joblib workers (ADR 0018). ``parallel`` is deliberately **not** re-exported here: its
+``estimate_rare_prob`` shares the serial twin's name, so importing it as
+:mod:`opencdarr.estimate.parallel` keeps which one you asked for spelled out. (Until Aug 2026 the
+optional joblib extra was a second reason; joblib is a core dependency now and there is no extra,
+so the name collision carries the decision on its own.)
 """
 
 from opencdarr.estimate.ips import (

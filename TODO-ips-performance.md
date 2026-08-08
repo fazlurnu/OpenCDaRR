@@ -27,10 +27,15 @@ geometries (ladders taken verbatim); the function-level profile is ring n = 8, f
 The tail's only products are K and A (`p_los_ac`, `mean_k`); `tail=False` changes no other
 number (`experiment/backends.py`).
 
-- [ ] **Anchor rung:** decide whether the campaign should pass `tail=False` at 40 m. The anchor
-      exists to check agreement on `p_los`, and MC is anchored there anyway — flying 20 000
-      continuations to re-measure K/A that MC already measures may be pure cost. Target rungs
-      keep the tail; it is the only K/A source where MC starves.
+- [x] **Anchor rung `tail=False` — closed 2026-08-07 as declined; the premise expired.** The
+      item was written when the tail ran serially and was ~90 % of an anchor cell's wall clock;
+      after the sharding commits it is a sharded 15–20 % slice of 73–214 s cells, so the saving
+      on offer is a few minutes per part. The cost side moved the other way: with `tail=False`
+      the IPS `p_los_ac`/`mean_k` are NaN at the anchor rung, killing `ratio_ac` exactly where
+      the anchor is strong enough to verify it — and the fresh campaign shows that check
+      earning its keep (ring @ 30 m: `ratio_ac` 1.009–1.092; random @ 30 m: 1.079–1.098, all
+      anchored). The per-aircraft agreement at the anchor rung is worth more than the minutes.
+      The tail runs everywhere.
 - [x] **Early stop — measured 2026-08-07, and declined** (`scripts/early_stop_probe.py`; rings
       n=6/8 on the 1500 m ring plus a random-traffic density sweep n = 5/8/10/15 on the 900 m
       disc; 30 m rung; thresholds 0.5/2/5 s of sustained clear; ~1 600 encounters). K and A

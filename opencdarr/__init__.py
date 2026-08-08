@@ -28,11 +28,13 @@ short path for the common case rather than a mirror of the whole tree.
     from opencdarr import MVP, StateBased, PastCPA, M600    # ... against these
     from opencdarr import estimate_p_los, pairwise, load_config   # ... and measure it
 
-Both optional extras stay optional: ``matplotlib`` (via :mod:`opencdarr.viz`) and ``joblib`` (via
-:mod:`opencdarr.estimate.parallel`) are imported lazily inside the functions that need them, so
-``import opencdarr`` remains numpy + pyyaml only. :mod:`opencdarr.estimate.parallel` is
-deliberately *not* re-exported — it is a scheduling concern with its own install extra, reached
-explicitly.
+The heavy imports stay lazy: ``matplotlib`` (via :mod:`opencdarr.viz`) and ``joblib`` (via
+:mod:`opencdarr.estimate.parallel`) are imported inside the functions that need them, so
+``import opencdarr`` costs numpy + pyyaml and nothing else. The reasons differ now that joblib is
+a core dependency (Aug 2026): matplotlib may genuinely be absent, while joblib is present but
+costs ~0.6 s to import, which a plain ``import opencdarr`` should not pay for.
+:mod:`opencdarr.estimate.parallel` is deliberately *not* re-exported — it is a scheduling concern,
+reached explicitly.
 
 The import block below is sorted (ruff ``I001``) rather than grouped by role; the grouping above is
 the map.

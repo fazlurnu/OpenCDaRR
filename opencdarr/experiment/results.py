@@ -39,9 +39,8 @@ class ExperimentResult:
         """:meth:`records` as a ``pandas.DataFrame``.
 
         ``pandas`` is imported here rather than at module scope: it is an optional extra (like
-        ``matplotlib`` for :mod:`opencdarr.viz` and ``joblib`` for
-        :mod:`opencdarr.estimate.parallel`), so a
-        plain install stays numpy + pyyaml and :meth:`records` works without it.
+        ``matplotlib`` for :mod:`opencdarr.viz`), so a plain install stays lean and
+        :meth:`records` works without it.
         """
         try:
             import pandas as pd  # type: ignore[import-untyped]  # optional extra, no stubs

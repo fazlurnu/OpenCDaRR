@@ -3,8 +3,8 @@
 ``run_fleet(..., record=True)`` returns raw data: a :class:`~opencdarr.fleet.FleetOutcome` whose
 ``frames`` is the states log (every :class:`~opencdarr.fleet.FleetState`). This module is the
 *separate tool* that turns that log into a picture, so the simulator never imports a plotting
-library and the core package stays numpy-only. ``matplotlib`` is imported lazily inside the drawing
-functions; install it with the ``examples`` extra (``pip install "opencdarr[examples]"``).
+library and the core package never depends on one. ``matplotlib`` is imported lazily inside the
+drawing functions; install it with the ``examples`` extra (``pip install "opencdarr[examples]"``).
 
 Two steps, kept apart so the numbers are reusable without a figure:
 

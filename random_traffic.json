@@ -1,0 +1,597 @@
+{
+  "part": "random_traffic",
+  "rows": [
+    {
+      "density": 0.5,
+      "pos_ci95": 30.0,
+      "n_aircraft": 4,
+      "mc_p_los_run": 0.0043940648283767435,
+      "mc_p_los_ac": 0.0021970324141883718,
+      "mc_mean_k": 0.0043940648283767435,
+      "mc_events": 69,
+      "mc_encounters": 15703,
+      "mc_sized_by": "ips estimate",
+      "mc_batches": [
+        10388,
+        15703
+      ],
+      "mc_wilson95": [
+        0.0034738173753551217,
+        0.005556735278567439
+      ],
+      "mc_anchored": true,
+      "ips_p_los_run": 0.004813645535779426,
+      "ips_p_los_ac": 0.002411927438000842,
+      "ips_mean_k": 0.004833414453434375,
+      "ips_collapsed": 0,
+      "ips_lineages": 11380,
+      "shells": [
+        221.7,
+        156.4,
+        116.0,
+        90.9,
+        75.4,
+        65.7,
+        59.8,
+        56.0,
+        53.7,
+        52.3,
+        51.4,
+        50.0
+      ],
+      "pilot_median_min_sep": 221.7,
+      "pilot_seconds": 0.88,
+      "survival": [
+        0.498,
+        0.746,
+        0.644,
+        0.607,
+        0.522,
+        0.502,
+        0.562,
+        0.604,
+        0.743,
+        0.812,
+        0.863,
+        0.767
+      ],
+      "ips_rel_se": 0.09961827120374381,
+      "ratio_run": 1.095,
+      "ratio_noise95": 1.3577926759197565,
+      "ratio_ac": 1.098,
+      "mc_seconds": 26.53,
+      "ips_seconds": 135.47,
+      "gain": 0.2,
+      "cached": false,
+      "_label": {
+        "density": 0.5,
+        "pos_ci95": 30.0
+      }
+    },
+    {
+      "density": 1.0,
+      "pos_ci95": 30.0,
+      "n_aircraft": 7,
+      "mc_p_los_run": 0.01127554615926709,
+      "mc_p_los_ac": 0.003246753246753247,
+      "mc_mean_k": 0.011451726568005638,
+      "mc_events": 64,
+      "mc_encounters": 5676,
+      "mc_sized_by": "ips estimate",
+      "mc_batches": [
+        4104,
+        5676
+      ],
+      "mc_wilson95": [
+        0.00884035254526207,
+        0.014371819797320953
+      ],
+      "mc_anchored": true,
+      "ips_p_los_run": 0.01218339374788958,
+      "ips_p_los_ac": 0.0035024281521777653,
+      "ips_mean_k": 0.012274262275885035,
+      "ips_collapsed": 0,
+      "ips_lineages": 11747,
+      "shells": [
+        97.2,
+        79.3,
+        68.2,
+        61.3,
+        57.0,
+        54.3,
+        52.7,
+        51.7,
+        51.0,
+        50.0
+      ],
+      "pilot_median_min_sep": 97.2,
+      "pilot_seconds": 0.95,
+      "survival": [
+        0.475,
+        0.589,
+        0.469,
+        0.439,
+        0.589,
+        0.646,
+        0.768,
+        0.851,
+        0.894,
+        0.843
+      ],
+      "ips_rel_se": 0.04802992424669351,
+      "ratio_run": 1.081,
+      "ratio_noise95": 1.2984433998154326,
+      "ratio_ac": 1.079,
+      "mc_seconds": 25.72,
+      "ips_seconds": 230.81,
+      "gain": 0.11,
+      "cached": false,
+      "_label": {
+        "density": 1.0,
+        "pos_ci95": 30.0
+      }
+    },
+    {
+      "density": 2.0,
+      "pos_ci95": 30.0,
+      "n_aircraft": 14,
+      "mc_p_los_run": 0.026208933185677373,
+      "mc_p_los_ac": 0.003875968992248062,
+      "mc_mean_k": 0.027316352897748246,
+      "mc_events": 71,
+      "mc_encounters": 2709,
+      "mc_sized_by": "ips estimate",
+      "mc_batches": [
+        2000,
+        2709
+      ],
+      "mc_wilson95": [
+        0.020830867262099054,
+        0.032928801717633085
+      ],
+      "mc_anchored": true,
+      "ips_p_los_run": 0.029184817474249492,
+      "ips_p_los_ac": 0.004220902569772073,
+      "ips_mean_k": 0.029651959258802856,
+      "ips_collapsed": 0,
+      "ips_lineages": 11384,
+      "shells": [
+        74.2,
+        65.0,
+        59.3,
+        55.8,
+        53.6,
+        52.2,
+        51.4,
+        50.0
+      ],
+      "pilot_median_min_sep": 74.2,
+      "pilot_seconds": 1.88,
+      "survival": [
+        0.546,
+        0.475,
+        0.512,
+        0.614,
+        0.672,
+        0.817,
+        0.847,
+        0.827
+      ],
+      "ips_rel_se": 0.029856430753922154,
+      "ratio_run": 1.114,
+      "ratio_noise95": 1.267286853522007,
+      "ratio_ac": 1.089,
+      "mc_seconds": 37.0,
+      "ips_seconds": 478.41,
+      "gain": 0.08,
+      "cached": false,
+      "_label": {
+        "density": 2.0,
+        "pos_ci95": 30.0
+      }
+    },
+    {
+      "density": 0.5,
+      "pos_ci95": 10.0,
+      "n_aircraft": 4,
+      "mc_p_los_run": 0.0008486921274304896,
+      "mc_p_los_ac": 0.0004243460637152448,
+      "mc_mean_k": 0.0008486921274304896,
+      "mc_events": 67,
+      "mc_encounters": 78945,
+      "mc_sized_by": "ips estimate",
+      "mc_batches": [
+        52225,
+        78945
+      ],
+      "mc_wilson95": [
+        0.0006684065687900058,
+        0.0010775526659961249
+      ],
+      "mc_anchored": true,
+      "ips_p_los_run": 0.000957400723313565,
+      "ips_p_los_ac": 0.0004790662749494222,
+      "ips_mean_k": 0.0009588643764841239,
+      "ips_collapsed": 0,
+      "ips_lineages": 8435,
+      "shells": [
+        208.7,
+        148.4,
+        111.0,
+        87.8,
+        73.4,
+        64.5,
+        59.0,
+        55.6,
+        53.5,
+        52.1,
+        51.3,
+        50.0
+      ],
+      "pilot_median_min_sep": 208.7,
+      "pilot_seconds": 0.41,
+      "survival": [
+        0.5,
+        0.69,
+        0.648,
+        0.605,
+        0.601,
+        0.533,
+        0.428,
+        0.487,
+        0.669,
+        0.605,
+        0.734,
+        0.566
+      ],
+      "ips_rel_se": 0.2142815158844777,
+      "ratio_run": 1.128,
+      "ratio_noise95": 1.6215743672923666,
+      "ratio_ac": 1.129,
+      "mc_seconds": 123.59,
+      "ips_seconds": 143.11,
+      "gain": 0.86,
+      "cached": false,
+      "_label": {
+        "density": 0.5,
+        "pos_ci95": 10.0
+      }
+    },
+    {
+      "density": 1.0,
+      "pos_ci95": 10.0,
+      "n_aircraft": 7,
+      "mc_p_los_run": 0.002070604209097081,
+      "mc_p_los_ac": 0.0005916012025991659,
+      "mc_mean_k": 0.002070604209097081,
+      "mc_events": 61,
+      "mc_encounters": 29460,
+      "mc_sized_by": "ips estimate",
+      "mc_batches": [
+        22208,
+        29460
+      ],
+      "mc_wilson95": [
+        0.0016124382242821153,
+        0.0026586090183720002
+      ],
+      "mc_anchored": true,
+      "ips_p_los_run": 0.0022515283380019025,
+      "ips_p_los_ac": 0.0006436937495282692,
+      "ips_mean_k": 0.002254113424640324,
+      "ips_collapsed": 0,
+      "ips_lineages": 9442,
+      "shells": [
+        100.5,
+        81.3,
+        69.4,
+        62.0,
+        57.5,
+        54.6,
+        52.9,
+        51.8,
+        51.1,
+        50.0
+      ],
+      "pilot_median_min_sep": 100.5,
+      "pilot_seconds": 0.74,
+      "survival": [
+        0.476,
+        0.657,
+        0.583,
+        0.469,
+        0.406,
+        0.397,
+        0.589,
+        0.625,
+        0.696,
+        0.61
+      ],
+      "ips_rel_se": 0.15657646602022815,
+      "ratio_run": 1.087,
+      "ratio_noise95": 1.486256227584873,
+      "ratio_ac": 1.088,
+      "mc_seconds": 129.58,
+      "ips_seconds": 280.63,
+      "gain": 0.46,
+      "cached": false,
+      "_label": {
+        "density": 1.0,
+        "pos_ci95": 10.0
+      }
+    },
+    {
+      "density": 2.0,
+      "pos_ci95": 10.0,
+      "n_aircraft": 14,
+      "mc_p_los_run": 0.004648681603414114,
+      "mc_p_los_ac": 0.000664097371916302,
+      "mc_mean_k": 0.004648681603414114,
+      "mc_events": 61,
+      "mc_encounters": 13122,
+      "mc_sized_by": "ips estimate",
+      "mc_batches": [
+        9084,
+        13122
+      ],
+      "mc_wilson95": [
+        0.0036209667511640457,
+        0.005966339267691412
+      ],
+      "mc_anchored": true,
+      "ips_p_los_run": 0.005504534960525128,
+      "ips_p_los_ac": 0.00078877655233659,
+      "ips_mean_k": 0.005524966087610756,
+      "ips_collapsed": 0,
+      "ips_lineages": 9966,
+      "shells": [
+        66.9,
+        60.5,
+        56.5,
+        54.0,
+        52.5,
+        51.5,
+        51.0,
+        50.0
+      ],
+      "pilot_median_min_sep": 66.9,
+      "pilot_seconds": 1.8,
+      "survival": [
+        0.493,
+        0.453,
+        0.365,
+        0.391,
+        0.53,
+        0.635,
+        0.834,
+        0.595
+      ],
+      "ips_rel_se": 0.05891684077105162,
+      "ratio_run": 1.184,
+      "ratio_noise95": 1.3174667720446116,
+      "ratio_ac": 1.188,
+      "mc_seconds": 166.68,
+      "ips_seconds": 636.17,
+      "gain": 0.26,
+      "cached": false,
+      "_label": {
+        "density": 2.0,
+        "pos_ci95": 10.0
+      }
+    },
+    {
+      "density": 0.5,
+      "pos_ci95": 5.0,
+      "n_aircraft": 4,
+      "mc_p_los_run": 0.0005107452952500687,
+      "mc_p_los_ac": 0.00025677579404055655,
+      "mc_mean_k": 0.0005163578809121574,
+      "mc_events": 91,
+      "mc_encounters": 178171,
+      "mc_sized_by": "ips estimate",
+      "mc_batches": [
+        65786,
+        178171
+      ],
+      "mc_wilson95": [
+        0.0004160532145449994,
+        0.0006269754044177138
+      ],
+      "mc_anchored": true,
+      "ips_p_los_run": 0.000760044759110751,
+      "ips_p_los_ac": 0.0003800781756049658,
+      "ips_mean_k": 0.0007602679433091122,
+      "ips_collapsed": 0,
+      "ips_lineages": 6572,
+      "shells": [
+        198.7,
+        142.2,
+        107.2,
+        85.4,
+        72.0,
+        63.6,
+        58.4,
+        55.2,
+        53.2,
+        52.0,
+        51.2,
+        50.0
+      ],
+      "pilot_median_min_sep": 198.7,
+      "pilot_seconds": 0.38,
+      "survival": [
+        0.528,
+        0.731,
+        0.668,
+        0.57,
+        0.632,
+        0.573,
+        0.487,
+        0.472,
+        0.608,
+        0.511,
+        0.531,
+        0.223
+      ],
+      "ips_rel_se": 0.2762146341870306,
+      "ratio_run": 1.488,
+      "ratio_noise95": 1.7843049714521726,
+      "ratio_ac": 1.48,
+      "mc_seconds": 226.8,
+      "ips_seconds": 148.64,
+      "gain": 1.53,
+      "cached": false,
+      "_label": {
+        "density": 0.5,
+        "pos_ci95": 5.0
+      }
+    },
+    {
+      "density": 1.0,
+      "pos_ci95": 5.0,
+      "n_aircraft": 7,
+      "mc_p_los_run": 0.0013015276948024237,
+      "mc_p_los_ac": 0.00037186505565783536,
+      "mc_mean_k": 0.0013015276948024237,
+      "mc_events": 61,
+      "mc_encounters": 46868,
+      "mc_sized_by": "ips estimate",
+      "mc_batches": [
+        35331,
+        46868
+      ],
+      "mc_wilson95": [
+        0.0010134609016727906,
+        0.0016713377941764496
+      ],
+      "mc_anchored": true,
+      "ips_p_los_run": 0.0014151915293318617,
+      "ips_p_los_ac": 0.00040532250776083745,
+      "ips_mean_k": 0.001421834268245286,
+      "ips_collapsed": 0,
+      "ips_lineages": 6767,
+      "shells": [
+        97.3,
+        79.3,
+        68.2,
+        61.3,
+        57.0,
+        54.3,
+        52.7,
+        51.7,
+        51.0,
+        50.0
+      ],
+      "pilot_median_min_sep": 97.3,
+      "pilot_seconds": 0.75,
+      "survival": [
+        0.528,
+        0.673,
+        0.653,
+        0.568,
+        0.461,
+        0.373,
+        0.448,
+        0.676,
+        0.684,
+        0.616
+      ],
+      "ips_rel_se": 0.20564174518945325,
+      "ratio_run": 1.087,
+      "ratio_noise95": 1.6075357901990697,
+      "ratio_ac": 1.09,
+      "mc_seconds": 206.47,
+      "ips_seconds": 291.17,
+      "gain": 0.71,
+      "cached": false,
+      "_label": {
+        "density": 1.0,
+        "pos_ci95": 5.0
+      }
+    },
+    {
+      "density": 2.0,
+      "pos_ci95": 5.0,
+      "n_aircraft": 14,
+      "mc_p_los_run": 0.004390977443609023,
+      "mc_p_los_ac": 0.0006272824919441461,
+      "mc_mean_k": 0.004390977443609023,
+      "mc_events": 73,
+      "mc_encounters": 16625,
+      "mc_sized_by": "ips estimate",
+      "mc_batches": [
+        9975,
+        16625
+      ],
+      "mc_wilson95": [
+        0.003494023527394836,
+        0.005516914437932352
+      ],
+      "mc_anchored": true,
+      "ips_p_los_run": 0.0050129409788817695,
+      "ips_p_los_ac": 0.0007180406527287181,
+      "ips_mean_k": 0.005027390428667527,
+      "ips_collapsed": 0,
+      "ips_lineages": 7751,
+      "shells": [
+        62.1,
+        57.5,
+        54.6,
+        52.9,
+        51.8,
+        51.1,
+        50.0
+      ],
+      "pilot_median_min_sep": 62.1,
+      "pilot_seconds": 1.8,
+      "survival": [
+        0.518,
+        0.49,
+        0.354,
+        0.431,
+        0.565,
+        0.653,
+        0.381
+      ],
+      "ips_rel_se": 0.07734968342465713,
+      "ratio_run": 1.142,
+      "ratio_noise95": 1.315931904172803,
+      "ratio_ac": 1.145,
+      "mc_seconds": 198.43,
+      "ips_seconds": 648.75,
+      "gain": 0.31,
+      "cached": false,
+      "_label": {
+        "density": 2.0,
+        "pos_ci95": 5.0
+      }
+    }
+  ],
+  "design": {
+    "rungs_pos_ci95": [
+      30.0,
+      10.0,
+      5.0
+    ],
+    "rpz": 50.0,
+    "dt": 0.5,
+    "target_events": 50,
+    "mc_min": 2000,
+    "mc_max": 5000000,
+    "ips_particles": 2000,
+    "ips_reps": 10,
+    "shell_ratio": 0.62,
+    "final_gap": 1.5,
+    "pilot_encounters": 200,
+    "seed": 0
+  },
+  "timing": {
+    "started_utc": "2026-08-07T10:34:52+00:00",
+    "finished_utc": "2026-08-07T11:43:55+00:00",
+    "workers": 100,
+    "conditions_run": 9,
+    "conditions_cached": 0,
+    "mc_seconds_total": 1140.8,
+    "ips_seconds_total": 2993.16
+  }
+}

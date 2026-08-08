@@ -14,15 +14,20 @@ license = { text = "MIT" }
 # (SeedSequence.spawn) and state.py need it from Phase 0. pyyaml arrives in Step 2
 # with the config loader, not before.
 #
-# Shipping code depends only on numpy (ADR 0003): the geodesy is ours (opencdarr/geo.py),
-# so there is no BlueSky runtime dependency. BlueSky is used only as an OFFLINE validation
-# anchor: scripts/fixedwing_bluesky_comparison.py transcribes its model rather than importing
-# it, and docs/fixedwing-vs-bluesky.md records the comparison (it is a custom fork, not the
-# unrelated PyPI "bluesky"; install separately where needed, e.g. the `cdarr` conda env or
-# `pip install -e ~/Projects/bluesky`).
+# joblib joined the core in Aug 2026. Parallel IPS is the workflow this platform exists for,
+# not a side capability, and at 2.5 MB against numpy's 35 MB the "keep it optional" rule was
+# only buying a confusing ImportError halfway through a sweep. scipy stayed out (see the
+# `fast` extra): 99 MB for a ~1.5x speedup on one criterion is the case the rule IS for.
+#
+# There is no BlueSky runtime dependency (ADR 0003): the geodesy is ours (opencdarr/geo.py).
+# BlueSky is used only as an OFFLINE validation anchor: scripts/fixedwing_bluesky_comparison.py
+# transcribes its model rather than importing it, and docs/fixedwing-vs-bluesky.md records the
+# comparison (it is a custom fork, not the unrelated PyPI "bluesky"; install separately where
+# needed, e.g. the `cdarr` conda env or `pip install -e ~/Projects/bluesky`).
 dependencies = [
     "numpy>=1.26,<3",
     "pyyaml>=6",
+    "joblib>=1.2",
 ]
 
 [project.optional-dependencies]
@@ -31,10 +36,10 @@ dev = [
     "mypy>=1.10",
     "ruff>=0.5",
 ]
-# Spreading an estimator over CPU cores (opencdarr/estimate/parallel.py), which imports joblib lazily so
-# the core install stays numpy-only and the serial estimators keep working without it.
-# >=1.2 is the floor actually exercised; nothing here uses a 1.3-only feature.
-parallel = ["joblib>=1.2"]
+# There is no `parallel` extra: joblib moved into the core dependencies above (Aug 2026), so the
+# extra would have been an empty alias with nothing left to install. `pip install 'opencdarr[parallel]'`
+# now warns that the extra is unknown and installs the core, which already has joblib.
+#
 # Optional speed only, never required and never a change in results. ProbabilisticFTR's angular
 # quadrature calls erf three times per evaluation over the whole grid; scipy's is a true ufunc
 # where the fallback is a Python loop, worth ~1.5x on that criterion and nothing anywhere else.
@@ -42,11 +47,14 @@ parallel = ["joblib>=1.2"]
 fast = ["scipy>=1.10"]
 # Everything the example notebooks need: the plotter (opencdarr/viz.py) imports matplotlib
 # lazily, and a Jupyter kernel to run the notebooks. Kept out of the core install so a plain
-# `pip install opencdarr` stays numpy-only (design-philosophy #10).
+# `pip install opencdarr` stays lean (design-philosophy #10). The rare-event notebook fills the
+# machine with opencdarr.estimate.parallel, but that needs nothing here: joblib is a core dep.
+# pandas backs ExperimentResults.frame(), which is the notebook-facing view of a sweep and the
+# extra that its ModuleNotFoundError already tells the user to install.
 examples = [
     "matplotlib>=3.7",
     "ipykernel>=6",
-    "opencdarr[parallel]",   # the rare-event notebook fills the machine with opencdarr.estimate.parallel
+    "pandas>=2",
 ]
 
 [tool.setuptools.packages.find]

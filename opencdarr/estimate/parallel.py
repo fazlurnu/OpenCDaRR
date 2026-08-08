@@ -47,8 +47,9 @@ path already makes. Nothing here reorders a floating-point reduction.
 ``build_initial`` should return a *shared* particle when the geometry is pinned — build the env
 once outside it. Pass ``verbose=10`` to watch joblib's progress on a long run.
 
-joblib is an optional dependency (``pip install 'opencdarr[parallel]'``), imported on use: this
-module must import cleanly without it, and only fails when actually asked for more than one worker.
+joblib has been a core dependency since Aug 2026, but it is still imported on use rather than at
+module scope: ``import joblib`` costs ~0.6 s, and this module must import cleanly even where the
+install went wrong, failing only when actually asked for more than one worker.
 Export ``OMP_NUM_THREADS=1`` (and the OpenBLAS/MKL equivalents) before a large run so N workers do
 not each start their own thread pool; the hot path makes no BLAS calls, so this is about not
 oversubscribing the machine rather than about correctness.
@@ -100,12 +101,13 @@ def resolve_jobs(n_jobs: int) -> int:
 
 
 def _joblib() -> tuple[Any, Any]:
-    """``(Parallel, delayed)``, imported on use — joblib is an optional extra, not a core dep."""
+    """``(Parallel, delayed)``, imported on use — joblib is a core dep, but a ~0.6 s import."""
     try:
         from joblib import Parallel, delayed
-    except ImportError as exc:  # pragma: no cover - depends on the install extras
+    except ImportError as exc:  # pragma: no cover - only fires on a broken install
         raise ImportError(
-            "parallel execution needs joblib: pip install 'opencdarr[parallel]'"
+            "parallel execution needs joblib, a core dependency — this environment is "
+            "incomplete: pip install joblib"
         ) from exc
     return Parallel, delayed
 
